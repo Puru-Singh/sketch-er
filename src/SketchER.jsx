@@ -44,6 +44,70 @@ const TABLE_COLORS = [
   "#6366f1", "#14b8a6", "#e11d48", "#84cc16",
 ];
 
+const LIGHT_THEME = {
+  appBg: "#ffffff",
+  editorPanelBg: "#f3f3f3",
+  editorHeaderBg: "linear-gradient(180deg, #ebebeb 0%, #f3f3f3 100%)",
+  border: "#e4e4e4",
+  textPrimary: "#1e1e1e",
+  textSecondary: "#6e6e6e",
+  textMuted: "#a0a0a0",
+  textFaint: "#bbbbbb",
+  editorText: "#1e1e1e",
+  editorBg: "#f3f3f3",
+  lineNumberColor: "#c0c0c0",
+  lineNumberBorder: "#e4e4e4",
+  tableBg: "#ffffff",
+  tableBorder: "#d8d8d8",
+  colRowAlt: "rgba(0,0,0,0.025)",
+  colDivider: "#eeeeee",
+  colText: "#3b3b3b",
+  colType: "#6e6e6e",
+  footerBg: "#ebebeb",
+  toolbarBg: "#ffffff",
+  toolbarBorder: "#d4d4d4",
+  toolbarText: "#5a5a5a",
+  canvasBg: "radial-gradient(ellipse at 50% 40%, #f5f5f5 0%, #ebebeb 100%)",
+  dotColor: "#d4d4d4",
+  minimapBg: "rgba(255,255,255,0.92)",
+  colorPaletteRowBg: "#eaeaea",
+  statText: "#6e6e6e",
+  resizeHandleHover: "#10b98180",
+  emptyStateColor: "#c8c8c8",
+};
+
+const DARK_THEME = {
+  appBg: "#1e1e1e",
+  editorPanelBg: "#252526",
+  editorHeaderBg: "linear-gradient(180deg, #2a2a2b 0%, #252526 100%)",
+  border: "#3e3e42",
+  textPrimary: "#d4d4d4",
+  textSecondary: "#9d9d9d",
+  textMuted: "#6e6e6e",
+  textFaint: "#444444",
+  editorText: "#d4d4d4",
+  editorBg: "#252526",
+  lineNumberColor: "#555555",
+  lineNumberBorder: "#3e3e42",
+  tableBg: "#252526",
+  tableBorder: "#3e3e42",
+  colRowAlt: "rgba(255,255,255,0.03)",
+  colDivider: "#3e3e42",
+  colText: "#d1d5db",
+  colType: "#6b7280",
+  footerBg: "#1e1e1e",
+  toolbarBg: "#2d2d2d",
+  toolbarBorder: "#3e3e42",
+  toolbarText: "#9d9d9d",
+  canvasBg: "radial-gradient(ellipse at 50% 40%, #252526 0%, #1e1e1e 100%)",
+  dotColor: "#2d2d2d",
+  minimapBg: "rgba(30,30,30,0.92)",
+  colorPaletteRowBg: "#2a2a2b",
+  statText: "#6b7280",
+  resizeHandleHover: "#10b98180",
+  emptyStateColor: "#444466",
+};
+
 function parseDBML(text) {
   const tables = [];
   const refs = [];
@@ -95,7 +159,6 @@ function getColumnY(table, colIndex) {
 }
 
 function generatePath(x1, y1, x2, y2) {
-  // Orthogonal (right-angle) path: horizontal out → vertical → horizontal in
   const midX = (x1 + x2) / 2;
   return `M ${x1} ${y1} H ${midX} V ${y2} H ${x2}`;
 }
@@ -132,17 +195,17 @@ function RelationshipLines({ refs, tablePositions, tableData }) {
     const key = `${ref.from.table}.${ref.from.column}-${ref.to.table}.${ref.to.column}`;
     lines.push(
       <g key={key}>
-        <path d={path} fill="none" stroke="#4ade80" strokeWidth="2" opacity="0.35" />
-        <path d={path} fill="none" stroke="#4ade80" strokeWidth="1.2" opacity="0.7" />
-        <circle cx={x2} cy={toY} r="4.5" fill="#4ade80" opacity="0.6" />
-        <circle cx={x1} cy={fromY} r="3.5" fill="none" stroke="#4ade80" strokeWidth="1.5" opacity="0.6" />
+        <path d={path} fill="none" stroke="#10b981" strokeWidth="2" opacity="0.3" />
+        <path d={path} fill="none" stroke="#10b981" strokeWidth="1.2" opacity="0.65" />
+        <circle cx={x2} cy={toY} r="4.5" fill="#10b981" opacity="0.55" />
+        <circle cx={x1} cy={fromY} r="3.5" fill="none" stroke="#10b981" strokeWidth="1.5" opacity="0.55" />
       </g>
     );
   }
   return <>{lines}</>;
 }
 
-function TableNode({ table, position, color, onDragStart, onColorChange, isSelected, onSelect }) {
+function TableNode({ table, position, color, onDragStart, onColorChange, isSelected, onSelect, theme }) {
   const handleMouseDown = (e) => {
     if (e.target.closest(".color-picker-area")) return;
     e.stopPropagation();
@@ -158,16 +221,16 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
         left: position.x,
         top: position.y,
         width: TABLE_WIDTH,
-        borderRadius: "10px",
+        borderRadius: "8px",
         overflow: "hidden",
         boxShadow: isSelected
-          ? `0 0 0 2px ${color}, 0 12px 40px rgba(0,0,0,0.35)`
-          : "0 4px 20px rgba(0,0,0,0.2)",
+          ? `0 0 0 2px ${color}, 0 8px 24px rgba(0,0,0,0.15)`
+          : `0 2px 10px rgba(0,0,0,0.1), 0 0 0 1px ${theme.tableBorder}`,
         cursor: "grab",
         userSelect: "none",
         transition: "box-shadow 0.15s ease",
-        background: "#1a1a2e",
-        border: `1px solid ${isSelected ? color : "#252540"}`,
+        background: theme.tableBg,
+        border: `1px solid ${isSelected ? color : theme.tableBorder}`,
       }}
     >
       <div
@@ -225,12 +288,12 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
               justifyContent: "space-between",
               padding: "0 14px",
               fontSize: "12px",
-              borderBottom: i < table.columns.length - 1 ? "1px solid #252540" : "none",
-              background: i % 2 === 0 ? "transparent" : "rgba(255,255,255,0.015)",
+              borderBottom: i < table.columns.length - 1 ? `1px solid ${theme.colDivider}` : "none",
+              background: i % 2 === 0 ? "transparent" : theme.colRowAlt,
               fontFamily: "'DM Sans', sans-serif",
             }}
           >
-            <span style={{ display: "flex", alignItems: "center", gap: "7px", color: "#d1d5db" }}>
+            <span style={{ display: "flex", alignItems: "center", gap: "7px", color: theme.colText }}>
               {col.isPk && (
                 <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
                   <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
@@ -240,7 +303,7 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
             </span>
             <span
               style={{
-                color: "#6b7280",
+                color: theme.colType,
                 fontSize: "11px",
                 fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                 fontWeight: 500,
@@ -255,13 +318,13 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
   );
 }
 
-function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView }) {
+function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark, onToggleTheme, theme }) {
   const btnStyle = {
     padding: "7px 12px",
-    background: "#1e1e35",
-    border: "1px solid #2d2d4a",
+    background: theme.toolbarBg,
+    border: `1px solid ${theme.toolbarBorder}`,
     borderRadius: "8px",
-    color: "#a0a3b1",
+    color: theme.toolbarText,
     cursor: "pointer",
     fontSize: "12px",
     display: "flex",
@@ -273,6 +336,27 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView }) {
   };
   return (
     <div style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
+      <button style={btnStyle} onClick={onToggleTheme} title={isDark ? "Switch to light mode" : "Switch to dark mode"}>
+        {isDark ? (
+          // Sun icon
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="12" cy="12" r="5" />
+            <line x1="12" y1="1" x2="12" y2="3" />
+            <line x1="12" y1="21" x2="12" y2="23" />
+            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" />
+            <line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
+            <line x1="1" y1="12" x2="3" y2="12" />
+            <line x1="21" y1="12" x2="23" y2="12" />
+            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" />
+            <line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
+          </svg>
+        ) : (
+          // Moon icon
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
+          </svg>
+        )}
+      </button>
       <button style={btnStyle} onClick={onZoomOut} title="Zoom out">−</button>
       <span style={{ ...btnStyle, cursor: "default", minWidth: "50px", justifyContent: "center", fontSize: "11px" }}>
         {Math.round(zoom * 100)}%
@@ -294,7 +378,7 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView }) {
   );
 }
 
-function MiniMap({ tablePositions, tableData, colors, canvasOffset, zoom, canvasWidth, canvasHeight }) {
+function MiniMap({ tablePositions, tableData, colors, canvasOffset, zoom, canvasWidth, canvasHeight, theme }) {
   const MINIMAP_W = 160;
   const MINIMAP_H = 100;
   if (Object.keys(tablePositions).length === 0) return null;
@@ -322,8 +406,8 @@ function MiniMap({ tablePositions, tableData, colors, canvasOffset, zoom, canvas
         right: 12,
         width: MINIMAP_W,
         height: MINIMAP_H,
-        background: "rgba(13,13,26,0.9)",
-        border: "1px solid #252540",
+        background: theme.minimapBg,
+        border: `1px solid ${theme.border}`,
         borderRadius: "8px",
         overflow: "hidden",
         zIndex: 20,
@@ -353,6 +437,9 @@ function MiniMap({ tablePositions, tableData, colors, canvasOffset, zoom, canvas
 }
 
 export default function SketchER() {
+  const [isDark, setIsDark] = useState(false);
+  const theme = isDark ? DARK_THEME : LIGHT_THEME;
+
   const [dbml, setDbml] = useState(DEFAULT_DBML);
   const [tablePositions, setTablePositions] = useState({});
   const [tableColors, setTableColors] = useState({});
@@ -513,9 +600,9 @@ export default function SketchER() {
         display: "flex",
         height: "100vh",
         width: "100vw",
-        background: "#0d0d1a",
+        background: theme.appBg,
         fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
-        color: "#e2e8f0",
+        color: theme.textPrimary,
         overflow: "hidden",
       }}
     >
@@ -526,8 +613,8 @@ export default function SketchER() {
           minWidth: 260,
           display: "flex",
           flexDirection: "column",
-          background: "#111128",
-          borderRight: "1px solid #252540",
+          background: theme.editorPanelBg,
+          borderRight: `1px solid ${theme.border}`,
           flexShrink: 0,
         }}
       >
@@ -535,11 +622,11 @@ export default function SketchER() {
         <div
           style={{
             padding: "16px 18px",
-            borderBottom: "1px solid #252540",
+            borderBottom: `1px solid ${theme.border}`,
             display: "flex",
             alignItems: "center",
             gap: "10px",
-            background: "linear-gradient(180deg, #161633 0%, #111128 100%)",
+            background: theme.editorHeaderBg,
           }}
         >
           <svg width="26" height="26" viewBox="0 0 32 32" fill="none">
@@ -550,10 +637,10 @@ export default function SketchER() {
             <circle cx="16" cy="6.5" r="1.8" fill="white" opacity="0.4" />
           </svg>
           <div>
-            <span style={{ fontWeight: 700, fontSize: "17px", letterSpacing: "0.3px" }}>
+            <span style={{ fontWeight: 700, fontSize: "17px", letterSpacing: "0.3px", color: theme.textPrimary }}>
               Sketch<span style={{ color: "#10b981" }}>ER</span>
             </span>
-            <div style={{ fontSize: "10px", color: "#4a4a65", marginTop: "-1px", letterSpacing: "0.5px" }}>
+            <div style={{ fontSize: "10px", color: theme.textMuted, marginTop: "-1px", letterSpacing: "0.5px" }}>
               Entity Relationship Diagrams
             </div>
           </div>
@@ -579,15 +666,15 @@ export default function SketchER() {
           <div
             style={{
               padding: "10px 18px",
-              borderBottom: "1px solid #252540",
+              borderBottom: `1px solid ${theme.border}`,
               display: "flex",
               alignItems: "center",
               gap: "6px",
-              background: "#14142c",
+              background: theme.colorPaletteRowBg,
               fontSize: "11px",
             }}
           >
-            <span style={{ color: "#6b7280", marginRight: "4px", fontWeight: 500 }}>
+            <span style={{ color: theme.textSecondary, marginRight: "4px", fontWeight: 500 }}>
               {selectedTable}:
             </span>
             {TABLE_COLORS.map((c) => (
@@ -600,7 +687,9 @@ export default function SketchER() {
                   borderRadius: "50%",
                   background: c,
                   cursor: "pointer",
-                  border: tableColors[selectedTable] === c ? "2.5px solid #fff" : "2.5px solid transparent",
+                  border: tableColors[selectedTable] === c
+                    ? `2.5px solid ${isDark ? "#fff" : "#1e1e1e"}`
+                    : "2.5px solid transparent",
                   transition: "all 0.15s",
                   flexShrink: 0,
                 }}
@@ -613,11 +702,11 @@ export default function SketchER() {
         <div
           style={{
             padding: "8px 18px",
-            borderBottom: "1px solid #252540",
+            borderBottom: `1px solid ${theme.border}`,
             display: "flex",
             gap: "18px",
             fontSize: "11px",
-            color: "#6b7280",
+            color: theme.statText,
             fontWeight: 500,
           }}
         >
@@ -638,14 +727,15 @@ export default function SketchER() {
               width: "42px",
               padding: "14px 6px 14px 0",
               textAlign: "right",
-              color: "#333355",
+              color: theme.lineNumberColor,
               fontSize: "12px",
               lineHeight: "20px",
               fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
               overflow: "hidden",
               userSelect: "none",
-              borderRight: "1px solid #252540",
+              borderRight: `1px solid ${theme.lineNumberBorder}`,
               flexShrink: 0,
+              background: theme.editorPanelBg,
             }}
           >
             {lineNumbers.map((n) => <div key={n}>{n}</div>)}
@@ -658,8 +748,8 @@ export default function SketchER() {
             spellCheck={false}
             style={{
               flex: 1,
-              background: "transparent",
-              color: "#c8d6e5",
+              background: theme.editorPanelBg,
+              color: theme.editorText,
               border: "none",
               outline: "none",
               resize: "none",
@@ -677,14 +767,14 @@ export default function SketchER() {
         <div
           style={{
             padding: "10px 18px",
-            borderTop: "1px solid #252540",
+            borderTop: `1px solid ${theme.border}`,
             fontSize: "10px",
-            color: "#3d3d5c",
+            color: theme.textMuted,
             lineHeight: "1.7",
-            background: "#0f0f24",
+            background: theme.footerBg,
           }}
         >
-          <strong style={{ color: "#555578" }}>Syntax:</strong>{" "}
+          <strong style={{ color: theme.textSecondary }}>Syntax:</strong>{" "}
           Table name {"{ "}col type [pk] [ref: {">"} table.col]{" }"}
           <br />
           Ctrl+Scroll to zoom · Drag canvas to pan · Click table to color
@@ -702,7 +792,7 @@ export default function SketchER() {
           flexShrink: 0,
           zIndex: 30,
         }}
-        onMouseEnter={(e) => (e.target.style.background = "#10b98180")}
+        onMouseEnter={(e) => (e.target.style.background = theme.resizeHandleHover)}
         onMouseLeave={(e) => { if (!isResizing) e.target.style.background = "transparent"; }}
       />
 
@@ -716,7 +806,7 @@ export default function SketchER() {
           position: "relative",
           overflow: "hidden",
           cursor: isPanning ? "grabbing" : "default",
-          background: "radial-gradient(ellipse at 50% 40%, #131330 0%, #0b0b18 100%)",
+          background: theme.canvasBg,
         }}
       >
         {/* Dot grid */}
@@ -730,7 +820,7 @@ export default function SketchER() {
               x={canvasOffset.x % (28 * zoom)}
               y={canvasOffset.y % (28 * zoom)}
             >
-              <circle cx="1" cy="1" r="0.7" fill="#252540" />
+              <circle cx="1" cy="1" r="0.7" fill={theme.dotColor} />
             </pattern>
           </defs>
           <rect width="100%" height="100%" fill="url(#grid)" />
@@ -742,6 +832,9 @@ export default function SketchER() {
           onZoomIn={() => setZoom((z) => Math.min(2, z + 0.15))}
           onZoomOut={() => setZoom((z) => Math.max(0.25, z - 0.15))}
           zoom={zoom}
+          isDark={isDark}
+          onToggleTheme={() => setIsDark((d) => !d)}
+          theme={theme}
         />
 
         {/* Transform container */}
@@ -776,6 +869,7 @@ export default function SketchER() {
                 onColorChange={handleColorChange}
                 isSelected={selectedTable === table.name}
                 onSelect={setSelectedTable}
+                theme={theme}
               />
             ) : null
           )}
@@ -789,6 +883,7 @@ export default function SketchER() {
           zoom={zoom}
           canvasWidth={canvasSize.w}
           canvasHeight={canvasSize.h}
+          theme={theme}
         />
 
         {/* Empty state */}
@@ -801,7 +896,7 @@ export default function SketchER() {
               flexDirection: "column",
               alignItems: "center",
               justifyContent: "center",
-              color: "#3d3d5c",
+              color: theme.emptyStateColor,
               gap: "14px",
               pointerEvents: "none",
             }}
