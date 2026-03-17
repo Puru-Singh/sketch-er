@@ -192,10 +192,14 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
       const fromRight = fromPos.x + TABLE_WIDTH;
       const toRight   = toPos.x  + TABLE_WIDTH;
 
-      // Use actual table edges to decide L/R — more reliable than centres
-      // when tables overlap horizontally fall back to centre comparison
+      // Detect vertical stacking: tables heavily overlap in X → C-shape routing
+      const xOverlap = Math.max(0, Math.min(fromRight, toRight) - Math.max(fromPos.x, toPos.x));
+      const isVerticalStack = xOverlap / TABLE_WIDTH > 0.5;
+
       let crowDir;
-      if (fromPos.x >= toRight) {
+      if (isVerticalStack) {
+        crowDir = "vert-left";                   // both tables use left edge, C-shape going left
+      } else if (fromPos.x >= toRight) {
         crowDir = "left";                        // from is clearly right of to
       } else if (toPos.x >= fromRight) {
         crowDir = "right";                       // to is clearly right of from
@@ -263,22 +267,30 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
     const toY   = getColumnY(toPos,   toColIdx);
 
     // Exact entry/exit points on the table edges
+    // vert-left: FROM uses left edge, TO also uses left edge (C-shape around outside)
     const x1 = crowDir === "right" ? fromRight + 1 : fromPos.x - 1;
-    const x2 = crowDir === "right" ? toPos.x   - 1 : toRight   + 1;
+    const x2 = (crowDir === "right" || crowDir === "vert-left") ? toPos.x - 1 : toRight + 1;
 
     // Crow's foot depth = 10px; circle sits 10px from the table edge
     const pathX1  = crowDir === "right" ? x1 + 10 : x1 - 10;
-    const pathX2  = crowDir === "right" ? x2 -  6 : x2 +  6;
-    const circleX = crowDir === "right" ? x2 - 10 : x2 + 10;
+    const pathX2  = (crowDir === "right" || crowDir === "vert-left") ? x2 - 6  : x2 + 6;
+    const circleX = (crowDir === "right" || crowDir === "vert-left") ? x2 - 10 : x2 + 10;
 
     // ── FROM-side lane: offset midpoint so parallel corridors don't overlap ──
-    const baseMidX = (pathX1 + pathX2) / 2;
     const laneOffset = fromLaneCount > 1
       ? (fromLane - (fromLaneCount - 1) / 2) * LANE_SPACING
       : 0;
-    // For "right", higher lane index → larger midX (fan out rightward).
-    // For "left",  higher lane index → smaller midX (fan out leftward) — hence the sign flip.
-    const midX = baseMidX + (crowDir === "right" ? laneOffset : -laneOffset);
+    let midX;
+    if (crowDir === "vert-left") {
+      // C-shape: midX is to the LEFT of both tables' left edges, lanes spread further left
+      const outerLeft = Math.min(fromPos.x, toPos.x) - 30;
+      midX = outerLeft - Math.abs(laneOffset);
+    } else {
+      const baseMidX = (pathX1 + pathX2) / 2;
+      // For "right", higher lane index → larger midX (fan out rightward).
+      // For "left",  higher lane index → smaller midX (fan out leftward) — hence the sign flip.
+      midX = baseMidX + (crowDir === "right" ? laneOffset : -laneOffset);
+    }
 
     // ── TO-side lane: spread circles that land on the same PK column ─────────
     const arriveOffset = toLaneCount > 1
@@ -294,10 +306,11 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
     const opacity = hoveredTable && !isActive ? 0.18 : 1;
 
     // Label positions (just outside the decoration, above the line)
-    const starX    = crowDir === "right" ? x1 + 13  : x1 - 13;
-    const starAnchor = crowDir === "right" ? "start" : "end";
-    const cardX    = crowDir === "right" ? x2 - 13  : x2 + 13;
-    const cardAnchor = crowDir === "right" ? "end"   : "start";
+    // vert-left FROM uses left edge (same as "left"), TO uses left edge (same as "right")
+    const starX      = crowDir === "right" ? x1 + 13 : x1 - 13;
+    const starAnchor = crowDir === "right" ? "start"  : "end";
+    const cardX      = (crowDir === "right" || crowDir === "vert-left") ? x2 - 13 : x2 + 13;
+    const cardAnchor = (crowDir === "right" || crowDir === "vert-left") ? "end"   : "start";
 
     const pathKey = `rline-${ref.from.table}-${ref.from.column}-${ref.to.table}-${ref.to.column}`;
     // Custom path using per-connection midX + adjusted arrival Y
@@ -306,7 +319,7 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
     lines.push(
       <g key={pathKey} opacity={opacity}>
         <path id={pathKey} d={path} fill="none" stroke={lineColor} strokeWidth="1.3" />
-        <CrowFoot x={x1} y={fromY} dir={crowDir} color={lineColor} />
+        <CrowFoot x={x1} y={fromY} dir={crowDir === "right" ? "right" : "left"} color={lineColor} />
         <circle cx={circleX} cy={toYAdj} r="3.5" fill="none" stroke={lineColor} strokeWidth="1.3" />
 
         {/* Cardinality labels */}
