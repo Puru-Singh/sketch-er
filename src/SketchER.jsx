@@ -248,7 +248,7 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
         {/* Animated dot along the line when active */}
         {isActive && (
           <circle r="2.8" fill={lineColor} opacity="0.9">
-            <animateMotion dur="1.8s" repeatCount="indefinite">
+            <animateMotion dur="1.8s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1" calcMode="linear">
               <mpath href={`#${pathKey}`} />
             </animateMotion>
           </circle>
