@@ -95,9 +95,9 @@ function getColumnY(table, colIndex) {
 }
 
 function generatePath(x1, y1, x2, y2) {
-  const dx = Math.abs(x2 - x1);
-  const offset = Math.max(60, dx * 0.5);
-  return `M ${x1} ${y1} C ${x1 + (x2 > x1 ? offset : -offset)} ${y1}, ${x2 + (x2 > x1 ? -offset : offset)} ${y2}, ${x2} ${y2}`;
+  // Orthogonal (right-angle) path: horizontal out → vertical → horizontal in
+  const midX = (x1 + x2) / 2;
+  return `M ${x1} ${y1} H ${midX} V ${y2} H ${x2}`;
 }
 
 function RelationshipLines({ refs, tablePositions, tableData }) {
