@@ -156,11 +156,6 @@ function getColumnY(table, colIndex) {
   return table.y + HEADER_HEIGHT + colIndex * COL_HEIGHT + COL_HEIGHT / 2;
 }
 
-function generatePath(x1, y1, x2, y2) {
-  const midX = (x1 + x2) / 2;
-  return `M ${x1} ${y1} H ${midX} V ${y2} H ${x2}`;
-}
-
 // Crow's foot (many/FK) end — vertical bar + two prongs
 function CrowFoot({ x, y, dir, color }) {
   const spread = 6, depth = 10;
@@ -174,78 +169,153 @@ function CrowFoot({ x, y, dir, color }) {
   );
 }
 
+// How far apart to spread parallel connections that exit the same table side
+const LANE_SPACING = 24;
+// How far apart to spread multiple connections arriving at the same PK column
+const ARRIVE_SPREAD = 8;
+
 function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTable, tableColors }) {
+  // ── Phase 1: resolve direction + column indices for every valid ref ──────
+  const items = useMemo(() => {
+    const result = [];
+    for (const ref of refs) {
+      const fromPos = tablePositions[ref.from.table];
+      const toPos   = tablePositions[ref.to.table];
+      const fromData = tableData.find((t) => t.name === ref.from.table);
+      const toData   = tableData.find((t) => t.name === ref.to.table);
+      if (!fromPos || !toPos || !fromData || !toData) continue;
+
+      const fromColIdx = fromData.columns.findIndex((c) => c.name === ref.from.column);
+      const toColIdx   = toData.columns.findIndex((c) => c.name === ref.to.column);
+      if (fromColIdx === -1 || toColIdx === -1) continue;
+
+      const fromRight = fromPos.x + TABLE_WIDTH;
+      const toRight   = toPos.x  + TABLE_WIDTH;
+
+      // Use actual table edges to decide L/R — more reliable than centres
+      // when tables overlap horizontally fall back to centre comparison
+      let crowDir;
+      if (fromPos.x >= toRight) {
+        crowDir = "left";                        // from is clearly right of to
+      } else if (toPos.x >= fromRight) {
+        crowDir = "right";                       // to is clearly right of from
+      } else {
+        crowDir = (fromPos.x + TABLE_WIDTH / 2) <= (toPos.x + TABLE_WIDTH / 2)
+          ? "right" : "left";
+      }
+
+      result.push({ ref, fromColIdx, toColIdx, crowDir });
+    }
+    return result;
+  }, [refs, tablePositions, tableData]);
+
+  // ── Phase 2: assign FROM-side lanes ──────────────────────────────────────
+  // Connections leaving the same table on the same side get staggered midpoints
+  // so their vertical corridor segments never overlap.
+  // Sort by column index (top → bottom) so the visual fan is predictable.
+  const itemsWithLanes = useMemo(() => {
+    const fromGroups = {};
+    items.forEach((item) => {
+      const key = `${item.ref.from.table}::${item.crowDir}`;
+      (fromGroups[key] ??= []).push(item);
+    });
+    Object.values(fromGroups).forEach((group) => {
+      group.sort((a, b) => a.fromColIdx - b.fromColIdx);
+      group.forEach((item, i) => {
+        item.fromLane      = i;
+        item.fromLaneCount = group.length;
+      });
+    });
+
+    // ── Phase 3: assign TO-side lanes ────────────────────────────────────
+    // Multiple connections arriving at the exact same PK column get a small
+    // vertical spread so the circles don't stack on top of each other.
+    const toGroups = {};
+    items.forEach((item) => {
+      const key = `${item.ref.to.table}::${item.ref.to.column}`;
+      (toGroups[key] ??= []).push(item);
+    });
+    Object.values(toGroups).forEach((group) => {
+      // Sort by fromTable name for a consistent, deterministic order
+      group.sort((a, b) => a.ref.from.table.localeCompare(b.ref.from.table));
+      group.forEach((item, i) => {
+        item.toLane      = i;
+        item.toLaneCount = group.length;
+      });
+    });
+
+    return items;
+  }, [items]);
+
+  // ── Render ────────────────────────────────────────────────────────────────
   const lines = [];
 
-  for (const ref of refs) {
-    const fromTable = tablePositions[ref.from.table];
-    const toTable = tablePositions[ref.to.table];
-    const fromData = tableData.find((t) => t.name === ref.from.table);
-    const toData = tableData.find((t) => t.name === ref.to.table);
-    if (!fromTable || !toTable || !fromData || !toData) continue;
+  for (const item of itemsWithLanes) {
+    const { ref, fromColIdx, toColIdx, crowDir,
+            fromLane, fromLaneCount, toLane, toLaneCount } = item;
 
-    const fromColIdx = fromData.columns.findIndex((c) => c.name === ref.from.column);
-    const toColIdx = toData.columns.findIndex((c) => c.name === ref.to.column);
-    if (fromColIdx === -1 || toColIdx === -1) continue;
+    const fromPos = tablePositions[ref.from.table];
+    const toPos   = tablePositions[ref.to.table];
+    const fromRight = fromPos.x + TABLE_WIDTH;
+    const toRight   = toPos.x  + TABLE_WIDTH;
 
-    const fromY = getColumnY(fromTable, fromColIdx);
-    const toY = getColumnY(toTable, toColIdx);
-    const fromCenterX = fromTable.x + TABLE_WIDTH / 2;
-    const toCenterX = toTable.x + TABLE_WIDTH / 2;
-    const fromRight = fromTable.x + TABLE_WIDTH;
-    const toRight = toTable.x + TABLE_WIDTH;
+    const fromY = getColumnY(fromPos, fromColIdx);
+    const toY   = getColumnY(toPos,   toColIdx);
 
-    // from = FK/many (crow's foot), to = PK/one (circle)
-    let x1, x2, crowDir;
-    if (fromCenterX < toCenterX) {
-      x1 = fromRight + 1;
-      x2 = toTable.x - 1;
-      crowDir = "right";
-    } else {
-      x1 = fromTable.x - 1;
-      x2 = toRight + 1;
-      crowDir = "left";
-    }
+    // Exact entry/exit points on the table edges
+    const x1 = crowDir === "right" ? fromRight + 1 : fromPos.x - 1;
+    const x2 = crowDir === "right" ? toPos.x   - 1 : toRight   + 1;
 
-    // Path between decorations (10px offset for crow's foot, 9px for circle)
-    const pathX1 = crowDir === "right" ? x1 + 10 : x1 - 10;
-    const pathX2 = crowDir === "right" ? x2 - 6 : x2 + 6;
+    // Crow's foot depth = 10px; circle sits 10px from the table edge
+    const pathX1  = crowDir === "right" ? x1 + 10 : x1 - 10;
+    const pathX2  = crowDir === "right" ? x2 -  6 : x2 +  6;
     const circleX = crowDir === "right" ? x2 - 10 : x2 + 10;
 
+    // ── FROM-side lane: offset midpoint so parallel corridors don't overlap ──
+    const baseMidX = (pathX1 + pathX2) / 2;
+    const laneOffset = fromLaneCount > 1
+      ? (fromLane - (fromLaneCount - 1) / 2) * LANE_SPACING
+      : 0;
+    // For "right", higher lane index → larger midX (fan out rightward).
+    // For "left",  higher lane index → smaller midX (fan out leftward) — hence the sign flip.
+    const midX = baseMidX + (crowDir === "right" ? laneOffset : -laneOffset);
+
+    // ── TO-side lane: spread circles that land on the same PK column ─────────
+    const arriveOffset = toLaneCount > 1
+      ? (toLane - (toLaneCount - 1) / 2) * ARRIVE_SPREAD
+      : 0;
+    const toYAdj = toY + arriveOffset;
+
+    // ── Styling ──────────────────────────────────────────────────────────────
     const isActive = hoveredTable === ref.from.table || hoveredTable === ref.to.table;
     const lineColor = isActive
       ? (tableColors[ref.from.table] || theme.lineColor)
       : theme.lineColor;
-    const opacity = hoveredTable && !isActive ? 0.2 : 1;
+    const opacity = hoveredTable && !isActive ? 0.18 : 1;
 
-    // Label positions
-    const starX = crowDir === "right" ? x1 + 13 : x1 - 13;
+    // Label positions (just outside the decoration, above the line)
+    const starX    = crowDir === "right" ? x1 + 13  : x1 - 13;
     const starAnchor = crowDir === "right" ? "start" : "end";
-    const cardX = crowDir === "right" ? x2 - 13 : x2 + 13;
-    const cardAnchor = crowDir === "right" ? "end" : "start";
+    const cardX    = crowDir === "right" ? x2 - 13  : x2 + 13;
+    const cardAnchor = crowDir === "right" ? "end"   : "start";
 
     const pathKey = `rline-${ref.from.table}-${ref.from.column}-${ref.to.table}-${ref.to.column}`;
-    const path = generatePath(pathX1, fromY, pathX2, toY);
+    // Custom path using per-connection midX + adjusted arrival Y
+    const path = `M ${pathX1} ${fromY} H ${midX} V ${toYAdj} H ${pathX2}`;
 
     lines.push(
       <g key={pathKey} opacity={opacity}>
         <path id={pathKey} d={path} fill="none" stroke={lineColor} strokeWidth="1.3" />
         <CrowFoot x={x1} y={fromY} dir={crowDir} color={lineColor} />
-        <circle cx={circleX} cy={toY} r="3.5" fill="none" stroke={lineColor} strokeWidth="1.3" />
+        <circle cx={circleX} cy={toYAdj} r="3.5" fill="none" stroke={lineColor} strokeWidth="1.3" />
 
         {/* Cardinality labels */}
-        <text
-          x={starX} y={fromY - 7}
-          fill={lineColor} fontSize="11" fontFamily="'DM Sans', sans-serif"
-          textAnchor={starAnchor} fontWeight="700"
-        >*</text>
-        <text
-          x={cardX} y={toY - 7}
-          fill={lineColor} fontSize="9.5" fontFamily="'DM Sans', sans-serif"
-          textAnchor={cardAnchor} opacity="0.85"
-        >0..1</text>
+        <text x={starX} y={fromY - 7} fill={lineColor} fontSize="11"
+          fontFamily="'DM Sans', sans-serif" textAnchor={starAnchor} fontWeight="700">*</text>
+        <text x={cardX} y={toYAdj - 7} fill={lineColor} fontSize="9.5"
+          fontFamily="'DM Sans', sans-serif" textAnchor={cardAnchor} opacity="0.85">0..1</text>
 
-        {/* Animated dot along the line when active */}
+        {/* Animated dot — moves PK → FK (reversed) */}
         {isActive && (
           <circle r="2.8" fill={lineColor} opacity="0.9">
             <animateMotion dur="1.8s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1" calcMode="linear">
