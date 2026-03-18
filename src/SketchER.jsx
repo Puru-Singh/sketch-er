@@ -230,6 +230,10 @@ const COL_HEIGHT = 32;
 const HEADER_HEIGHT = 42;
 const TABLE_WIDTH = 230;
 
+// Controls where the dark gradient begins (% from top of header).
+// 0 = full dark overlay, 100 = no gradient. Tweak to taste.
+const HEADER_GRADIENT_STOP = 10;
+
 function getColumnY(table, colIndex) {
   return table.y + HEADER_HEIGHT + colIndex * COL_HEIGHT + COL_HEIGHT / 2;
 }
@@ -520,13 +524,18 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           justifyContent: "space-between",
           padding: "0 12px",
           fontFamily: "'DM Sans', sans-serif",
+          position: "relative",
         }}
       >
+        <div style={{
+          position: "absolute",
+          inset: 0,
+          background: `linear-gradient(transparent ${HEADER_GRADIENT_STOP}%, rgba(0,0,0,0.55) 100%)`,
+          pointerEvents: "none",
+        }} />
         <span style={{
-          background: "rgba(0,0,0,0.45)",
+          position: "relative",
           color: "#fff",
-          padding: "2px 9px",
-          borderRadius: "5px",
           fontSize: "12px",
           fontWeight: 700,
           letterSpacing: "0.2px",
