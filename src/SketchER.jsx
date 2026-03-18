@@ -60,6 +60,51 @@ const GROUP_ACCENT_COLORS = [
   "#ec4899", "#06b6d4", "#f97316", "#84cc16",
 ];
 
+// ── Color utilities for hue-family generation ────────────────────────────────
+function hexToHsl(hex) {
+  let r = parseInt(hex.slice(1, 3), 16) / 255;
+  let g = parseInt(hex.slice(3, 5), 16) / 255;
+  let b = parseInt(hex.slice(5, 7), 16) / 255;
+  const max = Math.max(r, g, b), min = Math.min(r, g, b);
+  let h = 0, s = 0;
+  const l = (max + min) / 2;
+  if (max !== min) {
+    const d = max - min;
+    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
+    switch (max) {
+      case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
+      case g: h = ((b - r) / d + 2) / 6; break;
+      case b: h = ((r - g) / d + 4) / 6; break;
+    }
+  }
+  return [h * 360, s * 100, l * 100];
+}
+
+function hslToHex(h, s, l) {
+  s /= 100; l /= 100;
+  const a = s * Math.min(l, 1 - l);
+  const f = (n) => {
+    const k = (n + h / 30) % 12;
+    const c = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+    return Math.round(255 * c).toString(16).padStart(2, "0");
+  };
+  return `#${f(0)}${f(8)}${f(4)}`;
+}
+
+// Generate `count` visually related but distinct colors from a base hex color.
+// Spreads ±10° hue, varies lightness ±12%, keeps saturation close to base.
+function generateHueFamily(baseHex, count) {
+  if (count <= 1) return [baseHex];
+  const [h, s, l] = hexToHsl(baseHex);
+  return Array.from({ length: count }, (_, i) => {
+    const t = i / (count - 1);
+    const hNew = (h + (t - 0.5) * 20 + 360) % 360;
+    const lNew = Math.max(32, Math.min(68, l + (t - 0.5) * 24));
+    const sNew = Math.max(55, Math.min(92, s + (t - 0.5) * 10));
+    return hslToHex(hNew, sNew, lNew);
+  });
+}
+
 const LIGHT_THEME = {
   appBg: "#ffffff",
   editorPanelBg: "#f3f3f3",
@@ -425,8 +470,13 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
   const handleMouseDown = (e) => {
     if (e.target.closest(".color-picker-area")) return;
     e.stopPropagation();
-    onSelect(table.name);
-    onDragStart(table.name, e.clientX, e.clientY);
+    if (e.ctrlKey || e.metaKey) {
+      // Ctrl/Cmd+click: toggle membership in multi-selection, no drag
+      onSelect(table.name, true);
+    } else {
+      onSelect(table.name, false);
+      onDragStart(table.name, e.clientX, e.clientY);
+    }
   };
 
   return (
@@ -1313,7 +1363,7 @@ export default function SketchER() {
   const [dbml, setDbml] = useState(saved?.dbml ?? DEFAULT_DBML);
   const [tablePositions, setTablePositions] = useState(saved?.tablePositions ?? {});
   const [tableColors, setTableColors] = useState(saved?.tableColors ?? {});
-  const [selectedTable, setSelectedTable] = useState(null);
+  const [selectedTables, setSelectedTables] = useState(new Set());
   const [hoveredTable, setHoveredTable] = useState(null);
   const [dragging, setDragging] = useState(null);
   const [draggingLine, setDraggingLine] = useState(null); // { pathKey, startClientX, startMidX }
@@ -1671,7 +1721,7 @@ export default function SketchER() {
   const handleCanvasMouseDown = (e) => {
     setIsPanning(true);
     setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
-    setSelectedTable(null);
+    setSelectedTables(new Set());
   };
 
   const handleLineDragStart = useCallback((pathKey, clientX, currentMidX) => {
@@ -1766,6 +1816,34 @@ export default function SketchER() {
     setTableColors((prev) => ({ ...prev, [tableName]: color }));
   };
 
+  const handleTableSelect = useCallback((tableName, isMulti) => {
+    if (isMulti) {
+      setSelectedTables((prev) => {
+        const next = new Set(prev);
+        if (next.has(tableName)) next.delete(tableName);
+        else next.add(tableName);
+        return next;
+      });
+    } else {
+      setSelectedTables(new Set([tableName]));
+    }
+  }, []);
+
+  const handlePaletteColorClick = useCallback((color) => {
+    const names = [...selectedTables];
+    if (names.length === 0) return;
+    if (names.length === 1) {
+      handleColorChange(names[0], color);
+    } else {
+      const variants = generateHueFamily(color, names.length);
+      setTableColors((prev) => {
+        const next = { ...prev };
+        names.forEach((name, i) => { next[name] = variants[i]; });
+        return next;
+      });
+    }
+  }, [selectedTables]);
+
   const [lineNumbers, setLineNumbers] = useState([]);
   useEffect(() => {
     setLineNumbers(dbml.split("\n").map((_, i) => i + 1));
@@ -1847,7 +1925,7 @@ export default function SketchER() {
         </div>
 
         {/* Color palette (when table selected) */}
-        {selectedTable && (
+        {selectedTables.size > 0 && (
           <div
             style={{
               padding: "10px 18px",
@@ -1859,20 +1937,21 @@ export default function SketchER() {
               fontSize: "11px",
             }}
           >
-            <span style={{ color: theme.textSecondary, marginRight: "4px", fontWeight: 500 }}>
-              {selectedTable}:
+            <span style={{ color: theme.textSecondary, marginRight: "4px", fontWeight: 500, flexShrink: 0 }}>
+              {selectedTables.size === 1 ? [...selectedTables][0] : `${selectedTables.size} tables`}:
             </span>
             {TABLE_COLORS.map((c) => (
               <div
                 key={c}
-                onClick={() => handleColorChange(selectedTable, c)}
+                onClick={() => handlePaletteColorClick(c)}
+                title={selectedTables.size > 1 ? "Apply hue family" : undefined}
                 style={{
                   width: 19,
                   height: 19,
                   borderRadius: "50%",
                   background: c,
                   cursor: "pointer",
-                  border: tableColors[selectedTable] === c
+                  border: selectedTables.size === 1 && tableColors[[...selectedTables][0]] === c
                     ? `2.5px solid ${isDark ? "#fff" : "#1e1e1e"}`
                     : "2.5px solid transparent",
                   transition: "all 0.15s",
@@ -2075,8 +2154,8 @@ export default function SketchER() {
                 color={tableColors[table.name] || "#10b981"}
                 onDragStart={handleDragStart}
                 onColorChange={handleColorChange}
-                isSelected={selectedTable === table.name}
-                onSelect={setSelectedTable}
+                isSelected={selectedTables.has(table.name)}
+                onSelect={handleTableSelect}
                 theme={theme}
                 fkColumns={fkMap[table.name]}
                 activeColumns={activeColumns[table.name]}
