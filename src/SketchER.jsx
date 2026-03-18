@@ -2014,8 +2014,8 @@ export default function SketchER() {
         <Toolbar
           onAutoLayout={autoLayout}
           onResetView={resetView}
-          onZoomIn={() => setZoom((z) => Math.min(2, z + 0.15))}
-          onZoomOut={() => setZoom((z) => Math.max(0.25, z - 0.15))}
+          onZoomIn={() => setZoom((z) => Math.min(2, z + 0.1))}
+          onZoomOut={() => setZoom((z) => Math.max(0.25, z - 0.1))}
           onZoomSet={(v) => setZoom(Math.max(0.25, Math.min(2, v)))}
           zoom={zoom}
           isDark={isDark}
