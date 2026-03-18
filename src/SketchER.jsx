@@ -343,6 +343,8 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
 }
 
 function TableNode({ table, position, color, onDragStart, onColorChange, isSelected, onSelect, theme, fkColumns, activeColumns, onHover }) {
+  const [pickerHovered, setPickerHovered] = useState(false);
+
   const handleMouseDown = (e) => {
     if (e.target.closest(".color-picker-area")) return;
     e.stopPropagation();
@@ -389,7 +391,12 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
         }}
       >
         <span>{table.name}</span>
-        <div className="color-picker-area">
+        <div
+          className="color-picker-area"
+          style={{ position: "relative" }}
+          onMouseEnter={() => setPickerHovered(true)}
+          onMouseLeave={() => setPickerHovered(false)}
+        >
           <input
             type="color"
             value={color}
@@ -405,8 +412,29 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
               appearance: "none",
               WebkitAppearance: "none",
             }}
-            title="Change header color"
           />
+          {pickerHovered && (
+            <div style={{
+              position: "absolute",
+              top: "calc(100% + 10px)",
+              right: 0,
+              background: theme.toolbarBg,
+              border: `1px solid ${theme.toolbarBorder}`,
+              color: theme.textPrimary,
+              fontSize: "12.5px",
+              fontWeight: 500,
+              padding: "7px 14px",
+              borderRadius: "8px",
+              whiteSpace: "nowrap",
+              boxShadow: "0 6px 20px rgba(0,0,0,0.13)",
+              zIndex: 100,
+              fontFamily: "'DM Sans', sans-serif",
+              pointerEvents: "none",
+              letterSpacing: "0.1px",
+            }}>
+              Pick table color
+            </div>
+          )}
         </div>
       </div>
 
