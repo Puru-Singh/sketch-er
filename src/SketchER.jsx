@@ -50,9 +50,18 @@ TableGroup Content {
 }`;
 
 const TABLE_COLORS = [
-  "#10b981", "#3b82f6", "#8b5cf6", "#ef4444",
-  "#f59e0b", "#ec4899", "#06b6d4", "#f97316",
-  "#6366f1", "#14b8a6", "#e11d48", "#84cc16",
+  "#ef4444", // 0°   red
+  "#f97316", // 25°  orange
+  "#eab308", // 54°  yellow
+  "#84cc16", // 82°  lime
+  "#22c55e", // 142° green
+  "#14b8a6", // 173° teal
+  "#06b6d4", // 192° cyan
+  "#3b82f6", // 217° blue
+  "#8b5cf6", // 258° violet
+  "#c026d3", // 295° fuchsia
+  "#ec4899", // 322° pink
+  "#f43f5e", // 351° rose
 ];
 
 const GROUP_ACCENT_COLORS = [
@@ -1931,15 +1940,16 @@ export default function SketchER() {
               padding: "10px 18px",
               borderBottom: `1px solid ${theme.border}`,
               display: "flex",
-              alignItems: "center",
-              gap: "6px",
+              flexDirection: "column",
+              gap: "8px",
               background: theme.colorPaletteRowBg,
               fontSize: "11px",
             }}
           >
-            <span style={{ color: theme.textSecondary, marginRight: "4px", fontWeight: 500, flexShrink: 0 }}>
-              {selectedTables.size === 1 ? [...selectedTables][0] : `${selectedTables.size} tables`}:
+            <span style={{ color: theme.textSecondary, fontWeight: 600, fontSize: "11.5px" }}>
+              {selectedTables.size === 1 ? [...selectedTables][0] : `${selectedTables.size} tables selected`}
             </span>
+            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
             {TABLE_COLORS.map((c) => (
               <div
                 key={c}
@@ -1959,6 +1969,7 @@ export default function SketchER() {
                 }}
               />
             ))}
+            </div>
           </div>
         )}
 
