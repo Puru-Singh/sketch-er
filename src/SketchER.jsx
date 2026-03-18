@@ -1377,6 +1377,8 @@ export default function SketchER() {
   const theme = isDark ? DARK_THEME : LIGHT_THEME;
 
   const [fileName, setFileName] = useState("Untitled");
+  const [editingFileName, setEditingFileName] = useState(false);
+  const fileNameInputRef = useRef(null);
   const pendingFitRef = useRef(false);
   const hasFittedRef = useRef(false);
 
@@ -2152,7 +2154,7 @@ export default function SketchER() {
           <rect width="100%" height="100%" fill="url(#grid)" />
         </svg>
 
-        {/* Filename display */}
+        {/* Filename display / edit */}
         <div
           onMouseDown={(e) => e.stopPropagation()}
           style={{
@@ -2163,7 +2165,7 @@ export default function SketchER() {
             alignItems: "center",
             gap: "6px",
             background: theme.toolbarBg,
-            border: `1px solid ${theme.toolbarBorder}`,
+            border: `1px solid ${editingFileName ? "#10b981" : theme.toolbarBorder}`,
             borderRadius: "8px",
             padding: "7px 12px",
             zIndex: 20,
@@ -2172,13 +2174,52 @@ export default function SketchER() {
             fontFamily: "'DM Sans', sans-serif",
             fontWeight: 500,
             userSelect: "none",
+            transition: "border-color 0.15s",
           }}
         >
           <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
             <polyline points="14 2 14 8 20 8"/>
           </svg>
-          {fileName}
+          {editingFileName ? (
+            <input
+              ref={fileNameInputRef}
+              defaultValue={fileName}
+              onBlur={(e) => {
+                const v = e.target.value.trim();
+                if (v) setFileName(v);
+                setEditingFileName(false);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === "Enter") e.target.blur();
+                if (e.key === "Escape") { setEditingFileName(false); }
+              }}
+              style={{
+                background: "transparent",
+                border: "none",
+                outline: "none",
+                color: theme.toolbarText,
+                fontSize: "12px",
+                fontFamily: "'DM Sans', sans-serif",
+                fontWeight: 500,
+                width: `${Math.max(60, fileName.length * 7.5)}px`,
+                padding: 0,
+              }}
+            />
+          ) : (
+            <span
+              onClick={() => {
+                setEditingFileName(true);
+                setTimeout(() => {
+                  fileNameInputRef.current?.select();
+                }, 0);
+              }}
+              title="Click to rename"
+              style={{ cursor: "text" }}
+            >
+              {fileName}
+            </span>
+          )}
         </div>
 
         <Toolbar
