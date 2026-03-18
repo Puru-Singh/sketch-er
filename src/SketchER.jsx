@@ -1732,17 +1732,6 @@ export default function SketchER() {
     return () => obs.disconnect();
   }, []);
 
-  // Auto-fit on initial load and after file load
-  useEffect(() => {
-    const hasPositions = Object.keys(tablePositions).length > 0;
-    if (!hasPositions || canvasSize.w === 0) return;
-    if (!hasFittedRef.current || pendingFitRef.current) {
-      hasFittedRef.current = true;
-      pendingFitRef.current = false;
-      fitToCanvas();
-    }
-  }, [tablePositions, canvasSize, fitToCanvas]);
-
   const handleDragStart = useCallback((tableName, clientX, clientY) => {
     const pos = tablePositions[tableName];
     if (!pos) return;
@@ -1871,6 +1860,17 @@ export default function SketchER() {
       y: (canvasSize.h - contentH * newZoom) / 2 - (minY - PAD) * newZoom,
     });
   }, [tablePositions, tables, tableWidths, canvasSize]);
+
+  // Auto-fit on initial load and after file load
+  useEffect(() => {
+    const hasPositions = Object.keys(tablePositions).length > 0;
+    if (!hasPositions || canvasSize.w === 0) return;
+    if (!hasFittedRef.current || pendingFitRef.current) {
+      hasFittedRef.current = true;
+      pendingFitRef.current = false;
+      fitToCanvas();
+    }
+  }, [tablePositions, canvasSize, fitToCanvas]);
 
   const handleColorChange = (tableName, color) => {
     setTableColors((prev) => ({ ...prev, [tableName]: color }));
