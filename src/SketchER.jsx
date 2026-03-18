@@ -804,7 +804,7 @@ function ZoomControl({ zoom, onZoomSet, theme }) {
   );
 }
 
-function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp }) {
+function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp }) {
   return (
     <div onMouseDown={(e) => e.stopPropagation()} style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
       <TBtn onClick={onToggleTheme} tip={isDark ? "Switch to light mode" : "Switch to dark mode"} theme={theme}>
@@ -829,6 +829,13 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetVi
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M3 12a9 9 0 1 1 3 6.7" /><path d="M3 21v-6h6" />
         </svg>
+      </TBtn>
+      <TBtn onClick={onFit} tip="Fit all tables in view" theme={theme}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
+          <path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
+        </svg>
+        Fit
       </TBtn>
       <TBtn onClick={onAutoLayout} tip="Auto-arrange tables" theme={theme}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
@@ -1369,6 +1376,10 @@ export default function SketchER() {
   const [isDark, setIsDark] = useState(saved?.isDark ?? false);
   const theme = isDark ? DARK_THEME : LIGHT_THEME;
 
+  const [fileName, setFileName] = useState("Untitled");
+  const pendingFitRef = useRef(false);
+  const hasFittedRef = useRef(false);
+
   const [dbml, setDbml] = useState(saved?.dbml ?? DEFAULT_DBML);
   const [tablePositions, setTablePositions] = useState(saved?.tablePositions ?? {});
   const [tableColors, setTableColors] = useState(saved?.tableColors ?? {});
@@ -1461,11 +1472,13 @@ export default function SketchER() {
     );
     const url = URL.createObjectURL(blob);
     const link = document.createElement("a");
-    link.download = "diagram.sker";
+    const baseName = fileName === "Untitled" ? "diagram" : fileName;
+    link.download = baseName.endsWith(".sker") ? baseName : `${baseName}.sker`;
     link.href = url;
     link.click();
     URL.revokeObjectURL(url);
-  }, [dbml, tablePositions, tableColors, isDark, lineMidXOverrides]);
+    if (fileName === "Untitled") setFileName("diagram");
+  }, [dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible, fileName]);
 
   // Load diagram from a .sker / .json file
   const loadInputRef = useRef(null);
@@ -1476,12 +1489,14 @@ export default function SketchER() {
     reader.onload = (evt) => {
       try {
         const state = JSON.parse(evt.target.result);
-        if (state.dbml !== undefined)          setDbml(state.dbml);
-        if (state.tablePositions !== undefined) setTablePositions(state.tablePositions);
-        if (state.tableColors !== undefined)    setTableColors(state.tableColors);
-        if (state.isDark !== undefined)              setIsDark(state.isDark);
-        if (state.lineMidXOverrides !== undefined)   setLineMidXOverrides(state.lineMidXOverrides);
-        if (state.groupsVisible !== undefined)       setGroupsVisible(state.groupsVisible);
+        if (state.dbml !== undefined)              setDbml(state.dbml);
+        if (state.tablePositions !== undefined)    setTablePositions(state.tablePositions);
+        if (state.tableColors !== undefined)       setTableColors(state.tableColors);
+        if (state.isDark !== undefined)            setIsDark(state.isDark);
+        if (state.lineMidXOverrides !== undefined) setLineMidXOverrides(state.lineMidXOverrides);
+        if (state.groupsVisible !== undefined)     setGroupsVisible(state.groupsVisible);
+        setFileName(file.name.replace(/\.(sker|json)$/i, ""));
+        pendingFitRef.current = true;
       } catch {}
     };
     reader.readAsText(file);
@@ -1717,6 +1732,17 @@ export default function SketchER() {
     return () => obs.disconnect();
   }, []);
 
+  // Auto-fit on initial load and after file load
+  useEffect(() => {
+    const hasPositions = Object.keys(tablePositions).length > 0;
+    if (!hasPositions || canvasSize.w === 0) return;
+    if (!hasFittedRef.current || pendingFitRef.current) {
+      hasFittedRef.current = true;
+      pendingFitRef.current = false;
+      fitToCanvas();
+    }
+  }, [tablePositions, canvasSize, fitToCanvas]);
+
   const handleDragStart = useCallback((tableName, clientX, clientY) => {
     const pos = tablePositions[tableName];
     if (!pos) return;
@@ -1820,6 +1846,31 @@ export default function SketchER() {
     setCanvasOffset({ x: 0, y: 0 });
     setZoom(1);
   };
+
+  const fitToCanvas = useCallback(() => {
+    const tableNames = Object.keys(tablePositions);
+    if (tableNames.length === 0 || canvasSize.w === 0) return;
+    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    for (const name of tableNames) {
+      const pos = tablePositions[name];
+      const td = tables.find((t) => t.name === name);
+      if (!pos || !td) continue;
+      const w = tableWidths[name] || TABLE_WIDTH;
+      const h = HEADER_HEIGHT + td.columns.length * COL_HEIGHT;
+      minX = Math.min(minX, pos.x); minY = Math.min(minY, pos.y);
+      maxX = Math.max(maxX, pos.x + w); maxY = Math.max(maxY, pos.y + h);
+    }
+    if (!isFinite(minX)) return;
+    const PAD = 60;
+    const contentW = maxX - minX + PAD * 2;
+    const contentH = maxY - minY + PAD * 2;
+    const newZoom = Math.max(0.25, Math.min(2, Math.min(canvasSize.w / contentW, canvasSize.h / contentH)));
+    setZoom(newZoom);
+    setCanvasOffset({
+      x: (canvasSize.w - contentW * newZoom) / 2 - (minX - PAD) * newZoom,
+      y: (canvasSize.h - contentH * newZoom) / 2 - (minY - PAD) * newZoom,
+    });
+  }, [tablePositions, tables, tableWidths, canvasSize]);
 
   const handleColorChange = (tableName, color) => {
     setTableColors((prev) => ({ ...prev, [tableName]: color }));
@@ -2101,9 +2152,39 @@ export default function SketchER() {
           <rect width="100%" height="100%" fill="url(#grid)" />
         </svg>
 
+        {/* Filename display */}
+        <div
+          onMouseDown={(e) => e.stopPropagation()}
+          style={{
+            position: "absolute",
+            top: 12,
+            left: 12,
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            background: theme.toolbarBg,
+            border: `1px solid ${theme.toolbarBorder}`,
+            borderRadius: "8px",
+            padding: "7px 12px",
+            zIndex: 20,
+            fontSize: "12px",
+            color: theme.toolbarText,
+            fontFamily: "'DM Sans', sans-serif",
+            fontWeight: 500,
+            userSelect: "none",
+          }}
+        >
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
+            <polyline points="14 2 14 8 20 8"/>
+          </svg>
+          {fileName}
+        </div>
+
         <Toolbar
           onAutoLayout={autoLayout}
           onResetView={resetView}
+          onFit={fitToCanvas}
           onZoomIn={() => setZoom((z) => Math.min(2, z + 0.1))}
           onZoomOut={() => setZoom((z) => Math.max(0.25, z - 0.1))}
           onZoomSet={(v) => setZoom(Math.max(0.25, Math.min(2, v)))}
