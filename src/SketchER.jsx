@@ -643,7 +643,7 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark,
     fontWeight: 500,
   };
   return (
-    <div style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
+    <div onMouseDown={(e) => e.stopPropagation()} style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
       <TBtn onClick={onToggleTheme} tip={isDark ? "Switch to light mode" : "Switch to dark mode"} theme={theme}>
         {isDark ? (
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -941,6 +941,7 @@ function MiniMap({ tablePositions, tableData, colors, canvasOffset, zoom, canvas
 
   return (
     <div
+      onMouseDown={(e) => e.stopPropagation()}
       style={{
         position: "absolute",
         bottom: 12,
@@ -1073,7 +1074,7 @@ function GroupOverlay({ groups, tablePositions, tableWidths, tableData, groupsVi
 
 function BottomGroupPane({ groupsVisible, onToggle, theme }) {
   return (
-    <div style={{
+    <div onMouseDown={(e) => e.stopPropagation()} style={{
       position: "absolute",
       bottom: 12,
       left: "50%",
@@ -1494,11 +1495,9 @@ export default function SketchER() {
   }, [tablePositions, zoom, canvasOffset]);
 
   const handleCanvasMouseDown = (e) => {
-    if (e.target === canvasRef.current || e.target.tagName === "svg") {
-      setIsPanning(true);
-      setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
-      setSelectedTable(null);
-    }
+    setIsPanning(true);
+    setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
+    setSelectedTable(null);
   };
 
   const handleLineDragStart = useCallback((pathKey, clientX, currentMidX) => {
@@ -1817,7 +1816,7 @@ export default function SketchER() {
           flex: 1,
           position: "relative",
           overflow: "hidden",
-          cursor: isPanning ? "grabbing" : "default",
+          cursor: isPanning ? "move" : "default",
           background: theme.canvasBg,
         }}
       >
