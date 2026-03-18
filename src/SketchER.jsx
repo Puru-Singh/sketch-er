@@ -571,13 +571,17 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
   );
 }
 
-function Tooltip({ text, theme }) {
+function Tooltip({ text, theme, align = "center" }) {
+  const pos = align === "right"
+    ? { right: 0 }
+    : align === "left"
+    ? { left: 0 }
+    : { left: "50%", transform: "translateX(-50%)" };
   return (
     <div style={{
       position: "absolute",
       top: "calc(100% + 10px)",
-      left: "50%",
-      transform: "translateX(-50%)",
+      ...pos,
       background: theme.toolbarBg,
       border: `1px solid ${theme.toolbarBorder}`,
       color: theme.textPrimary,
@@ -597,7 +601,7 @@ function Tooltip({ text, theme }) {
   );
 }
 
-function TBtn({ onClick, tip, theme, children, style = {} }) {
+function TBtn({ onClick, tip, theme, children, style = {}, tipAlign = "center" }) {
   const [hovered, setHovered] = useState(false);
   const base = {
     position: "relative",
@@ -621,27 +625,127 @@ function TBtn({ onClick, tip, theme, children, style = {} }) {
       onMouseEnter={() => setHovered(true)}
       onMouseLeave={() => setHovered(false)}>
       {children}
-      {hovered && tip && <Tooltip text={tip} theme={theme} />}
+      {hovered && tip && <Tooltip text={tip} theme={theme} align={tipAlign} />}
     </button>
   );
 }
 
-function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp }) {
-  const staticSpan = {
-    padding: "7px 12px",
-    background: theme.toolbarBg,
-    border: `1px solid ${theme.toolbarBorder}`,
-    borderRadius: "8px",
-    color: theme.toolbarText,
-    fontSize: "11px",
-    display: "flex",
-    alignItems: "center",
-    cursor: "default",
-    minWidth: "50px",
-    justifyContent: "center",
-    fontFamily: "'DM Sans', sans-serif",
-    fontWeight: 500,
+function ZoomControl({ zoom, onZoomSet, theme }) {
+  const [open, setOpen] = useState(false);
+  const [inputVal, setInputVal] = useState(String(Math.round(zoom * 100)));
+  const ref = useRef(null);
+
+  useEffect(() => {
+    setInputVal(String(Math.round(zoom * 100)));
+  }, [zoom]);
+
+  useEffect(() => {
+    if (!open) return;
+    const handler = (e) => {
+      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", handler);
+    return () => document.removeEventListener("pointerdown", handler);
+  }, [open]);
+
+  const applyInput = () => {
+    const v = parseInt(inputVal, 10);
+    if (!isNaN(v)) onZoomSet(Math.max(25, Math.min(200, v)) / 100);
   };
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        onClick={() => setOpen((o) => !o)}
+        style={{
+          padding: "7px 12px",
+          background: open ? "#10b98122" : theme.toolbarBg,
+          border: `1px solid ${open ? "#10b981" : theme.toolbarBorder}`,
+          borderRadius: "8px",
+          color: open ? "#10b981" : theme.toolbarText,
+          cursor: "pointer",
+          fontSize: "11px",
+          minWidth: "50px",
+          textAlign: "center",
+          fontFamily: "'DM Sans', sans-serif",
+          fontWeight: 500,
+          transition: "all 0.15s",
+        }}
+      >
+        {Math.round(zoom * 100)}%
+      </button>
+
+      {open && (
+        <div style={{
+          position: "absolute",
+          top: "calc(100% + 8px)",
+          left: "50%",
+          transform: "translateX(-50%)",
+          background: theme.toolbarBg,
+          border: `1px solid ${theme.toolbarBorder}`,
+          borderRadius: "10px",
+          padding: "14px 16px",
+          width: "210px",
+          boxShadow: "0 8px 28px rgba(0,0,0,0.14)",
+          zIndex: 200,
+          display: "flex",
+          flexDirection: "column",
+          gap: "10px",
+          fontFamily: "'DM Sans', sans-serif",
+        }}>
+          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: theme.textMuted }}>
+            <span>25%</span><span>200%</span>
+          </div>
+          <input
+            type="range" min="25" max="200" step="5"
+            value={Math.round(zoom * 100)}
+            onChange={(e) => onZoomSet(parseInt(e.target.value, 10) / 100)}
+            style={{ width: "100%", accentColor: "#10b981", cursor: "pointer" }}
+          />
+          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+            <input
+              type="number" min="25" max="200"
+              value={inputVal}
+              onChange={(e) => setInputVal(e.target.value)}
+              onKeyDown={(e) => { if (e.key === "Enter") { applyInput(); setOpen(false); } }}
+              onBlur={applyInput}
+              style={{
+                flex: 1,
+                padding: "5px 8px",
+                background: theme.editorPanelBg,
+                border: `1px solid ${theme.border}`,
+                borderRadius: "6px",
+                color: theme.textPrimary,
+                fontSize: "12px",
+                fontFamily: "'DM Sans', sans-serif",
+                outline: "none",
+                textAlign: "right",
+              }}
+            />
+            <span style={{ fontSize: "12px", color: theme.textMuted, flexShrink: 0 }}>%</span>
+          </div>
+          <div style={{ display: "flex", gap: "6px" }}>
+            {[50, 100, 150].map((p) => (
+              <button key={p} onClick={() => { onZoomSet(p / 100); setOpen(false); }}
+                style={{
+                  flex: 1, padding: "4px 0",
+                  background: Math.round(zoom * 100) === p ? "#10b98122" : theme.editorPanelBg,
+                  border: `1px solid ${Math.round(zoom * 100) === p ? "#10b981" : theme.border}`,
+                  borderRadius: "6px", cursor: "pointer",
+                  color: Math.round(zoom * 100) === p ? "#10b981" : theme.textSecondary,
+                  fontSize: "11px", fontFamily: "'DM Sans', sans-serif", fontWeight: 500,
+                }}>
+                {p}%
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp }) {
   return (
     <div onMouseDown={(e) => e.stopPropagation()} style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
       <TBtn onClick={onToggleTheme} tip={isDark ? "Switch to light mode" : "Switch to dark mode"} theme={theme}>
@@ -660,7 +764,7 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark,
         )}
       </TBtn>
       <TBtn onClick={onZoomOut} tip="Zoom out" theme={theme}>−</TBtn>
-      <span style={staticSpan}>{Math.round(zoom * 100)}%</span>
+      <ZoomControl zoom={zoom} onZoomSet={onZoomSet} theme={theme} />
       <TBtn onClick={onZoomIn} tip="Zoom in" theme={theme}>+</TBtn>
       <TBtn onClick={onResetView} tip="Reset view" theme={theme}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
@@ -696,7 +800,7 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark,
         </svg>
         Export
       </TBtn>
-      <TBtn onClick={onShowHelp} tip="Help & reference" theme={theme}>
+      <TBtn onClick={onShowHelp} tip="Help & reference" theme={theme} tipAlign="right">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10"/>
           <line x1="12" y1="8" x2="12" y2="12"/>
@@ -707,7 +811,28 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark,
   );
 }
 
+const INFO_SECTIONS = [
+  { id: "tables",        label: "Tables",          color: "#10b981" },
+  { id: "relationships", label: "Relationships",   color: "#3b82f6" },
+  { id: "groups",        label: "Table Groups",    color: "#8b5cf6" },
+  { id: "canvas",        label: "Canvas Controls", color: "#f59e0b" },
+  { id: "colors",        label: "Colors & Theming",color: "#ec4899" },
+  { id: "saving",        label: "Saving & Export", color: "#06b6d4" },
+];
+
 function InfoModal({ theme, onClose }) {
+  const [activeSection, setActiveSection] = useState("tables");
+  const scrollRef = useRef(null);
+  const sectionRefs = useRef({});
+
+  const scrollTo = (id) => {
+    const container = scrollRef.current;
+    const target = sectionRefs.current[id];
+    if (!container || !target) return;
+    container.scrollTo({ top: target.offsetTop - 16, behavior: "smooth" });
+    setActiveSection(id);
+  };
+
   const Code = ({ children }) => (
     <pre style={{
       background: theme.editorPanelBg,
@@ -724,19 +849,17 @@ function InfoModal({ theme, onClose }) {
     }}>{children}</pre>
   );
 
-  const Section = ({ color, icon, title, children }) => (
-    <div style={{ marginBottom: "28px" }}>
+  const Section = ({ id, color, icon, title, children }) => (
+    <div ref={(el) => { if (id) sectionRefs.current[id] = el; }} style={{ marginBottom: "32px" }}>
       <div style={{
         display: "flex", alignItems: "center", gap: "8px",
-        marginBottom: "12px",
-        paddingBottom: "8px",
+        marginBottom: "12px", paddingBottom: "8px",
         borderBottom: `1px solid ${theme.border}`,
       }}>
         <span style={{
           display: "flex", alignItems: "center", justifyContent: "center",
           width: 26, height: 26, borderRadius: "7px",
-          background: color + "22", color,
-          flexShrink: 0,
+          background: color + "22", color, flexShrink: 0,
         }}>{icon}</span>
         <span style={{ fontWeight: 700, fontSize: "13.5px", color: theme.textPrimary, letterSpacing: "0.1px" }}>
           {title}
@@ -764,7 +887,7 @@ function InfoModal({ theme, onClose }) {
 
   const Row = ({ label, children }) => (
     <div style={{ display: "flex", gap: "10px", marginBottom: "7px", alignItems: "flex-start" }}>
-      <span style={{ color: theme.textMuted, flexShrink: 0, minWidth: 160, fontSize: "12px" }}>{label}</span>
+      <span style={{ color: theme.textMuted, flexShrink: 0, minWidth: 155, fontSize: "12px" }}>{label}</span>
       <span>{children}</span>
     </div>
   );
@@ -786,8 +909,8 @@ function InfoModal({ theme, onClose }) {
           background: theme.toolbarBg,
           border: `1px solid ${theme.toolbarBorder}`,
           borderRadius: "14px",
-          width: "min(760px, 94vw)",
-          maxHeight: "82vh",
+          width: "min(860px, 94vw)",
+          maxHeight: "84vh",
           display: "flex", flexDirection: "column",
           boxShadow: "0 24px 64px rgba(0,0,0,0.28)",
           overflow: "hidden",
@@ -797,75 +920,128 @@ function InfoModal({ theme, onClose }) {
         {/* Header */}
         <div style={{
           display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "18px 24px 16px",
+          padding: "16px 22px 14px",
           borderBottom: `1px solid ${theme.border}`,
           flexShrink: 0,
         }}>
           <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
               <circle cx="12" cy="12" r="10"/>
               <line x1="12" y1="8" x2="12" y2="12"/>
               <line x1="12" y1="16" x2="12.01" y2="16"/>
             </svg>
-            <span style={{ fontWeight: 700, fontSize: "15px", color: theme.textPrimary, letterSpacing: "0.1px" }}>
+            <span style={{ fontWeight: 700, fontSize: "14px", color: theme.textPrimary }}>
               SketchER Reference
             </span>
           </div>
-          <button
-            onClick={onClose}
-            style={{
-              background: "none", border: "none", cursor: "pointer",
-              color: theme.textMuted, fontSize: "20px", lineHeight: 1,
-              padding: "2px 6px", borderRadius: "6px",
-              transition: "color 0.15s",
-            }}
-          >×</button>
+          <button onClick={onClose} style={{
+            background: "none", border: "none", cursor: "pointer",
+            color: theme.textMuted, fontSize: "20px", lineHeight: 1,
+            padding: "2px 6px", borderRadius: "6px",
+          }}>×</button>
         </div>
 
-        {/* Scrollable body */}
-        <div style={{ overflowY: "auto", padding: "24px 28px" }}>
+        {/* Body = sidebar + content */}
+        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
 
-          {/* Tables */}
-          <Section color="#10b981" title="Creating Tables"
-            icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>}>
-            <p style={{ marginTop: 0 }}>Each table block defines a database table. Column types are free-form strings — use whatever fits your schema.</p>
-            <Code>{`Table users {
-  id       int      [pk]
-  username varchar
-  email    varchar
-  bio      text
-  role_id  int      [ref: > roles.id]
+          {/* Left sidebar */}
+          <div style={{
+            width: "162px",
+            flexShrink: 0,
+            borderRight: `1px solid ${theme.border}`,
+            padding: "16px 10px",
+            display: "flex",
+            flexDirection: "column",
+            gap: "2px",
+            overflowY: "auto",
+            background: theme.editorPanelBg,
+          }}>
+            {INFO_SECTIONS.map((s) => (
+              <button
+                key={s.id}
+                onClick={() => scrollTo(s.id)}
+                style={{
+                  display: "flex", alignItems: "center", gap: "8px",
+                  padding: "7px 10px",
+                  borderRadius: "7px",
+                  border: "none",
+                  background: activeSection === s.id ? s.color + "18" : "transparent",
+                  color: activeSection === s.id ? s.color : theme.textSecondary,
+                  fontFamily: "'DM Sans', sans-serif",
+                  fontSize: "12px",
+                  fontWeight: activeSection === s.id ? 600 : 400,
+                  cursor: "pointer",
+                  textAlign: "left",
+                  transition: "all 0.13s",
+                  width: "100%",
+                }}
+              >
+                <span style={{
+                  width: 7, height: 7, borderRadius: "50%",
+                  background: s.color,
+                  flexShrink: 0,
+                  opacity: activeSection === s.id ? 1 : 0.35,
+                  transition: "opacity 0.13s",
+                }} />
+                {s.label}
+              </button>
+            ))}
+          </div>
+
+          {/* Scrollable content */}
+          <div
+            ref={scrollRef}
+            onScroll={() => {
+              const container = scrollRef.current;
+              if (!container) return;
+              const scrollTop = container.scrollTop;
+              let current = INFO_SECTIONS[0].id;
+              for (const s of INFO_SECTIONS) {
+                const el = sectionRefs.current[s.id];
+                if (el && el.offsetTop - 32 <= scrollTop) current = s.id;
+              }
+              setActiveSection(current);
+            }}
+            style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }}
+          >
+            <Section id="tables" color="#10b981" title="Creating Tables"
+              icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>}>
+              <p style={{ marginTop: 0 }}>Each table block defines a database table. Column types are free-form — use whatever fits your schema.</p>
+              <Code>{`Table users {
+  id         int      [pk]
+  username   varchar
+  email      varchar
+  bio        text
+  role_id    int      [ref: > roles.id]
   created_at datetime
 }`}</Code>
-            <Row label="[pk]">Marks column as primary key — shown with a key icon</Row>
-            <Row label="Column order">Top-to-bottom matches left-panel definition order</Row>
-            <Row label="Types">Any word is valid — int, varchar, text, uuid, decimal, …</Row>
-          </Section>
+              <Row label="[pk]">Marks column as primary key — shown with a key icon</Row>
+              <Row label="Column order">Top-to-bottom matches left-panel definition order</Row>
+              <Row label="Types">Any word is valid — int, varchar, text, uuid, decimal, …</Row>
+            </Section>
 
-          {/* Relationships */}
-          <Section color="#3b82f6" title="Relationships & References"
-            icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>}>
-            <p style={{ marginTop: 0 }}>References define foreign key lines between tables. Use inline syntax inside a column, or standalone <KBD>Ref:</KBD> blocks anywhere.</p>
-            <Code>{`// Inline — on the column itself
+            <Section id="relationships" color="#3b82f6" title="Relationships & References"
+              icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>}>
+              <p style={{ marginTop: 0 }}>References define foreign key lines. Use inline syntax on a column, or standalone <KBD>Ref:</KBD> blocks anywhere in the file.</p>
+              <Code>{`// Inline — on the column itself
 Table orders {
   id      int [pk]
-  user_id int [ref: > users.id]   // many-to-one  (crow's foot on orders side)
+  user_id int [ref: > users.id]   // many-to-one
   item_id int [ref: < items.id]   // one-to-many
 }
 
 // Standalone — anywhere in the file
-Ref: order_items.order_id > orders.id
+Ref: order_items.order_id   > orders.id
 Ref: order_items.product_id > products.id`}</Code>
-            <Row label={<><KBD>ref: {">"} table.col</KBD></>}>Many-to-one — crow's foot exits this table</Row>
-            <Row label={<><KBD>ref: {"<"} table.col</KBD></>}>One-to-many — crow's foot exits the target table</Row>
-            <Row label="Drag line midpoint">Hover a relationship line to reveal its grip dot, then drag to reroute</Row>
-          </Section>
+              <Row label={<><KBD>ref: {">"} table.col</KBD></>}>Many-to-one — crow's foot exits this table</Row>
+              <Row label={<><KBD>ref: {"<"} table.col</KBD></>}>One-to-many — crow's foot exits the target</Row>
+              <Row label="Drag line midpoint">Hover a line to reveal its grip dot, then drag to reroute</Row>
+            </Section>
 
-          {/* Table Groups */}
-          <Section color="#8b5cf6" title="Table Groups"
-            icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="2" y="2" width="9" height="9" rx="1.5"/><rect x="13" y="2" width="9" height="9" rx="1.5"/><rect x="2" y="13" width="9" height="9" rx="1.5"/><rect x="13" y="13" width="9" height="9" rx="1.5"/></svg>}>
-            <p style={{ marginTop: 0 }}>Group related tables visually with a <KBD>TableGroup</KBD> block. Each member goes on its own line — just the table name, no punctuation.</p>
-            <Code>{`TableGroup Auth {
+            <Section id="groups" color="#8b5cf6" title="Table Groups"
+              icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="2" y="2" width="9" height="9" rx="1.5"/><rect x="13" y="2" width="9" height="9" rx="1.5"/><rect x="2" y="13" width="9" height="9" rx="1.5"/><rect x="13" y="13" width="9" height="9" rx="1.5"/></svg>}>
+              <p style={{ marginTop: 0 }}>Group related tables visually with a <KBD>TableGroup</KBD> block. Each member goes on its own line — just the table name, no punctuation.</p>
+              <Code>{`TableGroup Auth {
   users
   roles
   sessions
@@ -876,43 +1052,41 @@ TableGroup Catalog {
   categories
   tags
 }`}</Code>
-            <Row label="Enable groups">Toggle the <strong>Table Groups</strong> switch in the bottom bar of the canvas</Row>
-            <Row label="Group colors">Auto-assigned per group (violet → blue → emerald → amber → …)</Row>
-            <Row label="Drag a group">Grab the group label strip at the top of its bounding box to move all member tables together</Row>
-            <Row label="Membership">Driven purely by DBML — moving a table out of a group box does not change membership</Row>
-          </Section>
+              <Row label="Enable groups">Toggle the <strong>Table Groups</strong> switch in the bottom bar of the canvas</Row>
+              <Row label="Group colors">Auto-assigned per group (violet → blue → emerald → amber → …)</Row>
+              <Row label="Drag a group">Grab the group label strip at the top of its bounding box to move all member tables together</Row>
+              <Row label="Membership">Driven purely by DBML — moving a table out of a group box does not change membership</Row>
+            </Section>
 
-          {/* Canvas controls */}
-          <Section color="#f59e0b" title="Canvas Controls"
-            icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg>}>
-            <Row label={<><KBD>Ctrl</KBD> + scroll</>}>Zoom in / out</Row>
-            <Row label="Drag canvas">Pan the diagram (click and drag on any empty area)</Row>
-            <Row label="Drag table">Reposition any table on the canvas</Row>
-            <Row label="Drag line grip">Reroute a relationship line's vertical corridor</Row>
-            <Row label="Drag group label">Move all tables in a group at once</Row>
-            <Row label="Layout button">Auto-arrange all tables in a grid</Row>
-            <Row label="Reset view">Return to 100% zoom at origin</Row>
-          </Section>
+            <Section id="canvas" color="#f59e0b" title="Canvas Controls"
+              icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg>}>
+              <Row label={<><KBD>Ctrl</KBD> + scroll</>}>Zoom in / out</Row>
+              <Row label="Click zoom %">Opens a slider + typeable zoom control</Row>
+              <Row label="Drag canvas">Pan the diagram (click and drag any empty area)</Row>
+              <Row label="Drag table">Reposition any individual table</Row>
+              <Row label="Drag line grip">Reroute a relationship line's vertical corridor</Row>
+              <Row label="Drag group label">Move all tables in a group at once</Row>
+              <Row label="Layout button">Auto-arrange all tables in a grid</Row>
+              <Row label="Reset view">Return to 100% zoom at origin</Row>
+            </Section>
 
-          {/* Colors & theming */}
-          <Section color="#ec4899" title="Colors & Theming"
-            icon={<svg width="13" height="13" viewBox="0 0 20 20"><path d="M10 1.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17z" fill="none" stroke="currentColor" strokeWidth="1.8"/></svg>}>
-            <Row label="Table header color">Click the color wheel icon (●) in a table's header to open the native color picker</Row>
-            <Row label="Quick palette">Click any table to reveal a color swatch row in the left panel — pick a preset instantly</Row>
-            <Row label="Dark / light mode">Use the sun / moon icon in the toolbar to toggle themes</Row>
-            <Row label="Group accent colors">Auto-assigned from a fixed palette based on group order — not currently user-editable</Row>
-          </Section>
+            <Section id="colors" color="#ec4899" title="Colors & Theming"
+              icon={<svg width="13" height="13" viewBox="0 0 20 20"><path d="M10 1.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17z" fill="none" stroke="currentColor" strokeWidth="1.8"/></svg>}>
+              <Row label="Table header color">Click the color wheel icon in a table's header to open the native color picker</Row>
+              <Row label="Quick palette">Click any table to reveal a color swatch row in the left panel</Row>
+              <Row label="Dark / light mode">Use the sun / moon icon in the toolbar to toggle themes</Row>
+              <Row label="Group accent colors">Auto-assigned from a fixed palette based on group order</Row>
+            </Section>
 
-          {/* Saving */}
-          <Section color="#06b6d4" title="Saving & Export"
-            icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>}>
-            <Row label="Auto-save">Diagram state (DBML, positions, colors, theme, groups toggle) is automatically saved to <KBD>localStorage</KBD> every 400 ms</Row>
-            <Row label="Save (.sker)">Toolbar → <strong>Save</strong> — downloads a <KBD>diagram.sker</KBD> JSON file containing all state</Row>
-            <Row label="Open (.sker)">Toolbar → <strong>Open</strong> — loads a previously saved <KBD>.sker</KBD> file and restores full state</Row>
-            <Row label="Export PNG">Toolbar → <strong>Export</strong> — renders the diagram to a 2× resolution PNG and downloads it</Row>
-            <p style={{ marginTop: 8, marginBottom: 0 }}>The <KBD>.sker</KBD> file format is plain JSON — you can version it in git or share it with teammates.</p>
-          </Section>
-
+            <Section id="saving" color="#06b6d4" title="Saving & Export"
+              icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>}>
+              <Row label="Auto-save">All state saves to <KBD>localStorage</KBD> every 400 ms automatically</Row>
+              <Row label="Save (.sker)">Toolbar → <strong>Save</strong> — downloads a <KBD>diagram.sker</KBD> JSON file</Row>
+              <Row label="Open (.sker)">Toolbar → <strong>Open</strong> — loads a previously saved <KBD>.sker</KBD> file</Row>
+              <Row label="Export PNG">Toolbar → <strong>Export</strong> — renders a 2× resolution PNG</Row>
+              <p style={{ marginTop: 10, marginBottom: 0 }}>The <KBD>.sker</KBD> file is plain JSON — safe to version in git or share with teammates.</p>
+            </Section>
+          </div>
         </div>
       </div>
     </div>
@@ -1842,6 +2016,7 @@ export default function SketchER() {
           onResetView={resetView}
           onZoomIn={() => setZoom((z) => Math.min(2, z + 0.15))}
           onZoomOut={() => setZoom((z) => Math.max(0.25, z - 0.15))}
+          onZoomSet={(v) => setZoom(Math.max(0.25, Math.min(2, v)))}
           zoom={zoom}
           isDark={isDark}
           onToggleTheme={() => setIsDark((d) => !d)}
