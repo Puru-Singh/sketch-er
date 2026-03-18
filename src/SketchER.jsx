@@ -36,12 +36,28 @@ Table comments {
   user_id int [ref: > users.id]
   body text
   created_at datetime
+}
+
+TableGroup Auth {
+  users
+  roles
+}
+
+TableGroup Content {
+  posts
+  categories
+  comments
 }`;
 
 const TABLE_COLORS = [
   "#10b981", "#3b82f6", "#8b5cf6", "#ef4444",
   "#f59e0b", "#ec4899", "#06b6d4", "#f97316",
   "#6366f1", "#14b8a6", "#e11d48", "#84cc16",
+];
+
+const GROUP_ACCENT_COLORS = [
+  "#8b5cf6", "#3b82f6", "#10b981", "#f59e0b",
+  "#ec4899", "#06b6d4", "#f97316", "#84cc16",
 ];
 
 const LIGHT_THEME = {
@@ -145,7 +161,15 @@ function parseDBML(text) {
       type: refMatch[3],
     });
   }
-  return { tables, refs };
+  const groups = [];
+  const groupRegex = /TableGroup\s+(\w+)\s*\{([^}]*)\}/gi;
+  let gMatch;
+  while ((gMatch = groupRegex.exec(text)) !== null) {
+    const groupName = gMatch[1];
+    const members = gMatch[2].split("\n").map((l) => l.trim()).filter(Boolean);
+    groups.push({ name: groupName, tables: members });
+  }
+  return { tables, refs, groups };
 }
 
 const COL_HEIGHT = 32;
@@ -734,6 +758,134 @@ function MiniMap({ tablePositions, tableData, colors, canvasOffset, zoom, canvas
   );
 }
 
+function ToggleSwitch({ checked, onChange, theme }) {
+  return (
+    <div
+      onClick={onChange}
+      style={{
+        width: 32, height: 18,
+        background: checked ? "#10b981" : theme.toolbarBorder,
+        borderRadius: 9,
+        cursor: "pointer",
+        position: "relative",
+        transition: "background 0.2s",
+        flexShrink: 0,
+      }}
+    >
+      <div style={{
+        position: "absolute",
+        top: 2,
+        left: checked ? 16 : 2,
+        width: 14, height: 14,
+        borderRadius: "50%",
+        background: "#fff",
+        transition: "left 0.2s",
+        boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
+      }} />
+    </div>
+  );
+}
+
+const GROUP_PAD = 22;
+const GROUP_LABEL_H = 26;
+
+function GroupOverlay({ groups, tablePositions, tableWidths, tableData, groupsVisible, onGroupDragStart }) {
+  if (!groupsVisible || groups.length === 0) return null;
+
+  return (
+    <>
+      {groups.map((group, gi) => {
+        const color = GROUP_ACCENT_COLORS[gi % GROUP_ACCENT_COLORS.length];
+        const members = group.tables.filter((n) => tablePositions[n]);
+        if (members.length === 0) return null;
+
+        const positions = members.map((n) => ({
+          x: tablePositions[n].x,
+          y: tablePositions[n].y,
+          w: tableWidths[n] || TABLE_WIDTH,
+          h: HEADER_HEIGHT + (tableData.find((t) => t.name === n)?.columns.length || 0) * COL_HEIGHT,
+        }));
+
+        const minX = Math.min(...positions.map((p) => p.x)) - GROUP_PAD;
+        const minY = Math.min(...positions.map((p) => p.y)) - GROUP_PAD - GROUP_LABEL_H;
+        const maxX = Math.max(...positions.map((p) => p.x + p.w)) + GROUP_PAD;
+        const maxY = Math.max(...positions.map((p) => p.y + p.h)) + GROUP_PAD;
+        const bw = maxX - minX;
+        const bh = maxY - minY;
+
+        return (
+          <g key={group.name}>
+            {/* D — Background fill */}
+            <rect x={minX} y={minY} width={bw} height={bh} rx="12"
+              fill={color} opacity="0.06" style={{ pointerEvents: "none" }} />
+
+            {/* A — Dashed border box */}
+            <rect x={minX} y={minY} width={bw} height={bh} rx="12"
+              fill="none" stroke={color} strokeWidth="1.5" strokeDasharray="7 4"
+              opacity="0.35" style={{ pointerEvents: "none" }} />
+
+            {/* B — Label background pill */}
+            <rect x={minX + 12} y={minY + 6} width={group.name.length * 7 + 18} height={20}
+              rx="5" fill={color} opacity="0.2" style={{ pointerEvents: "none" }} />
+
+            {/* B — Label text */}
+            <text x={minX + 21} y={minY + 19}
+              fill={color} fontSize="11" fontWeight="700"
+              fontFamily="'DM Sans', sans-serif" letterSpacing="0.4"
+              opacity="0.85" style={{ pointerEvents: "none" }}>
+              {group.name}
+            </text>
+
+            {/* E — Drag hit area (top strip of the group box) */}
+            <rect x={minX} y={minY} width={bw} height={GROUP_LABEL_H + 4}
+              fill="transparent" rx="12"
+              style={{ cursor: "move", pointerEvents: "all" }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                onGroupDragStart(group.name, members, e.clientX, e.clientY);
+              }}
+            />
+          </g>
+        );
+      })}
+    </>
+  );
+}
+
+function BottomGroupPane({ groupsVisible, onToggle, theme }) {
+  return (
+    <div style={{
+      position: "absolute",
+      bottom: 12,
+      left: "50%",
+      transform: "translateX(-50%)",
+      display: "flex",
+      alignItems: "center",
+      gap: "10px",
+      background: theme.toolbarBg,
+      border: `1px solid ${theme.toolbarBorder}`,
+      borderRadius: "10px",
+      padding: "8px 16px",
+      zIndex: 20,
+      boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
+      fontFamily: "'DM Sans', sans-serif",
+      fontSize: "12px",
+      color: theme.toolbarText,
+      fontWeight: 500,
+      userSelect: "none",
+    }}>
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="2" y="2" width="9" height="9" rx="1.5"/>
+        <rect x="13" y="2" width="9" height="9" rx="1.5"/>
+        <rect x="2" y="13" width="9" height="9" rx="1.5"/>
+        <rect x="13" y="13" width="9" height="9" rx="1.5"/>
+      </svg>
+      <span>Table Groups</span>
+      <ToggleSwitch checked={groupsVisible} onChange={onToggle} theme={theme} />
+    </div>
+  );
+}
+
 // Canvas2D rounded-rect helper
 function canvasRoundRect(ctx, x, y, w, h, r) {
   ctx.beginPath();
@@ -772,6 +924,8 @@ export default function SketchER() {
   const [dragging, setDragging] = useState(null);
   const [draggingLine, setDraggingLine] = useState(null); // { pathKey, startClientX, startMidX }
   const [lineMidXOverrides, setLineMidXOverrides] = useState(saved?.lineMidXOverrides ?? {});
+  const [groupsVisible, setGroupsVisible] = useState(saved?.groupsVisible ?? false);
+  const [draggingGroup, setDraggingGroup] = useState(null); // { memberTables, startClientX, startClientY, startPositions }
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState(null);
@@ -781,7 +935,7 @@ export default function SketchER() {
   const canvasRef = useRef(null);
   const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 });
 
-  const { tables, refs } = useMemo(() => parseDBML(dbml), [dbml]);
+  const { tables, refs, groups } = useMemo(() => parseDBML(dbml), [dbml]);
 
   // Which columns to highlight per table when a table is hovered
   const activeColumns = useMemo(() => {
@@ -839,7 +993,7 @@ export default function SketchER() {
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, isDark, lineMidXOverrides }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible }));
       } catch {}
     }, 400);
     return () => clearTimeout(timer);
@@ -848,7 +1002,7 @@ export default function SketchER() {
   // Save diagram to a .sker file
   const saveToFile = useCallback(() => {
     const blob = new Blob(
-      [JSON.stringify({ dbml, tablePositions, tableColors, isDark, lineMidXOverrides }, null, 2)],
+      [JSON.stringify({ dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible }, null, 2)],
       { type: "application/json" }
     );
     const url = URL.createObjectURL(blob);
@@ -873,6 +1027,7 @@ export default function SketchER() {
         if (state.tableColors !== undefined)    setTableColors(state.tableColors);
         if (state.isDark !== undefined)              setIsDark(state.isDark);
         if (state.lineMidXOverrides !== undefined)   setLineMidXOverrides(state.lineMidXOverrides);
+        if (state.groupsVisible !== undefined)       setGroupsVisible(state.groupsVisible);
       } catch {}
     };
     reader.readAsText(file);
@@ -1130,8 +1285,27 @@ export default function SketchER() {
     setDraggingLine({ pathKey, startClientX: clientX, startMidX: currentMidX });
   }, []);
 
+  const handleGroupDragStart = useCallback((groupName, memberTables, clientX, clientY) => {
+    const startPositions = {};
+    for (const name of memberTables) {
+      if (tablePositions[name]) startPositions[name] = { ...tablePositions[name] };
+    }
+    setDraggingGroup({ groupName, memberTables, startClientX: clientX, startClientY: clientY, startPositions });
+  }, [tablePositions]);
+
   const handleMouseMove = useCallback((e) => {
-    if (draggingLine) {
+    if (draggingGroup) {
+      const dx = (e.clientX - draggingGroup.startClientX) / zoom;
+      const dy = (e.clientY - draggingGroup.startClientY) / zoom;
+      setTablePositions((prev) => {
+        const next = { ...prev };
+        for (const name of draggingGroup.memberTables) {
+          const start = draggingGroup.startPositions[name];
+          if (start) next[name] = { x: start.x + dx, y: start.y + dy };
+        }
+        return next;
+      });
+    } else if (draggingLine) {
       const dx = (e.clientX - draggingLine.startClientX) / zoom;
       setLineMidXOverrides((prev) => ({
         ...prev,
@@ -1150,11 +1324,12 @@ export default function SketchER() {
     } else if (isResizing) {
       setEditorWidth(Math.max(260, Math.min(600, e.clientX)));
     }
-  }, [draggingLine, dragging, isPanning, panStart, zoom, canvasOffset, isResizing]);
+  }, [draggingGroup, draggingLine, dragging, isPanning, panStart, zoom, canvasOffset, isResizing]);
 
   const handleMouseUp = useCallback(() => {
     setDragging(null);
     setDraggingLine(null);
+    setDraggingGroup(null);
     setIsPanning(false);
     setPanStart(null);
     setIsResizing(false);
@@ -1475,6 +1650,14 @@ export default function SketchER() {
               overflow: "visible",
             }}
           >
+            <GroupOverlay
+              groups={groups}
+              tablePositions={tablePositions}
+              tableWidths={tableWidths}
+              tableData={tables}
+              groupsVisible={groupsVisible}
+              onGroupDragStart={handleGroupDragStart}
+            />
             <RelationshipLines
               refs={refs}
               tablePositions={tablePositions}
@@ -1546,6 +1729,12 @@ export default function SketchER() {
             </span>
           </div>
         )}
+
+        <BottomGroupPane
+          groupsVisible={groupsVisible}
+          onToggle={() => setGroupsVisible((v) => !v)}
+          theme={theme}
+        />
 
         {/* Hidden file input for Open */}
         <input
