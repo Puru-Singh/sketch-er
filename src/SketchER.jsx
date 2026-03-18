@@ -626,7 +626,7 @@ function TBtn({ onClick, tip, theme, children, style = {} }) {
   );
 }
 
-function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark, onToggleTheme, theme, onExport, onSave, onLoad }) {
+function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp }) {
   const staticSpan = {
     padding: "7px 12px",
     background: theme.toolbarBg,
@@ -696,6 +696,225 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark,
         </svg>
         Export
       </TBtn>
+      <TBtn onClick={onShowHelp} tip="Help & reference" theme={theme}>
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <circle cx="12" cy="12" r="10"/>
+          <line x1="12" y1="8" x2="12" y2="12"/>
+          <line x1="12" y1="16" x2="12.01" y2="16"/>
+        </svg>
+      </TBtn>
+    </div>
+  );
+}
+
+function InfoModal({ theme, onClose }) {
+  const Code = ({ children }) => (
+    <pre style={{
+      background: theme.editorPanelBg,
+      border: `1px solid ${theme.border}`,
+      borderRadius: "7px",
+      padding: "11px 14px",
+      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+      fontSize: "11.5px",
+      color: theme.editorText,
+      lineHeight: "1.75",
+      margin: "8px 0 18px",
+      overflowX: "auto",
+      whiteSpace: "pre",
+    }}>{children}</pre>
+  );
+
+  const Section = ({ color, icon, title, children }) => (
+    <div style={{ marginBottom: "28px" }}>
+      <div style={{
+        display: "flex", alignItems: "center", gap: "8px",
+        marginBottom: "12px",
+        paddingBottom: "8px",
+        borderBottom: `1px solid ${theme.border}`,
+      }}>
+        <span style={{
+          display: "flex", alignItems: "center", justifyContent: "center",
+          width: 26, height: 26, borderRadius: "7px",
+          background: color + "22", color,
+          flexShrink: 0,
+        }}>{icon}</span>
+        <span style={{ fontWeight: 700, fontSize: "13.5px", color: theme.textPrimary, letterSpacing: "0.1px" }}>
+          {title}
+        </span>
+      </div>
+      <div style={{ fontSize: "12.5px", color: theme.textSecondary, lineHeight: "1.7" }}>
+        {children}
+      </div>
+    </div>
+  );
+
+  const KBD = ({ children }) => (
+    <code style={{
+      display: "inline-block",
+      background: theme.editorPanelBg,
+      border: `1px solid ${theme.border}`,
+      borderRadius: "4px",
+      padding: "1px 6px",
+      fontFamily: "'JetBrains Mono', monospace",
+      fontSize: "11px",
+      color: theme.textPrimary,
+      lineHeight: "1.6",
+    }}>{children}</code>
+  );
+
+  const Row = ({ label, children }) => (
+    <div style={{ display: "flex", gap: "10px", marginBottom: "7px", alignItems: "flex-start" }}>
+      <span style={{ color: theme.textMuted, flexShrink: 0, minWidth: 160, fontSize: "12px" }}>{label}</span>
+      <span>{children}</span>
+    </div>
+  );
+
+  return (
+    <div
+      onClick={onClose}
+      style={{
+        position: "fixed", inset: 0,
+        background: "rgba(0,0,0,0.52)",
+        zIndex: 300,
+        display: "flex", alignItems: "center", justifyContent: "center",
+        backdropFilter: "blur(4px)",
+      }}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        style={{
+          background: theme.toolbarBg,
+          border: `1px solid ${theme.toolbarBorder}`,
+          borderRadius: "14px",
+          width: "min(760px, 94vw)",
+          maxHeight: "82vh",
+          display: "flex", flexDirection: "column",
+          boxShadow: "0 24px 64px rgba(0,0,0,0.28)",
+          overflow: "hidden",
+          fontFamily: "'DM Sans', sans-serif",
+        }}
+      >
+        {/* Header */}
+        <div style={{
+          display: "flex", alignItems: "center", justifyContent: "space-between",
+          padding: "18px 24px 16px",
+          borderBottom: `1px solid ${theme.border}`,
+          flexShrink: 0,
+        }}>
+          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <circle cx="12" cy="12" r="10"/>
+              <line x1="12" y1="8" x2="12" y2="12"/>
+              <line x1="12" y1="16" x2="12.01" y2="16"/>
+            </svg>
+            <span style={{ fontWeight: 700, fontSize: "15px", color: theme.textPrimary, letterSpacing: "0.1px" }}>
+              SketchER Reference
+            </span>
+          </div>
+          <button
+            onClick={onClose}
+            style={{
+              background: "none", border: "none", cursor: "pointer",
+              color: theme.textMuted, fontSize: "20px", lineHeight: 1,
+              padding: "2px 6px", borderRadius: "6px",
+              transition: "color 0.15s",
+            }}
+          >×</button>
+        </div>
+
+        {/* Scrollable body */}
+        <div style={{ overflowY: "auto", padding: "24px 28px" }}>
+
+          {/* Tables */}
+          <Section color="#10b981" title="Creating Tables"
+            icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>}>
+            <p style={{ marginTop: 0 }}>Each table block defines a database table. Column types are free-form strings — use whatever fits your schema.</p>
+            <Code>{`Table users {
+  id       int      [pk]
+  username varchar
+  email    varchar
+  bio      text
+  role_id  int      [ref: > roles.id]
+  created_at datetime
+}`}</Code>
+            <Row label="[pk]">Marks column as primary key — shown with a key icon</Row>
+            <Row label="Column order">Top-to-bottom matches left-panel definition order</Row>
+            <Row label="Types">Any word is valid — int, varchar, text, uuid, decimal, …</Row>
+          </Section>
+
+          {/* Relationships */}
+          <Section color="#3b82f6" title="Relationships & References"
+            icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>}>
+            <p style={{ marginTop: 0 }}>References define foreign key lines between tables. Use inline syntax inside a column, or standalone <KBD>Ref:</KBD> blocks anywhere.</p>
+            <Code>{`// Inline — on the column itself
+Table orders {
+  id      int [pk]
+  user_id int [ref: > users.id]   // many-to-one  (crow's foot on orders side)
+  item_id int [ref: < items.id]   // one-to-many
+}
+
+// Standalone — anywhere in the file
+Ref: order_items.order_id > orders.id
+Ref: order_items.product_id > products.id`}</Code>
+            <Row label={<><KBD>ref: {">"} table.col</KBD></>}>Many-to-one — crow's foot exits this table</Row>
+            <Row label={<><KBD>ref: {"<"} table.col</KBD></>}>One-to-many — crow's foot exits the target table</Row>
+            <Row label="Drag line midpoint">Hover a relationship line to reveal its grip dot, then drag to reroute</Row>
+          </Section>
+
+          {/* Table Groups */}
+          <Section color="#8b5cf6" title="Table Groups"
+            icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="2" y="2" width="9" height="9" rx="1.5"/><rect x="13" y="2" width="9" height="9" rx="1.5"/><rect x="2" y="13" width="9" height="9" rx="1.5"/><rect x="13" y="13" width="9" height="9" rx="1.5"/></svg>}>
+            <p style={{ marginTop: 0 }}>Group related tables visually with a <KBD>TableGroup</KBD> block. Each member goes on its own line — just the table name, no punctuation.</p>
+            <Code>{`TableGroup Auth {
+  users
+  roles
+  sessions
+}
+
+TableGroup Catalog {
+  products
+  categories
+  tags
+}`}</Code>
+            <Row label="Enable groups">Toggle the <strong>Table Groups</strong> switch in the bottom bar of the canvas</Row>
+            <Row label="Group colors">Auto-assigned per group (violet → blue → emerald → amber → …)</Row>
+            <Row label="Drag a group">Grab the group label strip at the top of its bounding box to move all member tables together</Row>
+            <Row label="Membership">Driven purely by DBML — moving a table out of a group box does not change membership</Row>
+          </Section>
+
+          {/* Canvas controls */}
+          <Section color="#f59e0b" title="Canvas Controls"
+            icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg>}>
+            <Row label={<><KBD>Ctrl</KBD> + scroll</>}>Zoom in / out</Row>
+            <Row label="Drag canvas">Pan the diagram (click and drag on any empty area)</Row>
+            <Row label="Drag table">Reposition any table on the canvas</Row>
+            <Row label="Drag line grip">Reroute a relationship line's vertical corridor</Row>
+            <Row label="Drag group label">Move all tables in a group at once</Row>
+            <Row label="Layout button">Auto-arrange all tables in a grid</Row>
+            <Row label="Reset view">Return to 100% zoom at origin</Row>
+          </Section>
+
+          {/* Colors & theming */}
+          <Section color="#ec4899" title="Colors & Theming"
+            icon={<svg width="13" height="13" viewBox="0 0 20 20"><path d="M10 1.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17z" fill="none" stroke="currentColor" strokeWidth="1.8"/></svg>}>
+            <Row label="Table header color">Click the color wheel icon (●) in a table's header to open the native color picker</Row>
+            <Row label="Quick palette">Click any table to reveal a color swatch row in the left panel — pick a preset instantly</Row>
+            <Row label="Dark / light mode">Use the sun / moon icon in the toolbar to toggle themes</Row>
+            <Row label="Group accent colors">Auto-assigned from a fixed palette based on group order — not currently user-editable</Row>
+          </Section>
+
+          {/* Saving */}
+          <Section color="#06b6d4" title="Saving & Export"
+            icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>}>
+            <Row label="Auto-save">Diagram state (DBML, positions, colors, theme, groups toggle) is automatically saved to <KBD>localStorage</KBD> every 400 ms</Row>
+            <Row label="Save (.sker)">Toolbar → <strong>Save</strong> — downloads a <KBD>diagram.sker</KBD> JSON file containing all state</Row>
+            <Row label="Open (.sker)">Toolbar → <strong>Open</strong> — loads a previously saved <KBD>.sker</KBD> file and restores full state</Row>
+            <Row label="Export PNG">Toolbar → <strong>Export</strong> — renders the diagram to a 2× resolution PNG and downloads it</Row>
+            <p style={{ marginTop: 8, marginBottom: 0 }}>The <KBD>.sker</KBD> file format is plain JSON — you can version it in git or share it with teammates.</p>
+          </Section>
+
+        </div>
+      </div>
     </div>
   );
 }
@@ -925,7 +1144,8 @@ export default function SketchER() {
   const [draggingLine, setDraggingLine] = useState(null); // { pathKey, startClientX, startMidX }
   const [lineMidXOverrides, setLineMidXOverrides] = useState(saved?.lineMidXOverrides ?? {});
   const [groupsVisible, setGroupsVisible] = useState(saved?.groupsVisible ?? false);
-  const [draggingGroup, setDraggingGroup] = useState(null); // { memberTables, startClientX, startClientY, startPositions }
+  const [draggingGroup, setDraggingGroup] = useState(null);
+  const [showHelp, setShowHelp] = useState(false); // { memberTables, startClientX, startClientY, startPositions }
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState(null);
@@ -1630,6 +1850,7 @@ export default function SketchER() {
           onExport={exportToPng}
           onSave={saveToFile}
           onLoad={() => loadInputRef.current?.click()}
+          onShowHelp={() => setShowHelp(true)}
         />
 
         {/* Transform container */}
@@ -1735,6 +1956,8 @@ export default function SketchER() {
           onToggle={() => setGroupsVisible((v) => !v)}
           theme={theme}
         />
+
+        {showHelp && <InfoModal theme={theme} onClose={() => setShowHelp(false)} />}
 
         {/* Hidden file input for Open */}
         <input
