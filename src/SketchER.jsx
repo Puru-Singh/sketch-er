@@ -464,7 +464,7 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
   );
 }
 
-function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark, onToggleTheme, theme, onExport }) {
+function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark, onToggleTheme, theme, onExport, onSave, onLoad }) {
   const btnStyle = {
     padding: "7px 12px",
     background: theme.toolbarBg,
@@ -513,6 +513,20 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark,
           <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
         </svg>
         Layout
+      </button>
+      <button style={btnStyle} onClick={onSave} title="Save diagram to file">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
+          <polyline points="17 21 17 13 7 13 7 21"/>
+          <polyline points="7 3 7 8 15 8"/>
+        </svg>
+        Save
+      </button>
+      <button style={btnStyle} onClick={onLoad} title="Open diagram from file">
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
+        </svg>
+        Open
       </button>
       <button style={btnStyle} onClick={onExport} title="Export as PNG">
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -599,13 +613,24 @@ function canvasRoundRect(ctx, x, y, w, h, r) {
   ctx.closePath();
 }
 
+const STORAGE_KEY = "sketcher-state";
+
+function loadSavedState() {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch { return null; }
+}
+
 export default function SketchER() {
-  const [isDark, setIsDark] = useState(false);
+  const saved = useRef(loadSavedState()).current;
+
+  const [isDark, setIsDark] = useState(saved?.isDark ?? false);
   const theme = isDark ? DARK_THEME : LIGHT_THEME;
 
-  const [dbml, setDbml] = useState(DEFAULT_DBML);
-  const [tablePositions, setTablePositions] = useState({});
-  const [tableColors, setTableColors] = useState({});
+  const [dbml, setDbml] = useState(saved?.dbml ?? DEFAULT_DBML);
+  const [tablePositions, setTablePositions] = useState(saved?.tablePositions ?? {});
+  const [tableColors, setTableColors] = useState(saved?.tableColors ?? {});
   const [selectedTable, setSelectedTable] = useState(null);
   const [hoveredTable, setHoveredTable] = useState(null);
   const [dragging, setDragging] = useState(null);
@@ -644,6 +669,49 @@ export default function SketchER() {
     }
     return map;
   }, [refs]);
+
+  // Auto-save to localStorage on every meaningful change
+  useEffect(() => {
+    const timer = setTimeout(() => {
+      try {
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, isDark }));
+      } catch {}
+    }, 400);
+    return () => clearTimeout(timer);
+  }, [dbml, tablePositions, tableColors, isDark]);
+
+  // Save diagram to a .sker file
+  const saveToFile = useCallback(() => {
+    const blob = new Blob(
+      [JSON.stringify({ dbml, tablePositions, tableColors, isDark }, null, 2)],
+      { type: "application/json" }
+    );
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement("a");
+    link.download = "diagram.sker";
+    link.href = url;
+    link.click();
+    URL.revokeObjectURL(url);
+  }, [dbml, tablePositions, tableColors, isDark]);
+
+  // Load diagram from a .sker / .json file
+  const loadInputRef = useRef(null);
+  const handleLoadFile = useCallback((e) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (evt) => {
+      try {
+        const state = JSON.parse(evt.target.result);
+        if (state.dbml !== undefined)          setDbml(state.dbml);
+        if (state.tablePositions !== undefined) setTablePositions(state.tablePositions);
+        if (state.tableColors !== undefined)    setTableColors(state.tableColors);
+        if (state.isDark !== undefined)         setIsDark(state.isDark);
+      } catch {}
+    };
+    reader.readAsText(file);
+    e.target.value = "";
+  }, []);
 
   const exportToPng = useCallback(async () => {
     const tableNames = Object.keys(tablePositions);
@@ -1208,6 +1276,8 @@ export default function SketchER() {
           onToggleTheme={() => setIsDark((d) => !d)}
           theme={theme}
           onExport={exportToPng}
+          onSave={saveToFile}
+          onLoad={() => loadInputRef.current?.click()}
         />
 
         {/* Transform container */}
@@ -1294,6 +1364,15 @@ export default function SketchER() {
             </span>
           </div>
         )}
+
+        {/* Hidden file input for Open */}
+        <input
+          ref={loadInputRef}
+          type="file"
+          accept=".sker,.json"
+          onChange={handleLoadFile}
+          style={{ display: "none" }}
+        />
       </div>
     </div>
   );
