@@ -367,8 +367,36 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
   return <>{lines}</>;
 }
 
+// Pre-computed donut color wheel paths (6 × 60° segments, outer r=8.5, inner r=4, center 10 10)
+const COLOR_WHEEL_SEGS = (() => {
+  const R = 8.5, r = 4, cx = 10, cy = 10;
+  const colors = ["#f87171", "#fbbf24", "#34d399", "#22d3ee", "#818cf8", "#f472b6"];
+  return colors.map((color, i) => {
+    const a0 = -Math.PI / 2 + i * (Math.PI / 3);
+    const a1 = a0 + Math.PI / 3;
+    const f = (n) => n.toFixed(3);
+    const [ox0, oy0] = [cx + R * Math.cos(a0), cy + R * Math.sin(a0)];
+    const [ox1, oy1] = [cx + R * Math.cos(a1), cy + R * Math.sin(a1)];
+    const [ix0, iy0] = [cx + r * Math.cos(a0), cy + r * Math.sin(a0)];
+    const [ix1, iy1] = [cx + r * Math.cos(a1), cy + r * Math.sin(a1)];
+    const d = `M${f(ox0)} ${f(oy0)} A${R} ${R} 0 0 1 ${f(ox1)} ${f(oy1)} L${f(ix1)} ${f(iy1)} A${r} ${r} 0 0 0 ${f(ix0)} ${f(iy0)}Z`;
+    return { color, d };
+  });
+})();
+
+function ColorWheelIcon({ lit }) {
+  return (
+    <svg width="18" height="18" viewBox="0 0 20 20"
+      style={{ display: "block", opacity: lit ? 1 : 0.28, transition: "opacity 0.15s", pointerEvents: "none" }}>
+      {COLOR_WHEEL_SEGS.map((s) => <path key={s.color} d={s.d} fill={s.color} />)}
+    </svg>
+  );
+}
+
 function TableNode({ table, position, color, onDragStart, onColorChange, isSelected, onSelect, theme, fkColumns, activeColumns, onHover, width }) {
   const [pickerHovered, setPickerHovered] = useState(false);
+  const [pickerFocused, setPickerFocused] = useState(false);
+  const pickerLit = pickerHovered || pickerFocused;
 
   const handleMouseDown = (e) => {
     if (e.target.closest(".color-picker-area")) return;
@@ -418,27 +446,29 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
         <span>{table.name}</span>
         <div
           className="color-picker-area"
-          style={{ position: "relative" }}
+          style={{ position: "relative", width: 18, height: 18 }}
           onMouseEnter={() => setPickerHovered(true)}
           onMouseLeave={() => setPickerHovered(false)}
         >
+          <ColorWheelIcon lit={pickerLit} />
           <input
             type="color"
             value={color}
             onChange={(e) => onColorChange(table.name, e.target.value)}
+            onFocus={() => setPickerFocused(true)}
+            onBlur={() => setPickerFocused(false)}
             style={{
-              width: "20px",
-              height: "20px",
-              border: "1.5px solid rgba(255,255,255,0.4)",
-              borderRadius: "50%",
+              position: "absolute",
+              inset: 0,
+              opacity: 0,
+              width: "100%",
+              height: "100%",
               cursor: "pointer",
               padding: 0,
-              background: "transparent",
-              appearance: "none",
-              WebkitAppearance: "none",
+              border: "none",
             }}
           />
-          {pickerHovered && (
+          {pickerLit && (
             <div style={{
               position: "absolute",
               top: "calc(100% + 10px)",
