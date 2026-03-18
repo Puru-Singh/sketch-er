@@ -464,8 +464,36 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
   );
 }
 
-function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark, onToggleTheme, theme, onExport, onSave, onLoad }) {
-  const btnStyle = {
+function Tooltip({ text, theme }) {
+  return (
+    <div style={{
+      position: "absolute",
+      top: "calc(100% + 10px)",
+      left: "50%",
+      transform: "translateX(-50%)",
+      background: theme.toolbarBg,
+      border: `1px solid ${theme.toolbarBorder}`,
+      color: theme.textPrimary,
+      fontSize: "12.5px",
+      fontWeight: 500,
+      padding: "7px 14px",
+      borderRadius: "8px",
+      whiteSpace: "nowrap",
+      boxShadow: "0 6px 20px rgba(0,0,0,0.13)",
+      zIndex: 100,
+      fontFamily: "'DM Sans', sans-serif",
+      pointerEvents: "none",
+      letterSpacing: "0.1px",
+    }}>
+      {text}
+    </div>
+  );
+}
+
+function TBtn({ onClick, tip, theme, children, style = {} }) {
+  const [hovered, setHovered] = useState(false);
+  const base = {
+    position: "relative",
     padding: "7px 12px",
     background: theme.toolbarBg,
     border: `1px solid ${theme.toolbarBorder}`,
@@ -479,10 +507,37 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark,
     fontFamily: "'DM Sans', sans-serif",
     fontWeight: 500,
     transition: "all 0.15s",
+    ...style,
+  };
+  return (
+    <button style={base} onClick={onClick}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}>
+      {children}
+      {hovered && tip && <Tooltip text={tip} theme={theme} />}
+    </button>
+  );
+}
+
+function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark, onToggleTheme, theme, onExport, onSave, onLoad }) {
+  const staticSpan = {
+    padding: "7px 12px",
+    background: theme.toolbarBg,
+    border: `1px solid ${theme.toolbarBorder}`,
+    borderRadius: "8px",
+    color: theme.toolbarText,
+    fontSize: "11px",
+    display: "flex",
+    alignItems: "center",
+    cursor: "default",
+    minWidth: "50px",
+    justifyContent: "center",
+    fontFamily: "'DM Sans', sans-serif",
+    fontWeight: 500,
   };
   return (
     <div style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
-      <button style={btnStyle} onClick={onToggleTheme} title={isDark ? "Switch to light mode" : "Switch to dark mode"}>
+      <TBtn onClick={onToggleTheme} tip={isDark ? "Switch to light mode" : "Switch to dark mode"} theme={theme}>
         {isDark ? (
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
             <circle cx="12" cy="12" r="5" />
@@ -496,46 +551,44 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark,
             <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
           </svg>
         )}
-      </button>
-      <button style={btnStyle} onClick={onZoomOut} title="Zoom out">−</button>
-      <span style={{ ...btnStyle, cursor: "default", minWidth: "50px", justifyContent: "center", fontSize: "11px" }}>
-        {Math.round(zoom * 100)}%
-      </span>
-      <button style={btnStyle} onClick={onZoomIn} title="Zoom in">+</button>
-      <button style={btnStyle} onClick={onResetView} title="Reset view">
+      </TBtn>
+      <TBtn onClick={onZoomOut} tip="Zoom out" theme={theme}>−</TBtn>
+      <span style={staticSpan}>{Math.round(zoom * 100)}%</span>
+      <TBtn onClick={onZoomIn} tip="Zoom in" theme={theme}>+</TBtn>
+      <TBtn onClick={onResetView} tip="Reset view" theme={theme}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M3 12a9 9 0 1 1 3 6.7" /><path d="M3 21v-6h6" />
         </svg>
-      </button>
-      <button style={btnStyle} onClick={onAutoLayout}>
+      </TBtn>
+      <TBtn onClick={onAutoLayout} tip="Auto-arrange tables" theme={theme}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
           <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
           <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
         </svg>
         Layout
-      </button>
-      <button style={btnStyle} onClick={onSave} title="Save diagram to file">
+      </TBtn>
+      <TBtn onClick={onSave} tip="Save diagram to .sker file" theme={theme}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
           <polyline points="17 21 17 13 7 13 7 21"/>
           <polyline points="7 3 7 8 15 8"/>
         </svg>
         Save
-      </button>
-      <button style={btnStyle} onClick={onLoad} title="Open diagram from file">
+      </TBtn>
+      <TBtn onClick={onLoad} tip="Open a .sker diagram file" theme={theme}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
         </svg>
         Open
-      </button>
-      <button style={btnStyle} onClick={onExport} title="Export as PNG">
+      </TBtn>
+      <TBtn onClick={onExport} tip="Export diagram as PNG image" theme={theme}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
           <polyline points="7 10 12 15 17 10"/>
           <line x1="12" y1="15" x2="12" y2="3"/>
         </svg>
         Export
-      </button>
+      </TBtn>
     </div>
   );
 }
