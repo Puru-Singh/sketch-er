@@ -519,14 +519,18 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           alignItems: "center",
           justifyContent: "space-between",
           padding: "0 12px",
-          fontWeight: 700,
-          fontSize: "13px",
-          color: "#fff",
-          letterSpacing: "0.2px",
           fontFamily: "'DM Sans', sans-serif",
         }}
       >
-        <span>{table.name}</span>
+        <span style={{
+          background: "rgba(0,0,0,0.45)",
+          color: "#fff",
+          padding: "2px 9px",
+          borderRadius: "5px",
+          fontSize: "12px",
+          fontWeight: 700,
+          letterSpacing: "0.2px",
+        }}>{table.name}</span>
         <div
           className="color-picker-area"
           style={{ position: "relative", width: 18, height: 18 }}
