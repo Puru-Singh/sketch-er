@@ -174,7 +174,7 @@ const LANE_SPACING = 24;
 // How far apart to spread multiple connections arriving at the same PK column
 const ARRIVE_SPREAD = 8;
 
-function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTable, tableColors }) {
+function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTable, tableColors, tableWidths, lineMidXOverrides, onLineDragStart }) {
   // ── Phase 1: resolve direction + column indices for every valid ref ──────
   const items = useMemo(() => {
     const result = [];
@@ -189,12 +189,14 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
       const toColIdx   = toData.columns.findIndex((c) => c.name === ref.to.column);
       if (fromColIdx === -1 || toColIdx === -1) continue;
 
-      const fromRight = fromPos.x + TABLE_WIDTH;
-      const toRight   = toPos.x  + TABLE_WIDTH;
+      const fromW     = tableWidths[ref.from.table] || TABLE_WIDTH;
+      const toW       = tableWidths[ref.to.table]   || TABLE_WIDTH;
+      const fromRight = fromPos.x + fromW;
+      const toRight   = toPos.x  + toW;
 
       // Detect vertical stacking: tables heavily overlap in X → C-shape routing
       const xOverlap = Math.max(0, Math.min(fromRight, toRight) - Math.max(fromPos.x, toPos.x));
-      const isVerticalStack = xOverlap / TABLE_WIDTH > 0.5;
+      const isVerticalStack = xOverlap / Math.min(fromW, toW) > 0.5;
 
       let crowDir;
       if (isVerticalStack) {
@@ -204,14 +206,13 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
       } else if (toPos.x >= fromRight) {
         crowDir = "right";                       // to is clearly right of from
       } else {
-        crowDir = (fromPos.x + TABLE_WIDTH / 2) <= (toPos.x + TABLE_WIDTH / 2)
-          ? "right" : "left";
+        crowDir = (fromPos.x + fromW / 2) <= (toPos.x + toW / 2) ? "right" : "left";
       }
 
       result.push({ ref, fromColIdx, toColIdx, crowDir });
     }
     return result;
-  }, [refs, tablePositions, tableData]);
+  }, [refs, tablePositions, tableData, tableWidths]);
 
   // ── Phase 2: assign FROM-side lanes ──────────────────────────────────────
   // Connections leaving the same table on the same side get staggered midpoints
@@ -260,8 +261,8 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
 
     const fromPos = tablePositions[ref.from.table];
     const toPos   = tablePositions[ref.to.table];
-    const fromRight = fromPos.x + TABLE_WIDTH;
-    const toRight   = toPos.x  + TABLE_WIDTH;
+    const fromRight = fromPos.x + (tableWidths[ref.from.table] || TABLE_WIDTH);
+    const toRight   = toPos.x  + (tableWidths[ref.to.table]   || TABLE_WIDTH);
 
     const fromY = getColumnY(fromPos, fromColIdx);
     const toY   = getColumnY(toPos,   toColIdx);
@@ -313,12 +314,36 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
     const cardAnchor = (crowDir === "right" || crowDir === "vert-left") ? "end"   : "start";
 
     const pathKey = `rline-${ref.from.table}-${ref.from.column}-${ref.to.table}-${ref.to.column}`;
-    // Custom path using per-connection midX + adjusted arrival Y
-    const path = `M ${pathX1} ${fromY} H ${midX} V ${toYAdj} H ${pathX2}`;
+    // Apply user's manual midX drag override if present
+    const finalMidX = lineMidXOverrides[pathKey] ?? midX;
+    const path = `M ${pathX1} ${fromY} H ${finalMidX} V ${toYAdj} H ${pathX2}`;
+
+    // Vertical segment geometry (for hit area + grip dot)
+    const segMinY = Math.min(fromY, toYAdj);
+    const segMaxY = Math.max(fromY, toYAdj);
+    const segMidY = (fromY + toYAdj) / 2;
+    const hasVertSeg = segMaxY - segMinY > 4;
 
     lines.push(
       <g key={pathKey} opacity={opacity}>
         <path id={pathKey} d={path} fill="none" stroke={lineColor} strokeWidth="1.3" />
+
+        {/* Draggable hit area on the vertical corridor segment */}
+        {hasVertSeg && (
+          <line
+            x1={finalMidX} y1={segMinY} x2={finalMidX} y2={segMaxY}
+            stroke="transparent" strokeWidth="16"
+            style={{ cursor: "col-resize", pointerEvents: "stroke" }}
+            onMouseDown={(e) => { e.stopPropagation(); onLineDragStart(pathKey, e.clientX, finalMidX); }}
+          />
+        )}
+        {/* Grip dot — subtle affordance on the vertical segment midpoint */}
+        {hasVertSeg && (
+          <circle cx={finalMidX} cy={segMidY} r="2.5"
+            fill={lineColor} opacity={isActive ? 0.6 : 0.25}
+            style={{ pointerEvents: "none" }} />
+        )}
+
         <CrowFoot x={x1} y={fromY} dir={crowDir === "right" ? "right" : "left"} color={lineColor} />
         <circle cx={circleX} cy={toYAdj} r="3.5" fill="none" stroke={lineColor} strokeWidth="1.3" />
 
@@ -342,7 +367,7 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
   return <>{lines}</>;
 }
 
-function TableNode({ table, position, color, onDragStart, onColorChange, isSelected, onSelect, theme, fkColumns, activeColumns, onHover }) {
+function TableNode({ table, position, color, onDragStart, onColorChange, isSelected, onSelect, theme, fkColumns, activeColumns, onHover, width }) {
   const [pickerHovered, setPickerHovered] = useState(false);
 
   const handleMouseDown = (e) => {
@@ -361,7 +386,7 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
         position: "absolute",
         left: position.x,
         top: position.y,
-        width: TABLE_WIDTH,
+        width: width || TABLE_WIDTH,
         borderRadius: "6px",
         overflow: "hidden",
         boxShadow: isSelected
@@ -621,7 +646,7 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, zoom, onResetView, isDark,
   );
 }
 
-function MiniMap({ tablePositions, tableData, colors, canvasOffset, zoom, canvasWidth, canvasHeight, theme }) {
+function MiniMap({ tablePositions, tableData, colors, canvasOffset, zoom, canvasWidth, canvasHeight, theme, tableWidths }) {
   const MINIMAP_W = 160;
   const MINIMAP_H = 100;
   if (Object.keys(tablePositions).length === 0) return null;
@@ -630,7 +655,7 @@ function MiniMap({ tablePositions, tableData, colors, canvasOffset, zoom, canvas
   const allY = Object.values(tablePositions).map((p) => p.y);
   const minX = Math.min(...allX) - 50;
   const minY = Math.min(...allY) - 50;
-  const maxX = Math.max(...allX) + TABLE_WIDTH + 50;
+  const maxX = Math.max(...Object.entries(tablePositions).map(([n, p]) => p.x + (tableWidths[n] || TABLE_WIDTH))) + 50;
   const maxY = Math.max(...allY) + 300;
   const worldW = maxX - minX || 1;
   const worldH = maxY - minY || 1;
@@ -663,7 +688,7 @@ function MiniMap({ tablePositions, tableData, colors, canvasOffset, zoom, canvas
             key={name}
             x={(pos.x - minX) * scale}
             y={(pos.y - minY) * scale}
-            width={TABLE_WIDTH * scale}
+            width={(tableWidths[name] || TABLE_WIDTH) * scale}
             height={(HEADER_HEIGHT + (tableData.find((t) => t.name === name)?.columns.length || 1) * COL_HEIGHT) * scale}
             fill={colors[name] || "#10b981"}
             rx="1"
@@ -715,6 +740,8 @@ export default function SketchER() {
   const [selectedTable, setSelectedTable] = useState(null);
   const [hoveredTable, setHoveredTable] = useState(null);
   const [dragging, setDragging] = useState(null);
+  const [draggingLine, setDraggingLine] = useState(null); // { pathKey, startClientX, startMidX }
+  const [lineMidXOverrides, setLineMidXOverrides] = useState(saved?.lineMidXOverrides ?? {});
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState(null);
@@ -751,11 +778,38 @@ export default function SketchER() {
     return map;
   }, [refs]);
 
+  // Compute per-table widths based on actual text content
+  const tableWidths = useMemo(() => {
+    const cvs = document.createElement("canvas");
+    const ctx = cvs.getContext("2d");
+    const measure = (text, font) => { ctx.font = font; return ctx.measureText(text).width; };
+    const MIN_W = 200;
+    const PAD = 12; // horizontal padding on each side
+
+    const widths = {};
+    for (const table of tables) {
+      // Header: name + gap + color circle
+      const headerW = PAD + measure(table.name, "bold 13px 'DM Sans', sans-serif") + 10 + 20 + PAD;
+
+      let maxW = Math.max(MIN_W, Math.ceil(headerW));
+      for (const col of table.columns) {
+        const isFk = fkMap[table.name]?.has(col.name);
+        const iconW = col.isPk || isFk ? 17 : 0; // 11px icon + 6px gap
+        const nameW = measure(col.name, `${col.isPk ? "600" : "400"} 12.5px 'DM Sans', sans-serif`);
+        const typeW = measure(col.type, "400 11px 'JetBrains Mono', monospace");
+        const rowW = PAD + iconW + nameW + 20 + typeW + PAD;
+        maxW = Math.max(maxW, Math.ceil(rowW));
+      }
+      widths[table.name] = maxW;
+    }
+    return widths;
+  }, [tables, fkMap]);
+
   // Auto-save to localStorage on every meaningful change
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, isDark }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, isDark, lineMidXOverrides }));
       } catch {}
     }, 400);
     return () => clearTimeout(timer);
@@ -764,7 +818,7 @@ export default function SketchER() {
   // Save diagram to a .sker file
   const saveToFile = useCallback(() => {
     const blob = new Blob(
-      [JSON.stringify({ dbml, tablePositions, tableColors, isDark }, null, 2)],
+      [JSON.stringify({ dbml, tablePositions, tableColors, isDark, lineMidXOverrides }, null, 2)],
       { type: "application/json" }
     );
     const url = URL.createObjectURL(blob);
@@ -773,7 +827,7 @@ export default function SketchER() {
     link.href = url;
     link.click();
     URL.revokeObjectURL(url);
-  }, [dbml, tablePositions, tableColors, isDark]);
+  }, [dbml, tablePositions, tableColors, isDark, lineMidXOverrides]);
 
   // Load diagram from a .sker / .json file
   const loadInputRef = useRef(null);
@@ -787,7 +841,8 @@ export default function SketchER() {
         if (state.dbml !== undefined)          setDbml(state.dbml);
         if (state.tablePositions !== undefined) setTablePositions(state.tablePositions);
         if (state.tableColors !== undefined)    setTableColors(state.tableColors);
-        if (state.isDark !== undefined)         setIsDark(state.isDark);
+        if (state.isDark !== undefined)              setIsDark(state.isDark);
+        if (state.lineMidXOverrides !== undefined)   setLineMidXOverrides(state.lineMidXOverrides);
       } catch {}
     };
     reader.readAsText(file);
@@ -1041,8 +1096,18 @@ export default function SketchER() {
     }
   };
 
+  const handleLineDragStart = useCallback((pathKey, clientX, currentMidX) => {
+    setDraggingLine({ pathKey, startClientX: clientX, startMidX: currentMidX });
+  }, []);
+
   const handleMouseMove = useCallback((e) => {
-    if (dragging) {
+    if (draggingLine) {
+      const dx = (e.clientX - draggingLine.startClientX) / zoom;
+      setLineMidXOverrides((prev) => ({
+        ...prev,
+        [draggingLine.pathKey]: draggingLine.startMidX + dx,
+      }));
+    } else if (dragging) {
       setTablePositions((prev) => ({
         ...prev,
         [dragging.table]: {
@@ -1055,10 +1120,11 @@ export default function SketchER() {
     } else if (isResizing) {
       setEditorWidth(Math.max(260, Math.min(600, e.clientX)));
     }
-  }, [dragging, isPanning, panStart, zoom, canvasOffset, isResizing]);
+  }, [draggingLine, dragging, isPanning, panStart, zoom, canvasOffset, isResizing]);
 
   const handleMouseUp = useCallback(() => {
     setDragging(null);
+    setDraggingLine(null);
     setIsPanning(false);
     setPanStart(null);
     setIsResizing(false);
@@ -1386,6 +1452,9 @@ export default function SketchER() {
               theme={theme}
               hoveredTable={hoveredTable}
               tableColors={tableColors}
+              tableWidths={tableWidths}
+              lineMidXOverrides={lineMidXOverrides}
+              onLineDragStart={handleLineDragStart}
             />
           </svg>
 
@@ -1404,6 +1473,7 @@ export default function SketchER() {
                 fkColumns={fkMap[table.name]}
                 activeColumns={activeColumns[table.name]}
                 onHover={setHoveredTable}
+                width={tableWidths[table.name]}
               />
             ) : null
           )}
@@ -1418,6 +1488,7 @@ export default function SketchER() {
           canvasWidth={canvasSize.w}
           canvasHeight={canvasSize.h}
           theme={theme}
+          tableWidths={tableWidths}
         />
 
         {/* Empty state */}
