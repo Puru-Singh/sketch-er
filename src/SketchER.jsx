@@ -267,55 +267,58 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
     const fromY = getColumnY(fromPos, fromColIdx);
     const toY   = getColumnY(toPos,   toColIdx);
 
-    // Exact entry/exit points on the table edges
-    // vert-left: FROM uses left edge, TO also uses left edge (C-shape around outside)
-    const x1 = crowDir === "right" ? fromRight + 1 : fromPos.x - 1;
-    const x2 = (crowDir === "right" || crowDir === "vert-left") ? toPos.x - 1 : toRight + 1;
+    // ── Compute default midX using crowDir-based geometry ────────────────────
+    const defX1     = crowDir === "right" ? fromRight + 1  : fromPos.x - 1;
+    const defX2     = (crowDir === "right" || crowDir === "vert-left") ? toPos.x - 1 : toRight + 1;
+    const defPathX1 = crowDir === "right" ? defX1 + 10 : defX1 - 10;
+    const defPathX2 = (crowDir === "right" || crowDir === "vert-left") ? defX2 - 6 : defX2 + 6;
 
-    // Crow's foot depth = 10px; circle sits 10px from the table edge
-    const pathX1  = crowDir === "right" ? x1 + 10 : x1 - 10;
-    const pathX2  = (crowDir === "right" || crowDir === "vert-left") ? x2 - 6  : x2 + 6;
-    const circleX = (crowDir === "right" || crowDir === "vert-left") ? x2 - 10 : x2 + 10;
-
-    // ── FROM-side lane: offset midpoint so parallel corridors don't overlap ──
     const laneOffset = fromLaneCount > 1
       ? (fromLane - (fromLaneCount - 1) / 2) * LANE_SPACING
       : 0;
     let midX;
     if (crowDir === "vert-left") {
-      // C-shape: midX is to the LEFT of both tables' left edges, lanes spread further left
-      const outerLeft = Math.min(fromPos.x, toPos.x) - 30;
-      midX = outerLeft - Math.abs(laneOffset);
+      midX = Math.min(fromPos.x, toPos.x) - 30 - Math.abs(laneOffset);
     } else {
-      const baseMidX = (pathX1 + pathX2) / 2;
-      // For "right", higher lane index → larger midX (fan out rightward).
-      // For "left",  higher lane index → smaller midX (fan out leftward) — hence the sign flip.
-      midX = baseMidX + (crowDir === "right" ? laneOffset : -laneOffset);
+      midX = (defPathX1 + defPathX2) / 2 + (crowDir === "right" ? laneOffset : -laneOffset);
     }
 
-    // ── TO-side lane: spread circles that land on the same PK column ─────────
+    // ── TO-side arrival spread ────────────────────────────────────────────────
     const arriveOffset = toLaneCount > 1
       ? (toLane - (toLaneCount - 1) / 2) * ARRIVE_SPREAD
       : 0;
     const toYAdj = toY + arriveOffset;
 
-    // ── Styling ──────────────────────────────────────────────────────────────
+    // ── Apply user drag override ──────────────────────────────────────────────
+    const pathKey = `rline-${ref.from.table}-${ref.from.column}-${ref.to.table}-${ref.to.column}`;
+    const finalMidX = lineMidXOverrides[pathKey] ?? midX;
+
+    // ── Adaptive endpoints: re-derive sides from where finalMidX landed ───────
+    // Crow's foot flips to left when corridor crosses past the FROM table's left edge,
+    // and the circle flips when the corridor crosses the TO table boundary.
+    const fromExitLeft = finalMidX < fromPos.x;
+    const toEnterLeft  = finalMidX < toPos.x;
+
+    const x1      = fromExitLeft ? fromPos.x - 1 : fromRight + 1;
+    const x2      = toEnterLeft  ? toPos.x - 1   : toRight + 1;
+    const pathX1  = fromExitLeft ? x1 - 10 : x1 + 10;
+    const pathX2  = toEnterLeft  ? x2 - 6  : x2 + 6;
+    const circleX = toEnterLeft  ? x2 - 10 : x2 + 10;
+    const cfDir   = fromExitLeft ? "left"   : "right";
+
+    // ── Styling ───────────────────────────────────────────────────────────────
     const isActive = hoveredTable === ref.from.table || hoveredTable === ref.to.table;
     const lineColor = isActive
       ? (tableColors[ref.from.table] || theme.lineColor)
       : theme.lineColor;
     const opacity = hoveredTable && !isActive ? 0.18 : 1;
 
-    // Label positions (just outside the decoration, above the line)
-    // vert-left FROM uses left edge (same as "left"), TO uses left edge (same as "right")
-    const starX      = crowDir === "right" ? x1 + 13 : x1 - 13;
-    const starAnchor = crowDir === "right" ? "start"  : "end";
-    const cardX      = (crowDir === "right" || crowDir === "vert-left") ? x2 - 13 : x2 + 13;
-    const cardAnchor = (crowDir === "right" || crowDir === "vert-left") ? "end"   : "start";
+    // ── Labels ────────────────────────────────────────────────────────────────
+    const starX      = fromExitLeft ? x1 - 13 : x1 + 13;
+    const starAnchor = fromExitLeft ? "end"    : "start";
+    const cardX      = toEnterLeft  ? x2 - 13 : x2 + 13;
+    const cardAnchor = toEnterLeft  ? "end"    : "start";
 
-    const pathKey = `rline-${ref.from.table}-${ref.from.column}-${ref.to.table}-${ref.to.column}`;
-    // Apply user's manual midX drag override if present
-    const finalMidX = lineMidXOverrides[pathKey] ?? midX;
     const path = `M ${pathX1} ${fromY} H ${finalMidX} V ${toYAdj} H ${pathX2}`;
 
     // Vertical segment geometry (for hit area + grip dot)
@@ -344,7 +347,7 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
             style={{ pointerEvents: "none" }} />
         )}
 
-        <CrowFoot x={x1} y={fromY} dir={crowDir === "right" ? "right" : "left"} color={lineColor} />
+        <CrowFoot x={x1} y={fromY} dir={cfDir} color={lineColor} />
         <circle cx={circleX} cy={toYAdj} r="3.5" fill="none" stroke={lineColor} strokeWidth="1.3" />
 
         {/* Cardinality labels */}
