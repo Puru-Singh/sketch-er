@@ -230,10 +230,6 @@ const COL_HEIGHT = 32;
 const HEADER_HEIGHT = 42;
 const TABLE_WIDTH = 230;
 
-// Controls where the dark gradient begins (% from top of header).
-// 0 = full dark overlay, 100 = no gradient. Tweak to taste.
-const HEADER_GRADIENT_STOP = 10;
-
 function getColumnY(table, colIndex) {
   return table.y + HEADER_HEIGHT + colIndex * COL_HEIGHT + COL_HEIGHT / 2;
 }
@@ -522,70 +518,75 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           display: "flex",
           alignItems: "center",
           justifyContent: "space-between",
-          padding: "0 12px",
           fontFamily: "'DM Sans', sans-serif",
           position: "relative",
         }}
       >
+        {/* Full-width dark strip centered vertically */}
         <div style={{
           position: "absolute",
-          inset: 0,
-          background: `linear-gradient(transparent ${HEADER_GRADIENT_STOP}%, rgba(0,0,0,0.55) 100%)`,
-          pointerEvents: "none",
-        }} />
-        <span style={{
-          position: "relative",
-          color: "#fff",
-          fontSize: "12px",
-          fontWeight: 700,
-          letterSpacing: "0.2px",
-        }}>{table.name}</span>
-        <div
-          className="color-picker-area"
-          style={{ position: "relative", width: 18, height: 18 }}
-          onMouseEnter={() => setPickerHovered(true)}
-          onMouseLeave={() => setPickerHovered(false)}
-        >
-          <ColorWheelIcon lit={pickerLit} />
-          <input
-            type="color"
-            value={color}
-            onChange={(e) => onColorChange(table.name, e.target.value)}
-            onFocus={() => setPickerFocused(true)}
-            onBlur={() => setPickerFocused(false)}
-            style={{
-              position: "absolute",
-              inset: 0,
-              opacity: 0,
-              width: "100%",
-              height: "100%",
-              cursor: "pointer",
-              padding: 0,
-              border: "none",
-            }}
-          />
-          {pickerLit && (
-            <div style={{
-              position: "absolute",
-              top: "calc(100% + 10px)",
-              right: 0,
-              background: theme.toolbarBg,
-              border: `1px solid ${theme.toolbarBorder}`,
-              color: theme.textPrimary,
-              fontSize: "12.5px",
-              fontWeight: 500,
-              padding: "7px 14px",
-              borderRadius: "8px",
-              whiteSpace: "nowrap",
-              boxShadow: "0 6px 20px rgba(0,0,0,0.13)",
-              zIndex: 100,
-              fontFamily: "'DM Sans', sans-serif",
-              pointerEvents: "none",
-              letterSpacing: "0.1px",
-            }}>
-              Pick table color
-            </div>
-          )}
+          left: 0, right: 0,
+          top: "50%",
+          transform: "translateY(-50%)",
+          background: "rgba(0,0,0,0.38)",
+          padding: "5px 12px",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "space-between",
+        }}>
+          <span style={{
+            color: "#fff",
+            fontSize: "12px",
+            fontWeight: 700,
+            letterSpacing: "0.2px",
+          }}>{table.name}</span>
+          <div
+            className="color-picker-area"
+            style={{ position: "relative", width: 18, height: 18, flexShrink: 0 }}
+            onMouseEnter={() => setPickerHovered(true)}
+            onMouseLeave={() => setPickerHovered(false)}
+          >
+            <ColorWheelIcon lit={pickerLit} />
+            <input
+              type="color"
+              value={color}
+              onChange={(e) => onColorChange(table.name, e.target.value)}
+              onFocus={() => setPickerFocused(true)}
+              onBlur={() => setPickerFocused(false)}
+              style={{
+                position: "absolute",
+                inset: 0,
+                opacity: 0,
+                width: "100%",
+                height: "100%",
+                cursor: "pointer",
+                padding: 0,
+                border: "none",
+              }}
+            />
+            {pickerLit && (
+              <div style={{
+                position: "absolute",
+                top: "calc(100% + 10px)",
+                right: 0,
+                background: theme.toolbarBg,
+                border: `1px solid ${theme.toolbarBorder}`,
+                color: theme.textPrimary,
+                fontSize: "12.5px",
+                fontWeight: 500,
+                padding: "7px 14px",
+                borderRadius: "8px",
+                whiteSpace: "nowrap",
+                boxShadow: "0 6px 20px rgba(0,0,0,0.13)",
+                zIndex: 100,
+                fontFamily: "'DM Sans', sans-serif",
+                pointerEvents: "none",
+                letterSpacing: "0.1px",
+              }}>
+                Pick table color
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
