@@ -823,7 +823,7 @@ function ZoomControl({ zoom, onZoomSet, theme }) {
 
 function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp }) {
   return (
-    <div onMouseDown={(e) => e.stopPropagation()} style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
+    <div data-export-hide="1" onMouseDown={(e) => e.stopPropagation()} style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
       <TBtn onClick={onToggleTheme} tip={isDark ? "Switch to light mode" : "Switch to dark mode"} theme={theme}>
         {isDark ? (
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1198,6 +1198,7 @@ function MiniMap({ tablePositions, tableData, colors, canvasOffset, zoom, canvas
 
   return (
     <div
+      data-export-hide="1"
       onMouseDown={(e) => e.stopPropagation()}
       style={{
         position: "absolute",
@@ -1334,7 +1335,7 @@ function BottomGroupPane({ groupsVisible, onToggle, showAllConnections, onToggle
     <div style={{ width: 1, height: 18, background: theme.toolbarBorder, flexShrink: 0 }} />
   );
   return (
-    <div onMouseDown={(e) => e.stopPropagation()} style={{
+    <div data-export-hide="1" onMouseDown={(e) => e.stopPropagation()} style={{
       position: "absolute",
       bottom: 12,
       left: "50%",
@@ -1373,20 +1374,6 @@ function BottomGroupPane({ groupsVisible, onToggle, showAllConnections, onToggle
   );
 }
 
-// Canvas2D rounded-rect helper
-function canvasRoundRect(ctx, x, y, w, h, r) {
-  ctx.beginPath();
-  ctx.moveTo(x + r, y);
-  ctx.lineTo(x + w - r, y);
-  ctx.quadraticCurveTo(x + w, y, x + w, y + r);
-  ctx.lineTo(x + w, y + h - r);
-  ctx.quadraticCurveTo(x + w, y + h, x + w - r, y + h);
-  ctx.lineTo(x + r, y + h);
-  ctx.quadraticCurveTo(x, y + h, x, y + h - r);
-  ctx.lineTo(x, y + r);
-  ctx.quadraticCurveTo(x, y, x + r, y);
-  ctx.closePath();
-}
 
 const STORAGE_KEY = "sketcher-state";
 
@@ -1427,6 +1414,7 @@ export default function SketchER() {
   const [editorWidth, setEditorWidth] = useState(370);
   const [isResizing, setIsResizing] = useState(false);
   const canvasRef = useRef(null);
+  const transformRef = useRef(null);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   const [showAllConnections, setShowAllConnections] = useState(false);
 
@@ -1545,195 +1533,69 @@ export default function SketchER() {
   }, []);
 
   const exportToPng = useCallback(async () => {
-    const tableNames = Object.keys(tablePositions);
-    if (tableNames.length === 0) return;
+    const { default: html2canvas } = await import("html2canvas");
+    const outerEl = canvasRef.current;
+    if (!outerEl || !Object.keys(tablePositions).length) return;
 
-    // ── Bounding box (with extra room for lines routed outside table edges) ──
-    const PADDING = 60, EXTRA = 100;
+    // ── Bounding box of all table content ────────────────────────────────────
+    const PAD = 80;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const name of tableNames) {
+    for (const name of Object.keys(tablePositions)) {
       const pos = tablePositions[name];
       const td  = tables.find((t) => t.name === name);
       if (!pos || !td) continue;
-      minX = Math.min(minX, pos.x);
-      minY = Math.min(minY, pos.y);
-      maxX = Math.max(maxX, pos.x + TABLE_WIDTH);
-      maxY = Math.max(maxY, pos.y + HEADER_HEIGHT + td.columns.length * COL_HEIGHT);
+      const w = tableWidths[name] || TABLE_WIDTH;
+      const h = HEADER_HEIGHT + td.columns.length * COL_HEIGHT;
+      minX = Math.min(minX, pos.x); minY = Math.min(minY, pos.y);
+      maxX = Math.max(maxX, pos.x + w); maxY = Math.max(maxY, pos.y + h);
     }
-    minX -= EXTRA; minY -= EXTRA; maxX += EXTRA; maxY += EXTRA;
-    const W  = maxX - minX + PADDING * 2;
-    const H  = maxY - minY + PADDING * 2;
-    const ox = -minX + PADDING;
-    const oy = -minY + PADDING;
-    const SCALE = 2;
+    // Extra room for lines that route outside table edges
+    minX -= PAD; minY -= PAD; maxX += PAD; maxY += PAD;
+    const W = Math.ceil(maxX - minX);
+    const H = Math.ceil(maxY - minY);
 
-    // ── Canvas setup ─────────────────────────────────────────────────────────
-    const cvs = document.createElement("canvas");
-    cvs.width  = W * SCALE;
-    cvs.height = H * SCALE;
-    const ctx  = cvs.getContext("2d");
-    ctx.scale(SCALE, SCALE);
+    // ── Clone the canvas area off-screen ─────────────────────────────────────
+    const clone = outerEl.cloneNode(true);
+    clone.style.cssText = [
+      `position:fixed`,
+      `top:-${H + 200}px`,
+      `left:0`,
+      `width:${W}px`,
+      `height:${H}px`,
+      `overflow:hidden`,
+      `pointer-events:none`,
+    ].join(";");
 
-    // ── Background + dot grid ────────────────────────────────────────────────
-    ctx.fillStyle = isDark ? "#1e1e1e" : "#f5f5f5";
-    ctx.fillRect(0, 0, W, H);
-    ctx.fillStyle = isDark ? "#2a2a2b" : "#d8d8d8";
-    for (let gx = 28; gx < W; gx += 28)
-      for (let gy = 28; gy < H; gy += 28) {
-        ctx.beginPath(); ctx.arc(gx, gy, 0.7, 0, Math.PI * 2); ctx.fill();
-      }
-
-    // ── Relationship lines (same phase 1/2/3 logic as RelationshipLines) ────
-    const items = [];
-    for (const ref of refs) {
-      const fromPos  = tablePositions[ref.from.table];
-      const toPos    = tablePositions[ref.to.table];
-      const fromData = tables.find((t) => t.name === ref.from.table);
-      const toData   = tables.find((t) => t.name === ref.to.table);
-      if (!fromPos || !toPos || !fromData || !toData) continue;
-      const fromColIdx = fromData.columns.findIndex((c) => c.name === ref.from.column);
-      const toColIdx   = toData.columns.findIndex((c) => c.name === ref.to.column);
-      if (fromColIdx === -1 || toColIdx === -1) continue;
-      const fromRight = fromPos.x + TABLE_WIDTH;
-      const toRight   = toPos.x  + TABLE_WIDTH;
-      const xOverlap  = Math.max(0, Math.min(fromRight, toRight) - Math.max(fromPos.x, toPos.x));
-      let crowDir;
-      if (xOverlap / TABLE_WIDTH > 0.5)         crowDir = "vert-left";
-      else if (fromPos.x >= toRight)             crowDir = "left";
-      else if (toPos.x  >= fromRight)            crowDir = "right";
-      else crowDir = (fromPos.x + TABLE_WIDTH / 2) <= (toPos.x + TABLE_WIDTH / 2) ? "right" : "left";
-      items.push({ ref, fromColIdx, toColIdx, crowDir, fromPos, toPos, fromRight, toRight });
-    }
-    const fromGroups = {};
-    items.forEach((item) => { const k = `${item.ref.from.table}::${item.crowDir}`; (fromGroups[k] ??= []).push(item); });
-    Object.values(fromGroups).forEach((g) => { g.sort((a, b) => a.fromColIdx - b.fromColIdx); g.forEach((item, i) => { item.fromLane = i; item.fromLaneCount = g.length; }); });
-    const toGroups = {};
-    items.forEach((item) => { const k = `${item.ref.to.table}::${item.ref.to.column}`; (toGroups[k] ??= []).push(item); });
-    Object.values(toGroups).forEach((g) => { g.sort((a, b) => a.ref.from.table.localeCompare(b.ref.from.table)); g.forEach((item, i) => { item.toLane = i; item.toLaneCount = g.length; }); });
-
-    const defaultLc = isDark ? "#5c6472" : "#b0bac8";
-    ctx.lineCap = "round";
-    for (const item of items) {
-      const { fromColIdx, toColIdx, crowDir, fromPos, toPos, fromRight, toRight,
-              fromLane, fromLaneCount, toLane, toLaneCount } = item;
-      const lc = showAllConnections ? (tableColors[item.ref.from.table] || defaultLc) : defaultLc;
-      const fromY = getColumnY(fromPos, fromColIdx);
-      const toY   = getColumnY(toPos,   toColIdx);
-      const x1 = crowDir === "right" ? fromRight + 1 : fromPos.x - 1;
-      const x2 = (crowDir === "right" || crowDir === "vert-left") ? toPos.x - 1 : toRight + 1;
-      const pathX1  = crowDir === "right" ? x1 + 10 : x1 - 10;
-      const pathX2  = (crowDir === "right" || crowDir === "vert-left") ? x2 - 6  : x2 + 6;
-      const circleX = (crowDir === "right" || crowDir === "vert-left") ? x2 - 10 : x2 + 10;
-      const laneOffset = fromLaneCount > 1 ? (fromLane - (fromLaneCount - 1) / 2) * LANE_SPACING : 0;
-      let midX;
-      if (crowDir === "vert-left") {
-        midX = Math.min(fromPos.x, toPos.x) - 30 - Math.abs(laneOffset);
-      } else {
-        midX = (pathX1 + pathX2) / 2 + (crowDir === "right" ? laneOffset : -laneOffset);
-      }
-      const arriveOffset = toLaneCount > 1 ? (toLane - (toLaneCount - 1) / 2) * ARRIVE_SPREAD : 0;
-      const toYAdj = toY + arriveOffset;
-
-      // Path
-      ctx.beginPath();
-      ctx.moveTo(pathX1 + ox, fromY + oy);
-      ctx.lineTo(midX  + ox, fromY + oy);
-      ctx.lineTo(midX  + ox, toYAdj + oy);
-      ctx.lineTo(pathX2 + ox, toYAdj + oy);
-      ctx.strokeStyle = lc; ctx.lineWidth = 1.3; ctx.stroke();
-
-      // Crow's foot
-      const spread = 6, depth = 10;
-      const cfDir = crowDir === "right" ? "right" : "left";
-      const px = cfDir === "right" ? x1 + ox + depth : x1 + ox - depth;
-      [[x1 + ox, fromY + oy - spread, x1 + ox, fromY + oy + spread],
-       [x1 + ox, fromY + oy, px, fromY + oy - spread],
-       [x1 + ox, fromY + oy, px, fromY + oy + spread]].forEach(([x1c, y1c, x2c, y2c]) => {
-        ctx.beginPath(); ctx.moveTo(x1c, y1c); ctx.lineTo(x2c, y2c);
-        ctx.strokeStyle = lc; ctx.lineWidth = 1.3; ctx.stroke();
-      });
-
-      // Circle
-      ctx.beginPath(); ctx.arc(circleX + ox, toYAdj + oy, 3.5, 0, Math.PI * 2);
-      ctx.strokeStyle = lc; ctx.lineWidth = 1.3; ctx.stroke();
-
-      // Labels
-      ctx.fillStyle = lc; ctx.textBaseline = "alphabetic";
-      ctx.font = "bold 11px 'DM Sans', sans-serif";
-      ctx.textAlign = crowDir === "right" ? "left" : "right";
-      ctx.fillText("*", (crowDir === "right" ? x1 + 13 : x1 - 13) + ox, fromY + oy - 9);
-      ctx.font = "400 9.5px 'DM Sans', sans-serif";
-      ctx.textAlign = (crowDir === "right" || crowDir === "vert-left") ? "right" : "left";
-      ctx.globalAlpha = 0.85;
-      ctx.fillText("0..1", ((crowDir === "right" || crowDir === "vert-left") ? x2 - 13 : x2 + 13) + ox, toYAdj + oy - 9);
-      ctx.globalAlpha = 1;
-
-      // Grip dot on vertical segment (always shown when showAllConnections)
-      if (showAllConnections) {
-        const segMidY = (fromY + toYAdj) / 2;
-        ctx.beginPath(); ctx.arc(midX + ox, segMidY + oy, 2.8, 0, Math.PI * 2);
-        ctx.fillStyle = lc; ctx.globalAlpha = 0.9; ctx.fill(); ctx.globalAlpha = 1;
-      }
+    // Reset the inner transform so content starts at (0,0) in the clone
+    const cloneInner = clone.querySelector("[data-transform-container]");
+    if (cloneInner) {
+      cloneInner.style.transform = `translate(${-minX}px,${-minY}px) scale(1)`;
     }
 
-    // ── Table cards ──────────────────────────────────────────────────────────
-    await document.fonts.ready;
-    for (const table of tables) {
-      const pos = tablePositions[table.name];
-      if (!pos) continue;
-      const color  = tableColors[table.name] || "#10b981";
-      const tx     = pos.x + ox;
-      const ty     = pos.y + oy;
-      const tableH = HEADER_HEIGHT + table.columns.length * COL_HEIGHT;
+    // Remove UI overlays (toolbar, minimap, filename, bottom pane)
+    clone.querySelectorAll("[data-export-hide]").forEach((el) => el.remove());
 
-      // Shadow + body
-      ctx.shadowColor = "rgba(0,0,0,0.09)"; ctx.shadowBlur = 8; ctx.shadowOffsetY = 2;
-      canvasRoundRect(ctx, tx, ty, TABLE_WIDTH, tableH, 6);
-      ctx.fillStyle = isDark ? "#252526" : "#ffffff"; ctx.fill();
-      ctx.shadowColor = "transparent"; ctx.shadowBlur = 0; ctx.shadowOffsetY = 0;
+    document.body.appendChild(clone);
+    // Two frames — let the browser lay out and paint the clone
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
 
-      // Border
-      canvasRoundRect(ctx, tx, ty, TABLE_WIDTH, tableH, 6);
-      ctx.strokeStyle = isDark ? "#3e3e42" : "#d8d8d8"; ctx.lineWidth = 1; ctx.stroke();
+    const canvas = await html2canvas(clone, {
+      backgroundColor: isDark ? "#1e1e1e" : "#f5f5f5",
+      scale: 2,
+      logging: false,
+      useCORS: true,
+      allowTaint: true,
+      width: W,
+      height: H,
+    });
 
-      // Header (clip to top rounded corners)
-      ctx.save();
-      canvasRoundRect(ctx, tx, ty, TABLE_WIDTH, HEADER_HEIGHT, 6); ctx.clip();
-      ctx.fillStyle = color; ctx.fillRect(tx, ty, TABLE_WIDTH, HEADER_HEIGHT);
-      ctx.restore();
+    document.body.removeChild(clone);
 
-      // Table name
-      ctx.fillStyle = "#ffffff"; ctx.font = "bold 13px 'DM Sans', sans-serif";
-      ctx.textBaseline = "middle"; ctx.textAlign = "left";
-      ctx.fillText(table.name, tx + 12, ty + HEADER_HEIGHT / 2);
-
-      // Columns
-      for (let i = 0; i < table.columns.length; i++) {
-        const col = table.columns[i];
-        const cy  = ty + HEADER_HEIGHT + i * COL_HEIGHT;
-        if (i < table.columns.length - 1) {
-          ctx.strokeStyle = isDark ? "#3e3e42" : "#eeeeee"; ctx.lineWidth = 0.5;
-          ctx.beginPath(); ctx.moveTo(tx + 1, cy + COL_HEIGHT); ctx.lineTo(tx + TABLE_WIDTH - 1, cy + COL_HEIGHT); ctx.stroke();
-        }
-        const isFk = fkMap[table.name]?.has(col.name);
-        const nameX = tx + 12 + (col.isPk || isFk ? 16 : 0);
-        ctx.fillStyle = isDark ? "#d1d5db" : "#3b3b3b";
-        ctx.font = `${col.isPk ? "600" : "400"} 12.5px 'DM Sans', sans-serif`;
-        ctx.textBaseline = "middle"; ctx.textAlign = "left";
-        ctx.fillText(col.name, nameX, cy + COL_HEIGHT / 2);
-        ctx.fillStyle = isDark ? "#6b7280" : "#8a92a0";
-        ctx.font = "400 11px 'JetBrains Mono', monospace";
-        ctx.textAlign = "right";
-        ctx.fillText(col.type, tx + TABLE_WIDTH - 12, cy + COL_HEIGHT / 2);
-      }
-    }
-
-    // ── Download ─────────────────────────────────────────────────────────────
     const link = document.createElement("a");
-    link.download = "sketcher-diagram.png";
-    link.href = cvs.toDataURL("image/png");
+    link.download = `${fileName || "diagram"}.png`;
+    link.href = canvas.toDataURL("image/png");
     link.click();
-  }, [tablePositions, tables, tableColors, refs, fkMap, isDark, showAllConnections]);
+  }, [tablePositions, tables, tableWidths, isDark, fileName]);
 
   useEffect(() => {
     setTablePositions((prev) => {
@@ -2203,6 +2065,7 @@ export default function SketchER() {
 
         {/* Filename display / edit */}
         <div
+          data-export-hide="1"
           onMouseDown={(e) => e.stopPropagation()}
           style={{
             position: "absolute",
@@ -2288,6 +2151,8 @@ export default function SketchER() {
 
         {/* Transform container */}
         <div
+          ref={transformRef}
+          data-transform-container="1"
           style={{
             position: "absolute",
             inset: 0,
