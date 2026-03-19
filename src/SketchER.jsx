@@ -539,7 +539,6 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           fontWeight: 700,
           letterSpacing: "0.2px",
           whiteSpace: "nowrap",
-          maxWidth: "calc(100% - 42px)",
         }}>{table.name}</span>
         {/* Color wheel: always 12px from right edge */}
         <div
@@ -1454,8 +1453,8 @@ export default function SketchER() {
 
     const widths = {};
     for (const table of tables) {
-      // Header: pill (left pad + name + right pad) + gap + color wheel + right padding
-      const headerW = PAD + measure(table.name, "700 12px 'DM Sans', sans-serif") + PAD + 8 + 18 + PAD;
+      // Header: pill left pad + name + pill right pad + gap + wheel + right edge
+      const headerW = PAD + measure(table.name, "700 12px 'DM Sans', sans-serif") + PAD + PAD + 18 + PAD;
 
       let maxW = Math.max(MIN_W, Math.ceil(headerW));
       for (const col of table.columns) {
