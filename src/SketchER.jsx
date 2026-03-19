@@ -232,7 +232,7 @@ const TABLE_WIDTH = 230;
 const TABLE_CORNER_RADIUS = 6;
 
 // 0 = fully transparent, 1 = fully black. Tweak to taste.
-const TABLE_NAME_DARKNESS = 0.38;
+const TABLE_NAME_DARKNESS = 0.5;
 
 // Resting opacity of the color wheel icon in table headers (0–1).
 const COLOR_WHEEL_RESTING_OPACITY = 0.5;
@@ -524,13 +524,11 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           background: color,
           display: "flex",
           alignItems: "center",
-          justifyContent: "flex-start",
-          gap: "8px",
-          paddingRight: "12px",
+          position: "relative",
           fontFamily: "'DM Sans', sans-serif",
         }}
       >
-        {/* Left-flush pill: square left edge, rounded right, stops before color wheel */}
+        {/* Left-flush pill: square left edge, rounded right, capped before color wheel zone */}
         <span style={{
           background: `rgba(0,0,0,${TABLE_NAME_DARKNESS})`,
           borderRadius: `0 ${TABLE_CORNER_RADIUS}px ${TABLE_CORNER_RADIUS}px 0`,
@@ -540,10 +538,12 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           fontWeight: 700,
           letterSpacing: "0.2px",
           whiteSpace: "nowrap",
+          maxWidth: "calc(100% - 42px)",
         }}>{table.name}</span>
+        {/* Color wheel: always 12px from right edge */}
         <div
           className="color-picker-area"
-          style={{ position: "relative", width: 18, height: 18, flexShrink: 0 }}
+          style={{ position: "absolute", right: 12, width: 18, height: 18 }}
           onMouseEnter={() => setPickerHovered(true)}
           onMouseLeave={() => setPickerHovered(false)}
         >
