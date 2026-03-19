@@ -1403,7 +1403,7 @@ export default function SketchER() {
   const [isDark, setIsDark] = useState(saved?.isDark ?? false);
   const theme = isDark ? DARK_THEME : LIGHT_THEME;
 
-  const [fileName, setFileName] = useState("Untitled");
+  const [fileName, setFileName] = useState(saved?.fileName ?? "Untitled");
   const [editingFileName, setEditingFileName] = useState(false);
   const fileNameInputRef = useRef(null);
   const pendingFitRef = useRef(false);
@@ -1499,11 +1499,11 @@ export default function SketchER() {
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible, fileName }));
       } catch {}
     }, 400);
     return () => clearTimeout(timer);
-  }, [dbml, tablePositions, tableColors, isDark]);
+  }, [dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible, fileName]);
 
   // Save diagram to a .sker file
   const saveToFile = useCallback(() => {
