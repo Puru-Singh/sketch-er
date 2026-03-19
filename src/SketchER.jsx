@@ -234,6 +234,9 @@ const TABLE_CORNER_RADIUS = 6;
 // 0 = fully transparent, 1 = fully black. Tweak to taste.
 const TABLE_NAME_DARKNESS = 0.38;
 
+// Resting opacity of the color wheel icon in table headers (0–1).
+const COLOR_WHEEL_RESTING_OPACITY = 0.38;
+
 function getColumnY(table, colIndex) {
   return table.y + HEADER_HEIGHT + colIndex * COL_HEIGHT + COL_HEIGHT / 2;
 }
@@ -469,7 +472,7 @@ const COLOR_WHEEL_SEGS = (() => {
 function ColorWheelIcon({ lit }) {
   return (
     <svg width="18" height="18" viewBox="0 0 20 20"
-      style={{ display: "block", opacity: lit ? 1 : 0.28, transition: "opacity 0.15s", pointerEvents: "none" }}>
+      style={{ display: "block", opacity: lit ? 1 : COLOR_WHEEL_RESTING_OPACITY, transition: "opacity 0.15s", pointerEvents: "none" }}>
       {COLOR_WHEEL_SEGS.map((s) => <path key={s.color} d={s.d} fill={s.color} />)}
     </svg>
   );
@@ -536,9 +539,6 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           fontWeight: 700,
           letterSpacing: "0.2px",
           whiteSpace: "nowrap",
-          overflow: "hidden",
-          textOverflow: "ellipsis",
-          maxWidth: "calc(100% - 36px)",
         }}>{table.name}</span>
         <div
           className="color-picker-area"
@@ -1452,8 +1452,8 @@ export default function SketchER() {
 
     const widths = {};
     for (const table of tables) {
-      // Header: name + gap + color circle
-      const headerW = PAD + measure(table.name, "bold 13px 'DM Sans', sans-serif") + 10 + 20 + PAD;
+      // Header: pill (left pad + name + right pad) + gap + color wheel + right padding
+      const headerW = PAD + measure(table.name, "700 12px 'DM Sans', sans-serif") + PAD + 8 + 18 + PAD;
 
       let maxW = Math.max(MIN_W, Math.ceil(headerW));
       for (const col of table.columns) {
