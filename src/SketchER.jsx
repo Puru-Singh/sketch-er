@@ -530,10 +530,11 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
       >
         {/* Left-flush pill: square left edge, rounded right, capped before color wheel zone */}
         <span style={{
+          display: "inline-block",
           background: `rgba(0,0,0,${TABLE_NAME_DARKNESS})`,
           borderRadius: `0 ${TABLE_CORNER_RADIUS}px ${TABLE_CORNER_RADIUS}px 0`,
           color: "#fff",
-          padding: "4px 12px 4px 12px",
+          padding: "4px 12px",
           fontSize: "12px",
           fontWeight: 700,
           letterSpacing: "0.2px",
