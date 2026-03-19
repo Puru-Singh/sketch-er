@@ -821,7 +821,7 @@ function ZoomControl({ zoom, onZoomSet, theme }) {
   );
 }
 
-function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp, showAllConnections, onToggleConnections }) {
+function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp }) {
   return (
     <div onMouseDown={(e) => e.stopPropagation()} style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
       <TBtn onClick={onToggleTheme} tip={isDark ? "Switch to light mode" : "Switch to dark mode"} theme={theme}>
@@ -846,14 +846,6 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetVi
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M3 12a9 9 0 1 1 3 6.7" /><path d="M3 21v-6h6" />
         </svg>
-      </TBtn>
-      <TBtn onClick={onToggleConnections} tip={showAllConnections ? "Hide all connections" : "Show all connections"} theme={theme}
-        style={showAllConnections ? { background: "#10b98122", borderColor: "#10b981", color: "#10b981" } : {}}>
-        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-        </svg>
-        Links
       </TBtn>
       <TBtn onClick={onFit} tip="Fit all tables in view" theme={theme}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1337,7 +1329,10 @@ function GroupOverlay({ groups, tablePositions, tableWidths, tableData, groupsVi
   );
 }
 
-function BottomGroupPane({ groupsVisible, onToggle, theme }) {
+function BottomGroupPane({ groupsVisible, onToggle, showAllConnections, onToggleConnections, theme }) {
+  const divider = (
+    <div style={{ width: 1, height: 18, background: theme.toolbarBorder, flexShrink: 0 }} />
+  );
   return (
     <div onMouseDown={(e) => e.stopPropagation()} style={{
       position: "absolute",
@@ -1367,6 +1362,13 @@ function BottomGroupPane({ groupsVisible, onToggle, theme }) {
       </svg>
       <span>Table Groups</span>
       <ToggleSwitch checked={groupsVisible} onChange={onToggle} theme={theme} />
+      {divider}
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={showAllConnections ? "#10b981" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+      </svg>
+      <span style={{ color: showAllConnections ? "#10b981" : undefined }}>Highlight Links</span>
+      <ToggleSwitch checked={showAllConnections} onChange={onToggleConnections} theme={theme} />
     </div>
   );
 }
@@ -2282,8 +2284,6 @@ export default function SketchER() {
           onSave={saveToFile}
           onLoad={() => loadInputRef.current?.click()}
           onShowHelp={() => setShowHelp(true)}
-          showAllConnections={showAllConnections}
-          onToggleConnections={() => setShowAllConnections((v) => !v)}
         />
 
         {/* Transform container */}
@@ -2390,6 +2390,8 @@ export default function SketchER() {
         <BottomGroupPane
           groupsVisible={groupsVisible}
           onToggle={() => setGroupsVisible((v) => !v)}
+          showAllConnections={showAllConnections}
+          onToggleConnections={() => setShowAllConnections((v) => !v)}
           theme={theme}
         />
 
