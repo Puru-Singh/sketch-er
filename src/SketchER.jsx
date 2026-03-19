@@ -259,7 +259,7 @@ const LANE_SPACING = 24;
 // How far apart to spread multiple connections arriving at the same PK column
 const ARRIVE_SPREAD = 8;
 
-function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTable, tableColors, tableWidths, lineMidXOverrides, onLineDragStart }) {
+function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTable, selectedTables, showAllConnections, tableColors, tableWidths, lineMidXOverrides, onLineDragStart }) {
   // ── Phase 1: resolve direction + column indices for every valid ref ──────
   const items = useMemo(() => {
     const result = [];
@@ -385,11 +385,14 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
     const toYAdj = toY + arriveOffset;
 
     // ── Styling ──────────────────────────────────────────────────────────────
-    const isActive = hoveredTable === ref.from.table || hoveredTable === ref.to.table;
+    const isActive = showAllConnections
+      || hoveredTable === ref.from.table || hoveredTable === ref.to.table
+      || selectedTables.has(ref.from.table) || selectedTables.has(ref.to.table);
     const lineColor = isActive
       ? (tableColors[ref.from.table] || theme.lineColor)
       : theme.lineColor;
-    const opacity = hoveredTable && !isActive ? 0.18 : 1;
+    const hasFilter = !showAllConnections && (hoveredTable || selectedTables.size > 0);
+    const opacity = hasFilter && !isActive ? 0.18 : 1;
 
     // Label positions (just outside the decoration, above the line)
     // vert-left FROM uses left edge (same as "left"), TO uses left edge (same as "right")
@@ -438,7 +441,7 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
         <text x={cardX} y={toYAdj - 7} fill={lineColor} fontSize="9.5"
           fontFamily="'DM Sans', sans-serif" textAnchor={cardAnchor} opacity="0.85">0..1</text>
 
-        {/* Animated dot — moves PK → FK (reversed) */}
+        {/* Animated dot — moves PK → FK (reversed); always shown when showAllConnections */}
         {isActive && (
           <circle r="2.8" fill={lineColor} opacity="0.9">
             <animateMotion dur="1.8s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1" calcMode="linear">
@@ -478,7 +481,7 @@ function ColorWheelIcon({ lit }) {
   );
 }
 
-function TableNode({ table, position, color, onDragStart, onColorChange, isSelected, onSelect, theme, fkColumns, activeColumns, onHover, width }) {
+function TableNode({ table, position, color, onDragStart, onColorChange, isSelected, onSelect, theme, fkColumns, activeColumns, onHover, width, isDimmed }) {
   const [pickerHovered, setPickerHovered] = useState(false);
   const [pickerFocused, setPickerFocused] = useState(false);
   const pickerLit = pickerHovered || pickerFocused;
@@ -512,7 +515,8 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           : `0 2px 8px rgba(0,0,0,0.09), 0 0 0 1px ${theme.tableBorder}`,
         cursor: "grab",
         userSelect: "none",
-        transition: "box-shadow 0.15s ease",
+        opacity: isDimmed ? 0.35 : 1,
+        transition: "box-shadow 0.15s ease, opacity 0.2s ease",
         background: theme.tableBg,
         border: `1px solid ${isSelected ? color : theme.tableBorder}`,
       }}
@@ -817,7 +821,7 @@ function ZoomControl({ zoom, onZoomSet, theme }) {
   );
 }
 
-function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp }) {
+function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp, showAllConnections, onToggleConnections }) {
   return (
     <div onMouseDown={(e) => e.stopPropagation()} style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
       <TBtn onClick={onToggleTheme} tip={isDark ? "Switch to light mode" : "Switch to dark mode"} theme={theme}>
@@ -842,6 +846,14 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetVi
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
           <path d="M3 12a9 9 0 1 1 3 6.7" /><path d="M3 21v-6h6" />
         </svg>
+      </TBtn>
+      <TBtn onClick={onToggleConnections} tip={showAllConnections ? "Hide all connections" : "Show all connections"} theme={theme}
+        style={showAllConnections ? { background: "#10b98122", borderColor: "#10b981", color: "#10b981" } : {}}>
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
+          <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+        </svg>
+        Links
       </TBtn>
       <TBtn onClick={onFit} tip="Fit all tables in view" theme={theme}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1414,6 +1426,7 @@ export default function SketchER() {
   const [isResizing, setIsResizing] = useState(false);
   const canvasRef = useRef(null);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
+  const [showAllConnections, setShowAllConnections] = useState(false);
 
   const { tables, refs, groups } = useMemo(() => parseDBML(dbml), [dbml]);
 
@@ -1430,6 +1443,17 @@ export default function SketchER() {
       }
     }
     return map;
+  }, [hoveredTable, refs]);
+
+  // Tables connected to the hovered table (for dimming)
+  const connectedToHovered = useMemo(() => {
+    if (!hoveredTable) return null;
+    const connected = new Set([hoveredTable]);
+    for (const ref of refs) {
+      if (ref.from.table === hoveredTable) connected.add(ref.to.table);
+      if (ref.to.table === hoveredTable) connected.add(ref.from.table);
+    }
+    return connected;
   }, [hoveredTable, refs]);
 
   // Which columns are FK (many) side
@@ -1585,11 +1609,12 @@ export default function SketchER() {
     items.forEach((item) => { const k = `${item.ref.to.table}::${item.ref.to.column}`; (toGroups[k] ??= []).push(item); });
     Object.values(toGroups).forEach((g) => { g.sort((a, b) => a.ref.from.table.localeCompare(b.ref.from.table)); g.forEach((item, i) => { item.toLane = i; item.toLaneCount = g.length; }); });
 
-    const lc = isDark ? "#5c6472" : "#b0bac8";
+    const defaultLc = isDark ? "#5c6472" : "#b0bac8";
     ctx.lineCap = "round";
     for (const item of items) {
       const { fromColIdx, toColIdx, crowDir, fromPos, toPos, fromRight, toRight,
               fromLane, fromLaneCount, toLane, toLaneCount } = item;
+      const lc = showAllConnections ? (tableColors[item.ref.from.table] || defaultLc) : defaultLc;
       const fromY = getColumnY(fromPos, fromColIdx);
       const toY   = getColumnY(toPos,   toColIdx);
       const x1 = crowDir === "right" ? fromRight + 1 : fromPos.x - 1;
@@ -1640,6 +1665,13 @@ export default function SketchER() {
       ctx.globalAlpha = 0.85;
       ctx.fillText("0..1", ((crowDir === "right" || crowDir === "vert-left") ? x2 - 13 : x2 + 13) + ox, toYAdj + oy - 9);
       ctx.globalAlpha = 1;
+
+      // Grip dot on vertical segment (always shown when showAllConnections)
+      if (showAllConnections) {
+        const segMidY = (fromY + toYAdj) / 2;
+        ctx.beginPath(); ctx.arc(midX + ox, segMidY + oy, 2.8, 0, Math.PI * 2);
+        ctx.fillStyle = lc; ctx.globalAlpha = 0.9; ctx.fill(); ctx.globalAlpha = 1;
+      }
     }
 
     // ── Table cards ──────────────────────────────────────────────────────────
@@ -1699,7 +1731,7 @@ export default function SketchER() {
     link.download = "sketcher-diagram.png";
     link.href = cvs.toDataURL("image/png");
     link.click();
-  }, [tablePositions, tables, tableColors, refs, fkMap, isDark]);
+  }, [tablePositions, tables, tableColors, refs, fkMap, isDark, showAllConnections]);
 
   useEffect(() => {
     setTablePositions((prev) => {
@@ -2250,6 +2282,8 @@ export default function SketchER() {
           onSave={saveToFile}
           onLoad={() => loadInputRef.current?.click()}
           onShowHelp={() => setShowHelp(true)}
+          showAllConnections={showAllConnections}
+          onToggleConnections={() => setShowAllConnections((v) => !v)}
         />
 
         {/* Transform container */}
@@ -2284,6 +2318,8 @@ export default function SketchER() {
               tableData={tables}
               theme={theme}
               hoveredTable={hoveredTable}
+              selectedTables={selectedTables}
+              showAllConnections={showAllConnections}
               tableColors={tableColors}
               tableWidths={tableWidths}
               lineMidXOverrides={lineMidXOverrides}
@@ -2307,6 +2343,7 @@ export default function SketchER() {
                 activeColumns={activeColumns[table.name]}
                 onHover={setHoveredTable}
                 width={tableWidths[table.name]}
+                isDimmed={!showAllConnections && connectedToHovered !== null && !connectedToHovered.has(table.name)}
               />
             ) : null
           )}
