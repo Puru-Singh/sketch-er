@@ -235,7 +235,7 @@ const TABLE_CORNER_RADIUS = 6;
 const TABLE_NAME_DARKNESS = 0.38;
 
 // Resting opacity of the color wheel icon in table headers (0–1).
-const COLOR_WHEEL_RESTING_OPACITY = 0.38;
+const COLOR_WHEEL_RESTING_OPACITY = 0.5;
 
 function getColumnY(table, colIndex) {
   return table.y + HEADER_HEIGHT + colIndex * COL_HEIGHT + COL_HEIGHT / 2;
@@ -524,7 +524,8 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           background: color,
           display: "flex",
           alignItems: "center",
-          justifyContent: "space-between",
+          justifyContent: "flex-start",
+          gap: "8px",
           paddingRight: "12px",
           fontFamily: "'DM Sans', sans-serif",
         }}
@@ -1413,7 +1414,7 @@ export default function SketchER() {
   const [editorWidth, setEditorWidth] = useState(370);
   const [isResizing, setIsResizing] = useState(false);
   const canvasRef = useRef(null);
-  const [canvasSize, setCanvasSize] = useState({ w: 800, h: 600 });
+  const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
 
   const { tables, refs, groups } = useMemo(() => parseDBML(dbml), [dbml]);
 
