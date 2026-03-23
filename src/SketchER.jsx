@@ -248,7 +248,7 @@ function parseDBML(text) {
 }
 
 // ── DBML syntax highlighting ─────────────────────────────────────────────────
-function highlightDBML(text, theme) {
+function highlightDBML(text, theme, glowLines) {
   const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return text.split("\n").map((line) => {
     // Comments
@@ -283,6 +283,11 @@ function highlightDBML(text, theme) {
     }
     // Closing brace or other
     return esc(line);
+  }).map((html, idx) => {
+    if (glowLines && idx >= glowLines.start && idx <= glowLines.end) {
+      return `<span class="editor-glow">${html}</span>`;
+    }
+    return html;
   }).join("\n");
 }
 
@@ -1480,8 +1485,9 @@ export default function SketchER() {
   const [showSettings, setShowSettings] = useState(false);
   const [jumpToTableOnClick, setJumpToTableOnClick] = useState(saved?.jumpToTableOnClick ?? false);
   const highlightRef = useRef(null);
-  const [glowLines, setGlowLines] = useState(null); // { start, end, fading }
+  const [glowLines, setGlowLines] = useState(null); // { start, end }
   const glowTimerRef = useRef(null);
+  const glowKeyRef = useRef(0); // incremented to force new animation
 
   const { tables, refs, groups } = useMemo(() => parseDBML(dbml), [dbml]);
 
@@ -1866,8 +1872,7 @@ export default function SketchER() {
     // Jump to table definition in editor + glow highlight
     if (jumpToTableOnClick && editorRef.current) {
       const lines = dbml.split("\n");
-      // const tableLineRegex = new RegExp(`^\\s*Table\\s+${tableName}\\s*\\{`, "i");
-      const tableLineRegex = new RegExp(`^[ \\t]*Table\\s+${tableName}\\s*\\{`, "im");
+      const tableLineRegex = new RegExp(`^\\s*Table\\s+${tableName}\\s*\\{`, "i");
       const startLine = lines.findIndex((l) => tableLineRegex.test(l));
       if (startLine !== -1) {
         const lineHeight = 20;
@@ -1884,11 +1889,9 @@ export default function SketchER() {
           if (depth === 0) break;
         }
         clearTimeout(glowTimerRef.current);
-        setGlowLines({ start: startLine, end: endLine, fading: false });
-        glowTimerRef.current = setTimeout(() => {
-          setGlowLines((g) => g ? { ...g, fading: true } : null);
-          glowTimerRef.current = setTimeout(() => setGlowLines(null), 600);
-        }, 800);
+        glowKeyRef.current++;
+        setGlowLines({ start: startLine, end: endLine });
+        glowTimerRef.current = setTimeout(() => setGlowLines(null), 1600);
       }
     }
   }, [jumpToTableOnClick, dbml]);
@@ -1913,7 +1916,7 @@ export default function SketchER() {
     setLineNumbers(dbml.split("\n").map((_, i) => i + 1));
   }, [dbml]);
 
-  const highlightedHtml = useMemo(() => highlightDBML(dbml, theme), [dbml, theme]);
+  const highlightedHtml = useMemo(() => highlightDBML(dbml, theme, glowLines), [dbml, theme, glowLines]);
 
   const editorRef = useRef(null);
   const lineNumRef = useRef(null);
@@ -1939,6 +1942,18 @@ export default function SketchER() {
         overflow: "hidden",
       }}
     >
+      <style>{`
+        @keyframes editorGlow {
+          0%   { background: rgba(16,185,129,0.18); }
+          60%  { background: rgba(16,185,129,0.18); }
+          100% { background: transparent; }
+        }
+        .editor-glow {
+          display: inline-block;
+          width: 100%;
+          animation: editorGlow 1.5s ease-out forwards;
+        }
+      `}</style>
       {/* ===== Editor Panel ===== */}
       <div
         style={{
@@ -2148,24 +2163,6 @@ export default function SketchER() {
                 color: theme.editorText,
               }}
             />
-            {/* Glow overlay for jump-to-table highlight */}
-            {glowLines && (
-              <div
-                style={{
-                  position: "absolute",
-                  left: 0,
-                  right: 0,
-                  top: 14 + glowLines.start * 20 - (editorRef.current?.scrollTop || 0),
-                  height: (glowLines.end - glowLines.start + 1) * 20,
-                  background: "rgba(16,185,129,0.15)",
-                  opacity: glowLines.fading ? 0 : 1,
-                  transition: "opacity 0.6s ease-out",
-                  pointerEvents: "none",
-                  zIndex: 0,
-                  borderRadius: "3px",
-                }}
-              />
-            )}
             {/* Transparent textarea on top for editing */}
             <textarea
               ref={editorRef}
