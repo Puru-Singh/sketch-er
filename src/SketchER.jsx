@@ -146,6 +146,15 @@ const LIGHT_THEME = {
   emptyStateColor: "#c8c8c8",
   lineColor: "#b0bac8",
   activeColBg: "rgba(59,130,246,0.07)",
+  // Syntax highlighting
+  synKeyword: "#d73a49",   // Table, Ref, TableGroup
+  synTableName: "#6f42c1", // table/group names
+  synType: "#005cc5",      // column types
+  synBracket: "#e36209",   // [ ]
+  synAttr: "#22863a",      // pk, ref:, etc.
+  synComment: "#6a737d",   // -- comments
+  synPunctuation: "#24292e",
+  synString: "#032f62",
 };
 
 const DARK_THEME = {
@@ -177,6 +186,15 @@ const DARK_THEME = {
   emptyStateColor: "#444466",
   lineColor: "#5c6472",
   activeColBg: "rgba(59,130,246,0.14)",
+  // Syntax highlighting
+  synKeyword: "#f97583",
+  synTableName: "#b392f0",
+  synType: "#79b8ff",
+  synBracket: "#ffab70",
+  synAttr: "#85e89d",
+  synComment: "#6a737d",
+  synPunctuation: "#e1e4e8",
+  synString: "#9ecbff",
 };
 
 function parseDBML(text) {
@@ -227,6 +245,45 @@ function parseDBML(text) {
     groups.push({ name: groupName, tables: members });
   }
   return { tables, refs, groups };
+}
+
+// ── DBML syntax highlighting ─────────────────────────────────────────────────
+function highlightDBML(text, theme) {
+  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+  return text.split("\n").map((line) => {
+    // Comments
+    if (/^\s*--/.test(line)) {
+      return `<span style="color:${theme.synComment}">${esc(line)}</span>`;
+    }
+    // Table / TableGroup declaration line
+    const declMatch = line.match(/^(\s*)(Table|TableGroup|Ref)(\s+)(\w+)(\s*\{?\s*)$/i);
+    if (declMatch) {
+      const [, indent, kw, sp1, name, rest] = declMatch;
+      return `${esc(indent)}<span style="color:${theme.synKeyword}">${esc(kw)}</span>${esc(sp1)}<span style="color:${theme.synTableName}">${esc(name)}</span>${esc(rest)}`;
+    }
+    // Standalone Ref line: Ref: a.b > c.d
+    const refLine = line.match(/^(\s*)(Ref)(\s*:\s*)(\w+\.\w+)(\s*[<>-]\s*)(\w+\.\w+)(.*)/i);
+    if (refLine) {
+      const [, indent, kw, colon, left, op, right, rest] = refLine;
+      return `${esc(indent)}<span style="color:${theme.synKeyword}">${esc(kw)}</span>${esc(colon)}<span style="color:${theme.synTableName}">${esc(left)}</span><span style="color:${theme.synPunctuation}">${esc(op)}</span><span style="color:${theme.synTableName}">${esc(right)}</span>${esc(rest)}`;
+    }
+    // Column lines (inside table body)
+    const colMatch = line.match(/^(\s+)(\w+)(\s+)(\w+)(.*)/);
+    if (colMatch) {
+      const [, indent, colName, sp, colType, rest] = colMatch;
+      // Highlight bracket contents
+      let highlighted = esc(rest);
+      highlighted = highlighted.replace(/\[([^\]]*)\]/g, (_, inner) => {
+        let hi = inner;
+        hi = hi.replace(/(pk|unique|not null|null|increment|note)/gi, `<span style="color:${theme.synAttr}">$1</span>`);
+        hi = hi.replace(/(ref\s*:\s*(?:&lt;|&gt;|-)\s*\w+\.\w+)/gi, `<span style="color:${theme.synAttr}">$1</span>`);
+        return `<span style="color:${theme.synBracket}">[</span>${hi}<span style="color:${theme.synBracket}">]</span>`;
+      });
+      return `${esc(indent)}<span style="color:${theme.synPunctuation}">${esc(colName)}</span>${esc(sp)}<span style="color:${theme.synType}">${esc(colType)}</span>${highlighted}`;
+    }
+    // Closing brace or other
+    return esc(line);
+  }).join("\n");
 }
 
 const COL_HEIGHT = 32;
@@ -1420,6 +1477,9 @@ export default function SketchER() {
   const transformRef = useRef(null);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   const [showAllConnections, setShowAllConnections] = useState(false);
+  const [showSettings, setShowSettings] = useState(false);
+  const [jumpToTableOnClick, setJumpToTableOnClick] = useState(saved?.jumpToTableOnClick ?? false);
+  const highlightRef = useRef(null);
 
   const { tables, refs, groups } = useMemo(() => parseDBML(dbml), [dbml]);
 
@@ -1490,11 +1550,11 @@ export default function SketchER() {
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible, fileName }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick }));
       } catch {}
     }, 400);
     return () => clearTimeout(timer);
-  }, [dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible, fileName]);
+  }, [dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick]);
 
   // Save diagram to a .sker file
   const saveToFile = useCallback(() => {
@@ -1801,7 +1861,17 @@ export default function SketchER() {
     } else {
       setSelectedTables(new Set([tableName]));
     }
-  }, []);
+    // Jump to table definition in editor
+    if (jumpToTableOnClick && editorRef.current) {
+      const regex = new RegExp(`^\\s*Table\\s+${tableName}\\s*\\{`, "im");
+      const match = regex.exec(dbml);
+      if (match) {
+        const lineIndex = dbml.substring(0, match.index).split("\n").length - 1;
+        const lineHeight = 20; // matches editor lineHeight
+        editorRef.current.scrollTop = lineIndex * lineHeight;
+      }
+    }
+  }, [jumpToTableOnClick, dbml]);
 
   const handlePaletteColorClick = useCallback((color) => {
     const names = [...selectedTables];
@@ -1823,11 +1893,17 @@ export default function SketchER() {
     setLineNumbers(dbml.split("\n").map((_, i) => i + 1));
   }, [dbml]);
 
+  const highlightedHtml = useMemo(() => highlightDBML(dbml, theme), [dbml, theme]);
+
   const editorRef = useRef(null);
   const lineNumRef = useRef(null);
   const handleEditorScroll = () => {
-    if (editorRef.current && lineNumRef.current) {
-      lineNumRef.current.scrollTop = editorRef.current.scrollTop;
+    if (editorRef.current) {
+      if (lineNumRef.current) lineNumRef.current.scrollTop = editorRef.current.scrollTop;
+      if (highlightRef.current) {
+        highlightRef.current.scrollTop = editorRef.current.scrollTop;
+        highlightRef.current.scrollLeft = editorRef.current.scrollLeft;
+      }
     }
   };
 
@@ -1896,6 +1972,54 @@ export default function SketchER() {
           >
             DBML
           </span>
+          {/* Settings gear */}
+          <div style={{ position: "relative" }}>
+            <button
+              onClick={() => setShowSettings((v) => !v)}
+              title="Settings"
+              style={{
+                background: showSettings ? `${theme.textMuted}22` : "none",
+                border: "none",
+                cursor: "pointer",
+                padding: "4px",
+                borderRadius: "4px",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                color: theme.textSecondary,
+              }}
+            >
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                <circle cx="12" cy="12" r="3"/>
+                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
+              </svg>
+            </button>
+            {showSettings && (
+              <div style={{
+                position: "absolute",
+                top: "calc(100% + 8px)",
+                right: 0,
+                background: theme.toolbarBg,
+                border: `1px solid ${theme.toolbarBorder}`,
+                borderRadius: "10px",
+                padding: "14px 16px",
+                zIndex: 50,
+                boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: "12px",
+                color: theme.textPrimary,
+                minWidth: "220px",
+              }}>
+                <div style={{ fontWeight: 700, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.8px", color: theme.textMuted, marginBottom: "12px" }}>
+                  Settings
+                </div>
+                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer", userSelect: "none" }}>
+                  <ToggleSwitch checked={jumpToTableOnClick} onChange={() => setJumpToTableOnClick((v) => !v)} theme={theme} />
+                  <span style={{ fontSize: "12.5px", fontWeight: 500 }}>Jump to table code on click</span>
+                </label>
+              </div>
+            )}
+          </div>
         </div>
 
         {/* Color palette (when table selected) */}
@@ -1980,27 +2104,57 @@ export default function SketchER() {
           >
             {lineNumbers.map((n) => <div key={n}>{n}</div>)}
           </div>
-          <textarea
-            ref={editorRef}
-            value={dbml}
-            onChange={(e) => setDbml(e.target.value)}
-            onScroll={handleEditorScroll}
-            spellCheck={false}
-            style={{
-              flex: 1,
-              background: theme.editorPanelBg,
-              color: theme.editorText,
-              border: "none",
-              outline: "none",
-              resize: "none",
-              padding: "14px",
-              fontSize: "12.5px",
-              lineHeight: "20px",
-              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-              tabSize: 2,
-              letterSpacing: "0.3px",
-            }}
-          />
+          <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+            {/* Syntax-highlighted underlay */}
+            <pre
+              ref={highlightRef}
+              aria-hidden="true"
+              dangerouslySetInnerHTML={{ __html: highlightedHtml + "\n" }}
+              style={{
+                position: "absolute",
+                inset: 0,
+                margin: 0,
+                padding: "14px",
+                fontSize: "12.5px",
+                lineHeight: "20px",
+                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                tabSize: 2,
+                letterSpacing: "0.3px",
+                whiteSpace: "pre-wrap",
+                wordWrap: "break-word",
+                overflow: "auto",
+                pointerEvents: "none",
+                background: theme.editorPanelBg,
+                color: theme.editorText,
+              }}
+            />
+            {/* Transparent textarea on top for editing */}
+            <textarea
+              ref={editorRef}
+              value={dbml}
+              onChange={(e) => setDbml(e.target.value)}
+              onScroll={handleEditorScroll}
+              spellCheck={false}
+              style={{
+                position: "relative",
+                width: "100%",
+                height: "100%",
+                background: "transparent",
+                color: "transparent",
+                caretColor: theme.editorText,
+                border: "none",
+                outline: "none",
+                resize: "none",
+                padding: "14px",
+                fontSize: "12.5px",
+                lineHeight: "20px",
+                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+                tabSize: 2,
+                letterSpacing: "0.3px",
+                zIndex: 1,
+              }}
+            />
+          </div>
         </div>
 
         {/* Help footer */}
