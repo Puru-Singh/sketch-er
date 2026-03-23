@@ -1483,6 +1483,7 @@ export default function SketchER() {
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   const [showAllConnections, setShowAllConnections] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
+  const settingsRef = useRef(null);
   const [jumpToTableOnClick, setJumpToTableOnClick] = useState(saved?.jumpToTableOnClick ?? false);
   const highlightRef = useRef(null);
   const [glowLines, setGlowLines] = useState(null); // { start, end }
@@ -1918,6 +1919,18 @@ export default function SketchER() {
 
   const highlightedHtml = useMemo(() => highlightDBML(dbml, theme, glowLines), [dbml, theme, glowLines]);
 
+  // Close settings dropdown on outside click
+  useEffect(() => {
+    if (!showSettings) return;
+    const handler = (e) => {
+      if (settingsRef.current && !settingsRef.current.contains(e.target)) {
+        setShowSettings(false);
+      }
+    };
+    document.addEventListener("mousedown", handler);
+    return () => document.removeEventListener("mousedown", handler);
+  }, [showSettings]);
+
   const editorRef = useRef(null);
   const lineNumRef = useRef(null);
   const handleEditorScroll = () => {
@@ -2008,7 +2021,7 @@ export default function SketchER() {
             DBML
           </span>
           {/* Settings gear */}
-          <div style={{ position: "relative" }}>
+          <div ref={settingsRef} style={{ position: "relative" }}>
             <button
               onClick={() => setShowSettings((v) => !v)}
               title="Settings"
