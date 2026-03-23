@@ -284,10 +284,10 @@ function highlightDBML(text, theme, glowLines) {
     // Closing brace or other
     return esc(line);
   }).map((html, idx) => {
-    const isGlowing = glowLines && idx >= glowLines.start && idx <= glowLines.end;
-    return isGlowing
-      ? `<span style="background:rgba(16,185,129,0.15);display:inline-block;width:100%;transition:background 0.4s">${html}</span>`
-      : html;
+    const inRange = glowLines && idx >= glowLines.start && idx <= glowLines.end;
+    if (!inRange) return html;
+    const bg = glowLines.fading ? "transparent" : "rgba(16,185,129,0.15)";
+    return `<span style="background:${bg};display:inline-block;width:100%;transition:background 0.5s ease-out">${html}</span>`;
   }).join("\n");
 }
 
@@ -1485,7 +1485,8 @@ export default function SketchER() {
   const [showSettings, setShowSettings] = useState(false);
   const [jumpToTableOnClick, setJumpToTableOnClick] = useState(saved?.jumpToTableOnClick ?? false);
   const highlightRef = useRef(null);
-  const [glowLines, setGlowLines] = useState(null); // { start, end }
+  const [glowLines, setGlowLines] = useState(null); // { start, end, fading }
+  const glowTimerRef = useRef(null);
 
   const { tables, refs, groups } = useMemo(() => parseDBML(dbml), [dbml]);
 
@@ -1880,8 +1881,12 @@ export default function SketchER() {
         const endLine = closingIndex !== -1
           ? dbml.substring(0, closingIndex + 1).split("\n").length - 1
           : startLine;
-        setGlowLines({ start: startLine, end: endLine });
-        setTimeout(() => setGlowLines(null), 1200);
+        clearTimeout(glowTimerRef.current);
+        setGlowLines({ start: startLine, end: endLine, fading: false });
+        glowTimerRef.current = setTimeout(() => {
+          setGlowLines((g) => g ? { ...g, fading: true } : null);
+          glowTimerRef.current = setTimeout(() => setGlowLines(null), 600);
+        }, 800);
       }
     }
   }, [jumpToTableOnClick, dbml]);
