@@ -1865,24 +1865,23 @@ export default function SketchER() {
     }
     // Jump to table definition in editor + glow highlight
     if (jumpToTableOnClick && editorRef.current) {
-      const regex = new RegExp(`^([^\\S\\n]*)(Table\\s+${tableName}\\s*\\{)`, "im");
-      const match = regex.exec(dbml);
-      if (match) {
-        // Start from the 'Table' keyword, not the leading whitespace/newlines
-        const startLine = dbml.substring(0, match.index + match[1].length).split("\n").length - 1;
+      const lines = dbml.split("\n");
+      const tableLineRegex = new RegExp(`^\\s*Table\\s+${tableName}\\s*\\{`, "i");
+      const startLine = lines.findIndex((l) => tableLineRegex.test(l));
+      if (startLine !== -1) {
         const lineHeight = 20;
         editorRef.current.scrollTop = startLine * lineHeight;
-        // Find the matching closing brace (skip nested braces like [ref: ...])
+        // Find closing brace by scanning forward with depth tracking
         let depth = 1;
-        let ci = match.index + match[0].length;
-        while (ci < dbml.length && depth > 0) {
-          if (dbml[ci] === "{") depth++;
-          else if (dbml[ci] === "}") depth--;
-          ci++;
+        let endLine = startLine;
+        for (let i = startLine + 1; i < lines.length && depth > 0; i++) {
+          for (const ch of lines[i]) {
+            if (ch === "{") depth++;
+            else if (ch === "}") depth--;
+          }
+          endLine = i;
+          if (depth === 0) break;
         }
-        const endLine = depth === 0
-          ? dbml.substring(0, ci).split("\n").length - 1
-          : startLine;
         clearTimeout(glowTimerRef.current);
         setGlowLines({ start: startLine, end: endLine, fading: false });
         glowTimerRef.current = setTimeout(() => {
