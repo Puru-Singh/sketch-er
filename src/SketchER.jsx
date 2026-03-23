@@ -1865,7 +1865,7 @@ export default function SketchER() {
     }
     // Jump to table definition in editor + glow highlight
     if (jumpToTableOnClick && editorRef.current) {
-      const regex = new RegExp(`^(\\s*)(Table\\s+${tableName}\\s*\\{)`, "im");
+      const regex = new RegExp(`^([^\\S\\n]*)(Table\\s+${tableName}\\s*\\{)`, "im");
       const match = regex.exec(dbml);
       if (match) {
         // Start from the 'Table' keyword, not the leading whitespace/newlines
