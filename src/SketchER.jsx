@@ -1865,16 +1865,23 @@ export default function SketchER() {
     }
     // Jump to table definition in editor + glow highlight
     if (jumpToTableOnClick && editorRef.current) {
-      const regex = new RegExp(`^\\s*Table\\s+${tableName}\\s*\\{`, "im");
+      const regex = new RegExp(`^(\\s*)(Table\\s+${tableName}\\s*\\{)`, "im");
       const match = regex.exec(dbml);
       if (match) {
-        const startLine = dbml.substring(0, match.index).split("\n").length - 1;
+        // Start from the 'Table' keyword, not the leading whitespace/newlines
+        const startLine = dbml.substring(0, match.index + match[1].length).split("\n").length - 1;
         const lineHeight = 20;
         editorRef.current.scrollTop = startLine * lineHeight;
-        // Find the closing brace to get end line
-        const closingIndex = dbml.indexOf("}", match.index + match[0].length);
-        const endLine = closingIndex !== -1
-          ? dbml.substring(0, closingIndex + 1).split("\n").length - 1
+        // Find the matching closing brace (skip nested braces like [ref: ...])
+        let depth = 1;
+        let ci = match.index + match[0].length;
+        while (ci < dbml.length && depth > 0) {
+          if (dbml[ci] === "{") depth++;
+          else if (dbml[ci] === "}") depth--;
+          ci++;
+        }
+        const endLine = depth === 0
+          ? dbml.substring(0, ci).split("\n").length - 1
           : startLine;
         clearTimeout(glowTimerRef.current);
         setGlowLines({ start: startLine, end: endLine, fading: false });
