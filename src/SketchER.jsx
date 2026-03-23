@@ -248,7 +248,7 @@ function parseDBML(text) {
 }
 
 // ── DBML syntax highlighting ─────────────────────────────────────────────────
-function highlightDBML(text, theme) {
+function highlightDBML(text, theme, glowLines) {
   const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return text.split("\n").map((line) => {
     // Comments
@@ -283,6 +283,11 @@ function highlightDBML(text, theme) {
     }
     // Closing brace or other
     return esc(line);
+  }).map((html, idx) => {
+    const isGlowing = glowLines && idx >= glowLines.start && idx <= glowLines.end;
+    return isGlowing
+      ? `<span style="background:rgba(16,185,129,0.15);display:inline-block;width:100%;transition:background 0.4s">${html}</span>`
+      : html;
   }).join("\n");
 }
 
@@ -1480,6 +1485,7 @@ export default function SketchER() {
   const [showSettings, setShowSettings] = useState(false);
   const [jumpToTableOnClick, setJumpToTableOnClick] = useState(saved?.jumpToTableOnClick ?? false);
   const highlightRef = useRef(null);
+  const [glowLines, setGlowLines] = useState(null); // { start, end }
 
   const { tables, refs, groups } = useMemo(() => parseDBML(dbml), [dbml]);
 
@@ -1861,14 +1867,21 @@ export default function SketchER() {
     } else {
       setSelectedTables(new Set([tableName]));
     }
-    // Jump to table definition in editor
+    // Jump to table definition in editor + glow highlight
     if (jumpToTableOnClick && editorRef.current) {
       const regex = new RegExp(`^\\s*Table\\s+${tableName}\\s*\\{`, "im");
       const match = regex.exec(dbml);
       if (match) {
-        const lineIndex = dbml.substring(0, match.index).split("\n").length - 1;
-        const lineHeight = 20; // matches editor lineHeight
-        editorRef.current.scrollTop = lineIndex * lineHeight;
+        const startLine = dbml.substring(0, match.index).split("\n").length - 1;
+        const lineHeight = 20;
+        editorRef.current.scrollTop = startLine * lineHeight;
+        // Find the closing brace to get end line
+        const closingIndex = dbml.indexOf("}", match.index + match[0].length);
+        const endLine = closingIndex !== -1
+          ? dbml.substring(0, closingIndex + 1).split("\n").length - 1
+          : startLine;
+        setGlowLines({ start: startLine, end: endLine });
+        setTimeout(() => setGlowLines(null), 1200);
       }
     }
   }, [jumpToTableOnClick, dbml]);
@@ -1893,7 +1906,7 @@ export default function SketchER() {
     setLineNumbers(dbml.split("\n").map((_, i) => i + 1));
   }, [dbml]);
 
-  const highlightedHtml = useMemo(() => highlightDBML(dbml, theme), [dbml, theme]);
+  const highlightedHtml = useMemo(() => highlightDBML(dbml, theme, glowLines), [dbml, theme, glowLines]);
 
   const editorRef = useRef(null);
   const lineNumRef = useRef(null);
