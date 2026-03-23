@@ -2,6 +2,7 @@
 // Licensed under the MIT License — see LICENSE for details.
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import MonacoEditor from "@monaco-editor/react";
 
 const DEFAULT_DBML = `Table users {
   id int [pk]
@@ -146,15 +147,6 @@ const LIGHT_THEME = {
   emptyStateColor: "#c8c8c8",
   lineColor: "#b0bac8",
   activeColBg: "rgba(59,130,246,0.07)",
-  // Syntax highlighting
-  synKeyword: "#d73a49",   // Table, Ref, TableGroup
-  synTableName: "#6f42c1", // table/group names
-  synType: "#005cc5",      // column types
-  synBracket: "#e36209",   // [ ]
-  synAttr: "#22863a",      // pk, ref:, etc.
-  synComment: "#6a737d",   // -- comments
-  synPunctuation: "#24292e",
-  synString: "#032f62",
 };
 
 const DARK_THEME = {
@@ -186,15 +178,6 @@ const DARK_THEME = {
   emptyStateColor: "#444466",
   lineColor: "#5c6472",
   activeColBg: "rgba(59,130,246,0.14)",
-  // Syntax highlighting
-  synKeyword: "#f97583",
-  synTableName: "#b392f0",
-  synType: "#79b8ff",
-  synBracket: "#ffab70",
-  synAttr: "#85e89d",
-  synComment: "#6a737d",
-  synPunctuation: "#e1e4e8",
-  synString: "#9ecbff",
 };
 
 function parseDBML(text) {
@@ -247,49 +230,6 @@ function parseDBML(text) {
   return { tables, refs, groups };
 }
 
-// ── DBML syntax highlighting ─────────────────────────────────────────────────
-function highlightDBML(text, theme, glowLines) {
-  const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-  return text.split("\n").map((line) => {
-    // Comments
-    if (/^\s*--/.test(line)) {
-      return `<span style="color:${theme.synComment}">${esc(line)}</span>`;
-    }
-    // Table / TableGroup declaration line
-    const declMatch = line.match(/^(\s*)(Table|TableGroup|Ref)(\s+)(\w+)(\s*\{?\s*)$/i);
-    if (declMatch) {
-      const [, indent, kw, sp1, name, rest] = declMatch;
-      return `${esc(indent)}<span style="color:${theme.synKeyword}">${esc(kw)}</span>${esc(sp1)}<span style="color:${theme.synTableName}">${esc(name)}</span>${esc(rest)}`;
-    }
-    // Standalone Ref line: Ref: a.b > c.d
-    const refLine = line.match(/^(\s*)(Ref)(\s*:\s*)(\w+\.\w+)(\s*[<>-]\s*)(\w+\.\w+)(.*)/i);
-    if (refLine) {
-      const [, indent, kw, colon, left, op, right, rest] = refLine;
-      return `${esc(indent)}<span style="color:${theme.synKeyword}">${esc(kw)}</span>${esc(colon)}<span style="color:${theme.synTableName}">${esc(left)}</span><span style="color:${theme.synPunctuation}">${esc(op)}</span><span style="color:${theme.synTableName}">${esc(right)}</span>${esc(rest)}`;
-    }
-    // Column lines (inside table body)
-    const colMatch = line.match(/^(\s+)(\w+)(\s+)(\w+)(.*)/);
-    if (colMatch) {
-      const [, indent, colName, sp, colType, rest] = colMatch;
-      // Highlight bracket contents
-      let highlighted = esc(rest);
-      highlighted = highlighted.replace(/\[([^\]]*)\]/g, (_, inner) => {
-        let hi = inner;
-        hi = hi.replace(/(pk|unique|not null|null|increment|note)/gi, `<span style="color:${theme.synAttr}">$1</span>`);
-        hi = hi.replace(/(ref\s*:\s*(?:&lt;|&gt;|-)\s*\w+\.\w+)/gi, `<span style="color:${theme.synAttr}">$1</span>`);
-        return `<span style="color:${theme.synBracket}">[</span>${hi}<span style="color:${theme.synBracket}">]</span>`;
-      });
-      return `${esc(indent)}<span style="color:${theme.synPunctuation}">${esc(colName)}</span>${esc(sp)}<span style="color:${theme.synType}">${esc(colType)}</span>${highlighted}`;
-    }
-    // Closing brace or other
-    return esc(line);
-  }).map((html, idx) => {
-    if (glowLines && idx >= glowLines.start && idx <= glowLines.end) {
-      return `<span class="editor-glow">${html}</span>`;
-    }
-    return html;
-  }).join("\n");
-}
 
 const COL_HEIGHT = 32;
 const HEADER_HEIGHT = 42;
@@ -1485,14 +1425,10 @@ export default function SketchER() {
   const [showSettings, setShowSettings] = useState(false);
   const settingsRef = useRef(null);
   const [jumpToTableOnClick, setJumpToTableOnClick] = useState(saved?.jumpToTableOnClick ?? false);
-  const highlightRef = useRef(null);
-  const [glowLines, setGlowLines] = useState(null); // { start, end }
   const glowTimerRef = useRef(null);
-  const glowKeyRef = useRef(0); // incremented to force new animation
-  const [findOpen, setFindOpen] = useState(false);
-  const [findQuery, setFindQuery] = useState("");
-  const [findIndex, setFindIndex] = useState(0); // current match index
-  const findInputRef = useRef(null);
+  const glowDecorationsRef = useRef([]);
+  const monacoEditorRef = useRef(null);
+  const monacoRef = useRef(null);
 
   const { tables, refs, groups } = useMemo(() => parseDBML(dbml), [dbml]);
 
@@ -1875,31 +1811,46 @@ export default function SketchER() {
       setSelectedTables(new Set([tableName]));
     }
     // Jump to table definition in editor + glow highlight
-    if (jumpToTableOnClick && editorRef.current) {
-      const lines = dbml.split("\n");
-      const tableLineRegex = new RegExp(`^\\s*Table\\s+${tableName}\\s*\\{`, "i");
-      const startLine = lines.findIndex((l) => tableLineRegex.test(l));
-      if (startLine !== -1) {
-        const lineHeight = 20;
-        editorRef.current.scrollTop = startLine * lineHeight;
-        // Find closing brace by scanning forward with depth tracking
-        let depth = 1;
-        let endLine = startLine;
-        for (let i = startLine + 1; i < lines.length && depth > 0; i++) {
-          for (const ch of lines[i]) {
-            if (ch === "{") depth++;
-            else if (ch === "}") depth--;
+    if (jumpToTableOnClick && monacoEditorRef.current) {
+      const editor = monacoEditorRef.current;
+      const model = editor.getModel();
+      if (model) {
+        const text = model.getValue();
+        const lines = text.split("\n");
+        const tableLineRegex = new RegExp(`^\\s*Table\\s+${tableName}\\s*\\{`, "i");
+        const startLine = lines.findIndex((l) => tableLineRegex.test(l));
+        if (startLine !== -1) {
+          const monacoLine = startLine + 1; // Monaco is 1-indexed
+          // Find closing brace
+          let depth = 1;
+          let endLine = startLine;
+          for (let i = startLine + 1; i < lines.length && depth > 0; i++) {
+            for (const ch of lines[i]) {
+              if (ch === "{") depth++;
+              else if (ch === "}") depth--;
+            }
+            endLine = i;
+            if (depth === 0) break;
           }
-          endLine = i;
-          if (depth === 0) break;
+          const monacoEndLine = endLine + 1;
+          // Scroll to and highlight the range
+          editor.revealLineInCenter(monacoLine);
+          // Glow highlight using decorations
+          clearTimeout(glowTimerRef.current);
+          const monaco = monacoRef.current;
+          if (monaco) {
+            const range = new monaco.Range(monacoLine, 1, monacoEndLine, model.getLineMaxColumn(monacoEndLine));
+            glowDecorationsRef.current = editor.deltaDecorations(glowDecorationsRef.current, [
+              { range, options: { isWholeLine: true, className: "editor-glow-line" } },
+            ]);
+            glowTimerRef.current = setTimeout(() => {
+              glowDecorationsRef.current = editor.deltaDecorations(glowDecorationsRef.current, []);
+            }, 1600);
+          }
         }
-        clearTimeout(glowTimerRef.current);
-        glowKeyRef.current++;
-        setGlowLines({ start: startLine, end: endLine });
-        glowTimerRef.current = setTimeout(() => setGlowLines(null), 1600);
       }
     }
-  }, [jumpToTableOnClick, dbml]);
+  }, [jumpToTableOnClick]);
 
   const handlePaletteColorClick = useCallback((color) => {
     const names = [...selectedTables];
@@ -1916,13 +1867,6 @@ export default function SketchER() {
     }
   }, [selectedTables]);
 
-  const [lineNumbers, setLineNumbers] = useState([]);
-  useEffect(() => {
-    setLineNumbers(dbml.split("\n").map((_, i) => i + 1));
-  }, [dbml]);
-
-  const highlightedHtml = useMemo(() => highlightDBML(dbml, theme, glowLines), [dbml, theme, glowLines]);
-
   // Close settings dropdown on outside click
   useEffect(() => {
     if (!showSettings) return;
@@ -1935,139 +1879,114 @@ export default function SketchER() {
     return () => document.removeEventListener("mousedown", handler, true);
   }, [showSettings]);
 
-  const editorRef = useRef(null);
-  const lineNumRef = useRef(null);
-  const handleEditorScroll = () => {
-    if (editorRef.current) {
-      if (lineNumRef.current) lineNumRef.current.scrollTop = editorRef.current.scrollTop;
-      if (highlightRef.current) {
-        highlightRef.current.scrollTop = editorRef.current.scrollTop;
-        highlightRef.current.scrollLeft = editorRef.current.scrollLeft;
-      }
-    }
-  };
+  // Monaco Editor mount handler — register DBML language + themes
+  const handleEditorMount = useCallback((editor, monaco) => {
+    monacoEditorRef.current = editor;
+    monacoRef.current = monaco;
 
-  // Find all match positions for the current query
-  const findMatches = useMemo(() => {
-    if (!findQuery) return [];
-    const matches = [];
-    const lower = dbml.toLowerCase();
-    const q = findQuery.toLowerCase();
-    let pos = 0;
-    while ((pos = lower.indexOf(q, pos)) !== -1) {
-      matches.push(pos);
-      pos += 1;
-    }
-    return matches;
-  }, [dbml, findQuery]);
+    // Register DBML language if not already registered
+    if (!monaco.languages.getLanguages().some((l) => l.id === "dbml")) {
+      monaco.languages.register({ id: "dbml" });
+      monaco.languages.setMonarchTokensProvider("dbml", {
+        keywords: ["Table", "TableGroup", "Ref", "Enum", "Note"],
+        typeKeywords: [
+          "int", "integer", "bigint", "smallint", "tinyint", "float", "double",
+          "decimal", "numeric", "real", "varchar", "char", "text", "blob", "clob",
+          "boolean", "bool", "date", "datetime", "timestamp", "time", "json",
+          "jsonb", "uuid", "serial", "bytea", "inet", "money",
+        ],
+        attrs: ["pk", "primary", "key", "unique", "not", "null", "increment", "default", "note", "ref"],
+        tokenizer: {
+          root: [
+            [/--.*$/, "comment"],
+            [/\b(Table|TableGroup|Ref|Enum|Note)\b/, "keyword"],
+            [/[{}]/, "delimiter.bracket"],
+            [/[\[\]]/, "delimiter.square"],
+            [/[<>-]/, "operator"],
+            [/:/, "delimiter"],
+            [/\b(pk|primary key|unique|not null|null|increment|default|note)\b/i, "attribute"],
+            [/\b(ref)\s*:/i, "attribute"],
+            [/\b(int|integer|bigint|smallint|tinyint|float|double|decimal|numeric|real|varchar|char|text|blob|clob|boolean|bool|date|datetime|timestamp|time|json|jsonb|uuid|serial|bytea|inet|money)\b/i, "type"],
+            [/'[^']*'/, "string"],
+            [/"[^"]*"/, "string"],
+            [/\d+/, "number"],
+            [/[a-zA-Z_]\w*/, "identifier"],
+          ],
+        },
+      });
 
-  const jumpToFindMatch = useCallback((idx) => {
-    if (!editorRef.current || findMatches.length === 0) return;
-    const pos = findMatches[idx];
-    editorRef.current.focus();
-    editorRef.current.setSelectionRange(pos, pos + findQuery.length);
-    // Scroll to the match
-    const lineIndex = dbml.substring(0, pos).split("\n").length - 1;
-    editorRef.current.scrollTop = lineIndex * 20 - 60;
-  }, [findMatches, findQuery, dbml]);
-
-  const handleEditorKeyDown = useCallback((e) => {
-    const ta = editorRef.current;
-    if (!ta) return;
-
-    // Ctrl+F / Cmd+F — open find bar
-    if ((e.ctrlKey || e.metaKey) && e.key === "f") {
-      e.preventDefault();
-      setFindOpen(true);
-      // Pre-fill with selection
-      const sel = ta.value.substring(ta.selectionStart, ta.selectionEnd);
-      if (sel) setFindQuery(sel);
-      setTimeout(() => findInputRef.current?.select(), 0);
-      return;
+      // Comment configuration for Ctrl+/
+      monaco.languages.setLanguageConfiguration("dbml", {
+        comments: { lineComment: "--" },
+        brackets: [["{", "}"], ["[", "]"]],
+        autoClosingPairs: [
+          { open: "{", close: "}" },
+          { open: "[", close: "]" },
+          { open: "'", close: "'" },
+          { open: '"', close: '"' },
+        ],
+      });
     }
 
-    // Ctrl+/ or Cmd+/ — toggle comment
-    if ((e.ctrlKey || e.metaKey) && e.key === "/") {
-      e.preventDefault();
-      const { selectionStart, selectionEnd, value } = ta;
-      const lines = value.split("\n");
-      // Find which lines are in the selection
-      let charCount = 0;
-      let startLine = 0, endLine = 0;
-      for (let i = 0; i < lines.length; i++) {
-        if (charCount + lines[i].length >= selectionStart && startLine === 0 && charCount <= selectionStart) {
-          startLine = i;
-        }
-        if (charCount + lines[i].length >= selectionEnd - 1 || i === lines.length - 1) {
-          endLine = i;
-          break;
-        }
-        charCount += lines[i].length + 1;
-      }
-      // Check if all selected lines are already commented
-      const allCommented = lines.slice(startLine, endLine + 1).every((l) => /^\s*--/.test(l));
-      const newLines = [...lines];
-      for (let i = startLine; i <= endLine; i++) {
-        if (allCommented) {
-          newLines[i] = newLines[i].replace(/^(\s*)--\s?/, "$1");
-        } else {
-          newLines[i] = newLines[i].replace(/^(\s*)/, "$1-- ");
-        }
-      }
-      const newValue = newLines.join("\n");
-      setDbml(newValue);
-      // Restore selection
-      const newStart = newLines.slice(0, startLine).join("\n").length + (startLine > 0 ? 1 : 0);
-      const newEnd = newLines.slice(0, endLine + 1).join("\n").length;
-      setTimeout(() => {
-        ta.setSelectionRange(newStart, newEnd);
-      }, 0);
-      return;
-    }
+    // Light theme
+    monaco.editor.defineTheme("dbml-light", {
+      base: "vs",
+      inherit: true,
+      rules: [
+        { token: "keyword", foreground: "d73a49", fontStyle: "bold" },
+        { token: "type", foreground: "005cc5" },
+        { token: "attribute", foreground: "22863a" },
+        { token: "comment", foreground: "6a737d", fontStyle: "italic" },
+        { token: "string", foreground: "032f62" },
+        { token: "number", foreground: "005cc5" },
+        { token: "delimiter.bracket", foreground: "24292e" },
+        { token: "delimiter.square", foreground: "e36209" },
+        { token: "operator", foreground: "d73a49" },
+        { token: "identifier", foreground: "24292e" },
+      ],
+      colors: {
+        "editor.background": "#f3f3f3",
+        "editor.foreground": "#1e1e1e",
+        "editor.lineHighlightBackground": "#e8e8e8",
+        "editorLineNumber.foreground": "#c0c0c0",
+        "editorCursor.foreground": "#1e1e1e",
+        "editor.selectionBackground": "#10b98130",
+        "editor.findMatchBackground": "#10b98140",
+        "editor.findMatchHighlightBackground": "#10b98120",
+      },
+    });
 
-    // Tab — insert two spaces (or indent selection)
-    if (e.key === "Tab") {
-      e.preventDefault();
-      const { selectionStart, selectionEnd, value } = ta;
-      if (selectionStart === selectionEnd) {
-        // No selection — insert 2 spaces at cursor
-        const before = value.substring(0, selectionStart);
-        const after = value.substring(selectionEnd);
-        const newValue = before + "  " + after;
-        setDbml(newValue);
-        setTimeout(() => ta.setSelectionRange(selectionStart + 2, selectionStart + 2), 0);
-      } else {
-        // Selection — indent/unindent each line
-        const lines = value.split("\n");
-        let charCount = 0;
-        let startLine = 0, endLine = 0;
-        for (let i = 0; i < lines.length; i++) {
-          if (charCount + lines[i].length >= selectionStart && charCount <= selectionStart) {
-            startLine = i;
-          }
-          if (charCount + lines[i].length >= selectionEnd - 1 || i === lines.length - 1) {
-            endLine = i;
-            break;
-          }
-          charCount += lines[i].length + 1;
-        }
-        const newLines = [...lines];
-        for (let i = startLine; i <= endLine; i++) {
-          if (e.shiftKey) {
-            newLines[i] = newLines[i].replace(/^ {1,2}/, "");
-          } else {
-            newLines[i] = "  " + newLines[i];
-          }
-        }
-        const newValue = newLines.join("\n");
-        setDbml(newValue);
-        const newStart = newLines.slice(0, startLine).join("\n").length + (startLine > 0 ? 1 : 0);
-        const newEnd = newLines.slice(0, endLine + 1).join("\n").length;
-        setTimeout(() => ta.setSelectionRange(newStart, newEnd), 0);
-      }
-      return;
-    }
-  }, []);
+    // Dark theme
+    monaco.editor.defineTheme("dbml-dark", {
+      base: "vs-dark",
+      inherit: true,
+      rules: [
+        { token: "keyword", foreground: "f97583", fontStyle: "bold" },
+        { token: "type", foreground: "79b8ff" },
+        { token: "attribute", foreground: "85e89d" },
+        { token: "comment", foreground: "6a737d", fontStyle: "italic" },
+        { token: "string", foreground: "9ecbff" },
+        { token: "number", foreground: "79b8ff" },
+        { token: "delimiter.bracket", foreground: "e1e4e8" },
+        { token: "delimiter.square", foreground: "ffab70" },
+        { token: "operator", foreground: "f97583" },
+        { token: "identifier", foreground: "e1e4e8" },
+      ],
+      colors: {
+        "editor.background": "#252526",
+        "editor.foreground": "#d4d4d4",
+        "editor.lineHighlightBackground": "#2a2a2b",
+        "editorLineNumber.foreground": "#555555",
+        "editorCursor.foreground": "#d4d4d4",
+        "editor.selectionBackground": "#10b98130",
+        "editor.findMatchBackground": "#10b98140",
+        "editor.findMatchHighlightBackground": "#10b98120",
+      },
+    });
+
+    // Apply the initial theme
+    monaco.editor.setTheme(isDark ? "dbml-dark" : "dbml-light");
+  }, [isDark]);
 
   return (
     <div
@@ -2082,15 +2001,9 @@ export default function SketchER() {
       }}
     >
       <style>{`
-        @keyframes editorGlow {
-          0%   { background: rgba(16,185,129,0.18); }
-          60%  { background: rgba(16,185,129,0.18); }
-          100% { background: transparent; }
-        }
-        .editor-glow {
-          display: inline-block;
-          width: 100%;
-          animation: editorGlow 1.5s ease-out forwards;
+        .editor-glow-line {
+          background: rgba(16,185,129,0.15) !important;
+          transition: background 0.5s ease-out;
         }
       `}</style>
       {/* ===== Editor Panel ===== */}
@@ -2257,141 +2170,43 @@ export default function SketchER() {
           </span>
         </div>
 
-        {/* Find bar */}
-        {findOpen && (
-          <div style={{
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            padding: "6px 12px",
-            borderBottom: `1px solid ${theme.border}`,
-            background: theme.editorPanelBg,
-            fontFamily: "'DM Sans', sans-serif",
-            fontSize: "12px",
-          }}>
-            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={theme.textMuted} strokeWidth="2" strokeLinecap="round">
-              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
-            </svg>
-            <input
-              ref={findInputRef}
-              value={findQuery}
-              onChange={(e) => { setFindQuery(e.target.value); setFindIndex(0); }}
-              onKeyDown={(e) => {
-                if (e.key === "Escape") { setFindOpen(false); editorRef.current?.focus(); }
-                if (e.key === "Enter") {
-                  e.preventDefault();
-                  if (findMatches.length === 0) return;
-                  const next = e.shiftKey
-                    ? (findIndex - 1 + findMatches.length) % findMatches.length
-                    : (findIndex + 1) % findMatches.length;
-                  setFindIndex(next);
-                  jumpToFindMatch(next);
-                }
-              }}
-              placeholder="Find..."
-              style={{
-                flex: 1,
-                background: theme.appBg,
-                color: theme.editorText,
-                border: `1px solid ${theme.border}`,
-                borderRadius: "4px",
-                padding: "4px 8px",
-                fontSize: "12px",
-                fontFamily: "'JetBrains Mono', monospace",
-                outline: "none",
-              }}
-            />
-            <span style={{ color: theme.textMuted, fontSize: "11px", minWidth: "50px", textAlign: "center" }}>
-              {findQuery ? `${findMatches.length > 0 ? findIndex + 1 : 0}/${findMatches.length}` : ""}
-            </span>
-            <button onClick={() => { if (findMatches.length === 0) return; const prev = (findIndex - 1 + findMatches.length) % findMatches.length; setFindIndex(prev); jumpToFindMatch(prev); }}
-              style={{ background: "none", border: "none", cursor: "pointer", color: theme.textSecondary, padding: "2px", display: "flex" }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="18 15 12 9 6 15"/></svg>
-            </button>
-            <button onClick={() => { if (findMatches.length === 0) return; const next = (findIndex + 1) % findMatches.length; setFindIndex(next); jumpToFindMatch(next); }}
-              style={{ background: "none", border: "none", cursor: "pointer", color: theme.textSecondary, padding: "2px", display: "flex" }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>
-            </button>
-            <button onClick={() => { setFindOpen(false); setFindQuery(""); editorRef.current?.focus(); }}
-              style={{ background: "none", border: "none", cursor: "pointer", color: theme.textSecondary, padding: "2px", display: "flex" }}>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-            </button>
-          </div>
-        )}
-
-        {/* Editor */}
-        <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
-          <div
-            ref={lineNumRef}
-            style={{
-              width: "42px",
-              padding: "14px 6px 14px 0",
-              textAlign: "right",
-              color: theme.lineNumberColor,
-              fontSize: "12px",
-              lineHeight: "20px",
+        {/* Monaco Editor */}
+        <div style={{ flex: 1, overflow: "hidden" }}>
+          <MonacoEditor
+            height="100%"
+            language="dbml"
+            theme={isDark ? "dbml-dark" : "dbml-light"}
+            value={dbml}
+            onChange={(val) => setDbml(val || "")}
+            onMount={handleEditorMount}
+            options={{
+              fontSize: 12.5,
               fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-              overflow: "hidden",
-              userSelect: "none",
-              borderRight: `1px solid ${theme.lineNumberBorder}`,
-              flexShrink: 0,
-              background: theme.editorPanelBg,
+              fontLigatures: true,
+              lineHeight: 20,
+              letterSpacing: 0.3,
+              minimap: { enabled: false },
+              scrollBeyondLastLine: false,
+              renderLineHighlight: "line",
+              lineNumbers: "on",
+              lineNumbersMinChars: 3,
+              glyphMargin: false,
+              folding: true,
+              automaticLayout: true,
+              tabSize: 2,
+              insertSpaces: true,
+              wordWrap: "on",
+              padding: { top: 10 },
+              overviewRulerLanes: 0,
+              hideCursorInOverviewRuler: true,
+              overviewRulerBorder: false,
+              scrollbar: {
+                verticalScrollbarSize: 8,
+                horizontalScrollbarSize: 8,
+              },
+              contextmenu: false,
             }}
-          >
-            {lineNumbers.map((n) => <div key={n}>{n}</div>)}
-          </div>
-          <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
-            {/* Syntax-highlighted underlay */}
-            <pre
-              ref={highlightRef}
-              aria-hidden="true"
-              dangerouslySetInnerHTML={{ __html: highlightedHtml + "\n" }}
-              style={{
-                position: "absolute",
-                inset: 0,
-                margin: 0,
-                padding: "14px",
-                fontSize: "12.5px",
-                lineHeight: "20px",
-                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                tabSize: 2,
-                letterSpacing: "0.3px",
-                whiteSpace: "pre-wrap",
-                wordWrap: "break-word",
-                overflow: "auto",
-                pointerEvents: "none",
-                background: theme.editorPanelBg,
-                color: theme.editorText,
-              }}
-            />
-            {/* Transparent textarea on top for editing */}
-            <textarea
-              ref={editorRef}
-              value={dbml}
-              onChange={(e) => setDbml(e.target.value)}
-              onScroll={handleEditorScroll}
-              onKeyDown={handleEditorKeyDown}
-              spellCheck={false}
-              style={{
-                position: "relative",
-                width: "100%",
-                height: "100%",
-                background: "transparent",
-                color: "transparent",
-                caretColor: theme.editorText,
-                border: "none",
-                outline: "none",
-                resize: "none",
-                padding: "14px",
-                fontSize: "12.5px",
-                lineHeight: "20px",
-                fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                tabSize: 2,
-                letterSpacing: "0.3px",
-                zIndex: 1,
-              }}
-            />
-          </div>
+          />
         </div>
 
         {/* Help footer */}
