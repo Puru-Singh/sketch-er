@@ -1927,8 +1927,8 @@ export default function SketchER() {
         setShowSettings(false);
       }
     };
-    document.addEventListener("mousedown", handler);
-    return () => document.removeEventListener("mousedown", handler);
+    document.addEventListener("mousedown", handler, true);
+    return () => document.removeEventListener("mousedown", handler, true);
   }, [showSettings]);
 
   const editorRef = useRef(null);
