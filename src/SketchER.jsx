@@ -1489,6 +1489,10 @@ export default function SketchER() {
   const [glowLines, setGlowLines] = useState(null); // { start, end }
   const glowTimerRef = useRef(null);
   const glowKeyRef = useRef(0); // incremented to force new animation
+  const [findOpen, setFindOpen] = useState(false);
+  const [findQuery, setFindQuery] = useState("");
+  const [findIndex, setFindIndex] = useState(0); // current match index
+  const findInputRef = useRef(null);
 
   const { tables, refs, groups } = useMemo(() => parseDBML(dbml), [dbml]);
 
@@ -1943,6 +1947,128 @@ export default function SketchER() {
     }
   };
 
+  // Find all match positions for the current query
+  const findMatches = useMemo(() => {
+    if (!findQuery) return [];
+    const matches = [];
+    const lower = dbml.toLowerCase();
+    const q = findQuery.toLowerCase();
+    let pos = 0;
+    while ((pos = lower.indexOf(q, pos)) !== -1) {
+      matches.push(pos);
+      pos += 1;
+    }
+    return matches;
+  }, [dbml, findQuery]);
+
+  const jumpToFindMatch = useCallback((idx) => {
+    if (!editorRef.current || findMatches.length === 0) return;
+    const pos = findMatches[idx];
+    editorRef.current.focus();
+    editorRef.current.setSelectionRange(pos, pos + findQuery.length);
+    // Scroll to the match
+    const lineIndex = dbml.substring(0, pos).split("\n").length - 1;
+    editorRef.current.scrollTop = lineIndex * 20 - 60;
+  }, [findMatches, findQuery, dbml]);
+
+  const handleEditorKeyDown = useCallback((e) => {
+    const ta = editorRef.current;
+    if (!ta) return;
+
+    // Ctrl+F / Cmd+F — open find bar
+    if ((e.ctrlKey || e.metaKey) && e.key === "f") {
+      e.preventDefault();
+      setFindOpen(true);
+      // Pre-fill with selection
+      const sel = ta.value.substring(ta.selectionStart, ta.selectionEnd);
+      if (sel) setFindQuery(sel);
+      setTimeout(() => findInputRef.current?.select(), 0);
+      return;
+    }
+
+    // Ctrl+/ or Cmd+/ — toggle comment
+    if ((e.ctrlKey || e.metaKey) && e.key === "/") {
+      e.preventDefault();
+      const { selectionStart, selectionEnd, value } = ta;
+      const lines = value.split("\n");
+      // Find which lines are in the selection
+      let charCount = 0;
+      let startLine = 0, endLine = 0;
+      for (let i = 0; i < lines.length; i++) {
+        if (charCount + lines[i].length >= selectionStart && startLine === 0 && charCount <= selectionStart) {
+          startLine = i;
+        }
+        if (charCount + lines[i].length >= selectionEnd - 1 || i === lines.length - 1) {
+          endLine = i;
+          break;
+        }
+        charCount += lines[i].length + 1;
+      }
+      // Check if all selected lines are already commented
+      const allCommented = lines.slice(startLine, endLine + 1).every((l) => /^\s*--/.test(l));
+      const newLines = [...lines];
+      for (let i = startLine; i <= endLine; i++) {
+        if (allCommented) {
+          newLines[i] = newLines[i].replace(/^(\s*)--\s?/, "$1");
+        } else {
+          newLines[i] = newLines[i].replace(/^(\s*)/, "$1-- ");
+        }
+      }
+      const newValue = newLines.join("\n");
+      setDbml(newValue);
+      // Restore selection
+      const newStart = newLines.slice(0, startLine).join("\n").length + (startLine > 0 ? 1 : 0);
+      const newEnd = newLines.slice(0, endLine + 1).join("\n").length;
+      setTimeout(() => {
+        ta.setSelectionRange(newStart, newEnd);
+      }, 0);
+      return;
+    }
+
+    // Tab — insert two spaces (or indent selection)
+    if (e.key === "Tab") {
+      e.preventDefault();
+      const { selectionStart, selectionEnd, value } = ta;
+      if (selectionStart === selectionEnd) {
+        // No selection — insert 2 spaces at cursor
+        const before = value.substring(0, selectionStart);
+        const after = value.substring(selectionEnd);
+        const newValue = before + "  " + after;
+        setDbml(newValue);
+        setTimeout(() => ta.setSelectionRange(selectionStart + 2, selectionStart + 2), 0);
+      } else {
+        // Selection — indent/unindent each line
+        const lines = value.split("\n");
+        let charCount = 0;
+        let startLine = 0, endLine = 0;
+        for (let i = 0; i < lines.length; i++) {
+          if (charCount + lines[i].length >= selectionStart && charCount <= selectionStart) {
+            startLine = i;
+          }
+          if (charCount + lines[i].length >= selectionEnd - 1 || i === lines.length - 1) {
+            endLine = i;
+            break;
+          }
+          charCount += lines[i].length + 1;
+        }
+        const newLines = [...lines];
+        for (let i = startLine; i <= endLine; i++) {
+          if (e.shiftKey) {
+            newLines[i] = newLines[i].replace(/^ {1,2}/, "");
+          } else {
+            newLines[i] = "  " + newLines[i];
+          }
+        }
+        const newValue = newLines.join("\n");
+        setDbml(newValue);
+        const newStart = newLines.slice(0, startLine).join("\n").length + (startLine > 0 ? 1 : 0);
+        const newEnd = newLines.slice(0, endLine + 1).join("\n").length;
+        setTimeout(() => ta.setSelectionRange(newStart, newEnd), 0);
+      }
+      return;
+    }
+  }, []);
+
   return (
     <div
       style={{
@@ -2131,6 +2257,68 @@ export default function SketchER() {
           </span>
         </div>
 
+        {/* Find bar */}
+        {findOpen && (
+          <div style={{
+            display: "flex",
+            alignItems: "center",
+            gap: "6px",
+            padding: "6px 12px",
+            borderBottom: `1px solid ${theme.border}`,
+            background: theme.editorPanelBg,
+            fontFamily: "'DM Sans', sans-serif",
+            fontSize: "12px",
+          }}>
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={theme.textMuted} strokeWidth="2" strokeLinecap="round">
+              <circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/>
+            </svg>
+            <input
+              ref={findInputRef}
+              value={findQuery}
+              onChange={(e) => { setFindQuery(e.target.value); setFindIndex(0); }}
+              onKeyDown={(e) => {
+                if (e.key === "Escape") { setFindOpen(false); editorRef.current?.focus(); }
+                if (e.key === "Enter") {
+                  e.preventDefault();
+                  if (findMatches.length === 0) return;
+                  const next = e.shiftKey
+                    ? (findIndex - 1 + findMatches.length) % findMatches.length
+                    : (findIndex + 1) % findMatches.length;
+                  setFindIndex(next);
+                  jumpToFindMatch(next);
+                }
+              }}
+              placeholder="Find..."
+              style={{
+                flex: 1,
+                background: theme.appBg,
+                color: theme.editorText,
+                border: `1px solid ${theme.border}`,
+                borderRadius: "4px",
+                padding: "4px 8px",
+                fontSize: "12px",
+                fontFamily: "'JetBrains Mono', monospace",
+                outline: "none",
+              }}
+            />
+            <span style={{ color: theme.textMuted, fontSize: "11px", minWidth: "50px", textAlign: "center" }}>
+              {findQuery ? `${findMatches.length > 0 ? findIndex + 1 : 0}/${findMatches.length}` : ""}
+            </span>
+            <button onClick={() => { if (findMatches.length === 0) return; const prev = (findIndex - 1 + findMatches.length) % findMatches.length; setFindIndex(prev); jumpToFindMatch(prev); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: theme.textSecondary, padding: "2px", display: "flex" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="18 15 12 9 6 15"/></svg>
+            </button>
+            <button onClick={() => { if (findMatches.length === 0) return; const next = (findIndex + 1) % findMatches.length; setFindIndex(next); jumpToFindMatch(next); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: theme.textSecondary, padding: "2px", display: "flex" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><polyline points="6 9 12 15 18 9"/></svg>
+            </button>
+            <button onClick={() => { setFindOpen(false); setFindQuery(""); editorRef.current?.focus(); }}
+              style={{ background: "none", border: "none", cursor: "pointer", color: theme.textSecondary, padding: "2px", display: "flex" }}>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+          </div>
+        )}
+
         {/* Editor */}
         <div style={{ flex: 1, display: "flex", overflow: "hidden" }}>
           <div
@@ -2182,6 +2370,7 @@ export default function SketchER() {
               value={dbml}
               onChange={(e) => setDbml(e.target.value)}
               onScroll={handleEditorScroll}
+              onKeyDown={handleEditorKeyDown}
               spellCheck={false}
               style={{
                 position: "relative",
