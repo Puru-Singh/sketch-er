@@ -1866,7 +1866,8 @@ export default function SketchER() {
     // Jump to table definition in editor + glow highlight
     if (jumpToTableOnClick && editorRef.current) {
       const lines = dbml.split("\n");
-      const tableLineRegex = new RegExp(`^\\s*Table\\s+${tableName}\\s*\\{`, "i");
+      // const tableLineRegex = new RegExp(`^\\s*Table\\s+${tableName}\\s*\\{`, "i");
+      const tableLineRegex = new RegExp(`^[ \\t]*Table\\s+${tableName}\\s*\\{`, "im");
       const startLine = lines.findIndex((l) => tableLineRegex.test(l));
       if (startLine !== -1) {
         const lineHeight = 20;
