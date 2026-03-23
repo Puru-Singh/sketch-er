@@ -248,7 +248,7 @@ function parseDBML(text) {
 }
 
 // ── DBML syntax highlighting ─────────────────────────────────────────────────
-function highlightDBML(text, theme, glowLines) {
+function highlightDBML(text, theme) {
   const esc = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
   return text.split("\n").map((line) => {
     // Comments
@@ -283,11 +283,6 @@ function highlightDBML(text, theme, glowLines) {
     }
     // Closing brace or other
     return esc(line);
-  }).map((html, idx) => {
-    const inRange = glowLines && idx >= glowLines.start && idx <= glowLines.end;
-    if (!inRange) return html;
-    const bg = glowLines.fading ? "transparent" : "rgba(16,185,129,0.15)";
-    return `<span style="background:${bg};display:inline-block;width:100%;transition:background 0.5s ease-out">${html}</span>`;
   }).join("\n");
 }
 
@@ -1911,7 +1906,7 @@ export default function SketchER() {
     setLineNumbers(dbml.split("\n").map((_, i) => i + 1));
   }, [dbml]);
 
-  const highlightedHtml = useMemo(() => highlightDBML(dbml, theme, glowLines), [dbml, theme, glowLines]);
+  const highlightedHtml = useMemo(() => highlightDBML(dbml, theme), [dbml, theme]);
 
   const editorRef = useRef(null);
   const lineNumRef = useRef(null);
@@ -2146,6 +2141,24 @@ export default function SketchER() {
                 color: theme.editorText,
               }}
             />
+            {/* Glow overlay for jump-to-table highlight */}
+            {glowLines && (
+              <div
+                style={{
+                  position: "absolute",
+                  left: 0,
+                  right: 0,
+                  top: 14 + glowLines.start * 20 - (editorRef.current?.scrollTop || 0),
+                  height: (glowLines.end - glowLines.start + 1) * 20,
+                  background: "rgba(16,185,129,0.15)",
+                  opacity: glowLines.fading ? 0 : 1,
+                  transition: "opacity 0.6s ease-out",
+                  pointerEvents: "none",
+                  zIndex: 0,
+                  borderRadius: "3px",
+                }}
+              />
+            )}
             {/* Transparent textarea on top for editing */}
             <textarea
               ref={editorRef}
