@@ -1,1 +1,4 @@
 icon-options.html
+node_modules/
+dist/
+.claude/

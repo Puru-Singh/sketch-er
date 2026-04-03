@@ -3,6 +3,7 @@
 
 import { useState, useRef, useCallback, useEffect, useMemo } from "react";
 import MonacoEditor from "@monaco-editor/react";
+import LZString from "lz-string";
 
 const DEFAULT_DBML = `Table users {
   id int [pk]
@@ -826,7 +827,7 @@ function ZoomControl({ zoom, onZoomSet, theme }) {
   );
 }
 
-function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp }) {
+function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp, onShare, shareCopied }) {
   return (
     <div data-export-hide="1" onMouseDown={(e) => e.stopPropagation()} style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
       <TBtn onClick={onToggleTheme} tip={isDark ? "Switch to light mode" : "Switch to dark mode"} theme={theme}>
@@ -887,6 +888,19 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetVi
           <line x1="12" y1="15" x2="12" y2="3"/>
         </svg>
         Export
+      </TBtn>
+      <TBtn onClick={onShare} tip="Copy shareable link" theme={theme} tipAlign="right">
+        {shareCopied ? (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        ) : (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+        )}
+        {shareCopied ? "Copied!" : "Share"}
       </TBtn>
       <TBtn onClick={onShowHelp} tip="Help & reference" theme={theme} tipAlign="right">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1382,7 +1396,23 @@ function BottomGroupPane({ groupsVisible, onToggle, showAllConnections, onToggle
 
 const STORAGE_KEY = "sketcher-state";
 
-function loadSavedState() {
+function encodeShareState(state) {
+  return LZString.compressToEncodedURIComponent(JSON.stringify(state));
+}
+
+function decodeShareState() {
+  try {
+    const hash = window.location.hash;
+    if (!hash.startsWith("#share=")) return null;
+    const encoded = hash.slice("#share=".length);
+    const json = LZString.decompressFromEncodedURIComponent(encoded);
+    return json ? JSON.parse(json) : null;
+  } catch { return null; }
+}
+
+function loadInitialState() {
+  const fromHash = decodeShareState();
+  if (fromHash) return fromHash;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
     return raw ? JSON.parse(raw) : null;
@@ -1390,7 +1420,7 @@ function loadSavedState() {
 }
 
 export default function SketchER() {
-  const saved = useRef(loadSavedState()).current;
+  const saved = useRef(loadInitialState()).current;
 
   const [isDark, setIsDark] = useState(saved?.isDark ?? false);
   const theme = isDark ? DARK_THEME : LIGHT_THEME;
@@ -1504,6 +1534,16 @@ export default function SketchER() {
     }, 400);
     return () => clearTimeout(timer);
   }, [dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick]);
+
+  const [shareCopied, setShareCopied] = useState(false);
+  const copyShareLink = useCallback(() => {
+    const encoded = encodeShareState({ dbml, tablePositions, tableColors, lineMidXOverrides, groupsVisible, fileName });
+    const url = `${window.location.origin}${window.location.pathname}#share=${encoded}`;
+    navigator.clipboard.writeText(url).then(() => {
+      setShareCopied(true);
+      setTimeout(() => setShareCopied(false), 2000);
+    });
+  }, [dbml, tablePositions, tableColors, lineMidXOverrides, groupsVisible, fileName]);
 
   // Save diagram to a .sker file
   const saveToFile = useCallback(() => {
@@ -2369,6 +2409,8 @@ export default function SketchER() {
           onExport={exportToPng}
           onSave={saveToFile}
           onLoad={() => loadInputRef.current?.click()}
+          onShare={copyShareLink}
+          shareCopied={shareCopied}
           onShowHelp={() => setShowHelp(true)}
         />
 
