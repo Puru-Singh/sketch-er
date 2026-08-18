@@ -75,6 +75,25 @@ const GROUP_ACCENT_COLORS = [
   "#ec4899", "#06b6d4", "#f97316", "#84cc16",
 ];
 
+const SIMPLE_DBML_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_$]*$/;
+
+function formatDbmlIdentifier(identifier) {
+  if (SIMPLE_DBML_IDENTIFIER.test(identifier)) return identifier;
+  return `"${identifier.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+function formatDbmlPath(path) {
+  return path.split(".").map(formatDbmlIdentifier).join(".");
+}
+
+function nextTableGroupName(groups) {
+  const names = new Set(groups.map((group) => group.name));
+  if (!names.has("NewGroup")) return "NewGroup";
+  let suffix = 2;
+  while (names.has(`NewGroup${suffix}`)) suffix += 1;
+  return `NewGroup${suffix}`;
+}
+
 // ── Color utilities for hue-family generation ────────────────────────────────
 function hexToHsl(hex) {
   let r = parseInt(hex.slice(1, 3), 16) / 255;
@@ -479,12 +498,13 @@ function ColorWheelIcon({ lit }) {
   );
 }
 
-function TableNode({ table, position, color, onDragStart, onColorChange, isSelected, onSelect, theme, fkColumns, activeColumns, onHover, width, isDimmed, isCollapsed, onToggleCollapse }) {
+function TableNode({ table, position, color, onDragStart, onColorChange, isSelected, onSelect, onTableContextMenu, theme, fkColumns, activeColumns, onHover, width, isDimmed, isCollapsed, onToggleCollapse }) {
   const [pickerHovered, setPickerHovered] = useState(false);
   const [pickerFocused, setPickerFocused] = useState(false);
   const pickerLit = pickerHovered || pickerFocused;
 
   const handleMouseDown = (e) => {
+    if (e.button !== 0) return;
     if (e.target.closest(".color-picker-area") || e.target.closest(".table-collapse-toggle")) return;
     // Prevent the browser's native text/image drag ghost while moving a table.
     e.preventDefault();
@@ -501,6 +521,11 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
   return (
     <div
       onMouseDown={handleMouseDown}
+      onContextMenu={(e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        onTableContextMenu(table.name, e);
+      }}
       onDragStart={(e) => e.preventDefault()}
       onMouseEnter={() => onHover(table.name)}
       onMouseLeave={() => onHover(null)}
@@ -1252,6 +1277,7 @@ Table core.items {
   sessions
 }`}</Code>
               <Row label="Enable groups">Toggle the <strong>Table Groups</strong> switch in the bottom bar of the canvas</Row>
+              <Row label="Create from selection">Select tables with <KBD>Ctrl/Cmd</KBD> + click, then right-click a selected table and name the new group</Row>
               <Row label="Group colors">Use the DBML <KBD>color</KBD> setting, or let SketchER assign an accent</Row>
               <Row label="Drag a group">Grab the group label strip at the top of its bounding box to move all member tables together</Row>
               <Row label="Membership">Driven purely by DBML — moving a table out of a group box does not change membership</Row>
@@ -1539,6 +1565,8 @@ export default function SketchER() {
     () => new Set(Array.isArray(saved?.collapsedTables) ? saved.collapsedTables : [])
   );
   const [selectedTables, setSelectedTables] = useState(new Set());
+  const [tableGroupMenu, setTableGroupMenu] = useState(null);
+  const [newTableGroupName, setNewTableGroupName] = useState("");
   const [hoveredTable, setHoveredTable] = useState(null);
   const [dragging, setDragging] = useState(null);
   const [draggingLine, setDraggingLine] = useState(null); // { pathKey, startClientX, startMidX }
@@ -2114,6 +2142,43 @@ export default function SketchER() {
     }
   }, [jumpToTableOnClick, tables]);
 
+  const handleTableContextMenu = useCallback((tableName, event) => {
+    const nextSelection = new Set(selectedTables);
+    if (event.ctrlKey || event.metaKey) {
+      nextSelection.add(tableName);
+    } else if (!nextSelection.has(tableName)) {
+      nextSelection.clear();
+      nextSelection.add(tableName);
+    }
+
+    setSelectedTables(nextSelection);
+    setNewTableGroupName(nextTableGroupName(groups));
+    setTableGroupMenu({
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 280)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 190)),
+      tableNames: [...nextSelection],
+    });
+  }, [groups, selectedTables]);
+
+  const tableGroupNameExists = groups.some((group) => group.name === newTableGroupName.trim());
+
+  const createSelectedTableGroup = useCallback((event) => {
+    event.preventDefault();
+    const groupName = newTableGroupName.trim();
+    const memberTables = tableGroupMenu?.tableNames || [];
+    if (!groupName || memberTables.length === 0
+      || groups.some((group) => group.name === groupName)) return;
+
+    const groupBlock = [
+      `TableGroup ${formatDbmlPath(groupName)} {`,
+      ...memberTables.map((tableName) => `  ${formatDbmlPath(tableName)}`),
+      "}",
+    ].join("\n");
+    setDbml((current) => `${current.trimEnd()}\n\n${groupBlock}\n`);
+    setGroupsVisible(true);
+    setTableGroupMenu(null);
+  }, [groups, newTableGroupName, tableGroupMenu]);
+
   const handlePaletteColorClick = useCallback((color) => {
     const names = [...selectedTables];
     if (names.length === 0) return;
@@ -2140,6 +2205,20 @@ export default function SketchER() {
     document.addEventListener("mousedown", handler, true);
     return () => document.removeEventListener("mousedown", handler, true);
   }, [showSettings]);
+
+  useEffect(() => {
+    if (!tableGroupMenu) return undefined;
+    const closeMenu = () => setTableGroupMenu(null);
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") closeMenu();
+    };
+    document.addEventListener("mousedown", closeMenu);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", closeMenu);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [tableGroupMenu]);
 
   // Surface the official parser's precise diagnostics in Monaco. The canvas
   // intentionally keeps rendering the last valid model while the user types.
@@ -2686,6 +2765,7 @@ export default function SketchER() {
                 onColorChange={handleColorChange}
                 isSelected={selectedTables.has(table.name)}
                 onSelect={handleTableSelect}
+                onTableContextMenu={handleTableContextMenu}
                 theme={theme}
                 fkColumns={fkMap[table.name]}
                 activeColumns={activeColumns[table.name]}
@@ -2744,6 +2824,75 @@ export default function SketchER() {
           onToggleConnections={() => setShowAllConnections((v) => !v)}
           theme={theme}
         />
+
+        {tableGroupMenu && (
+          <form
+            onSubmit={createSelectedTableGroup}
+            onMouseDown={(event) => event.stopPropagation()}
+            onContextMenu={(event) => event.preventDefault()}
+            style={{
+              position: "fixed",
+              left: tableGroupMenu.x,
+              top: tableGroupMenu.y,
+              zIndex: 500,
+              width: 264,
+              padding: "12px",
+              borderRadius: "10px",
+              border: `1px solid ${theme.toolbarBorder}`,
+              background: theme.toolbarBg,
+              boxShadow: "0 12px 34px rgba(0,0,0,0.22)",
+              color: theme.textPrimary,
+              fontFamily: "'DM Sans', sans-serif",
+            }}
+          >
+            <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "3px" }}>
+              Create table group
+            </div>
+            <div style={{ fontSize: "10.5px", color: theme.textMuted, marginBottom: "9px" }}>
+              {tableGroupMenu.tableNames.length} {tableGroupMenu.tableNames.length === 1 ? "table" : "tables"} selected
+            </div>
+            <input
+              autoFocus
+              value={newTableGroupName}
+              onChange={(event) => setNewTableGroupName(event.target.value)}
+              aria-label="New table group name"
+              spellCheck={false}
+              style={{
+                width: "100%",
+                height: 32,
+                padding: "0 9px",
+                borderRadius: "6px",
+                border: `1px solid ${tableGroupNameExists ? "#ef4444" : theme.toolbarBorder}`,
+                outline: "none",
+                background: theme.editorPanelBg,
+                color: theme.textPrimary,
+                fontSize: "12px",
+                fontFamily: "'JetBrains Mono', monospace",
+              }}
+            />
+            <div style={{ minHeight: 20, paddingTop: "4px", fontSize: "10px", color: tableGroupNameExists ? "#ef4444" : theme.textMuted }}>
+              {tableGroupNameExists ? "A group with this name already exists." : "This adds a TableGroup block to the DBML."}
+            </div>
+            <button
+              type="submit"
+              disabled={!newTableGroupName.trim() || tableGroupNameExists}
+              style={{
+                width: "100%",
+                height: 32,
+                border: "none",
+                borderRadius: "6px",
+                background: "#10b981",
+                color: "#fff",
+                fontSize: "11.5px",
+                fontWeight: 700,
+                cursor: !newTableGroupName.trim() || tableGroupNameExists ? "not-allowed" : "pointer",
+                opacity: !newTableGroupName.trim() || tableGroupNameExists ? 0.5 : 1,
+              }}
+            >
+              Create group
+            </button>
+          </form>
+        )}
 
         {showHelp && <InfoModal theme={theme} onClose={() => setShowHelp(false)} />}
 

@@ -48,6 +48,7 @@ Open [http://localhost:5173](http://localhost:5173).
 ### Selection & Colors
 - **Click** a table to select it — reveals a color swatch palette in the editor panel
 - **Ctrl / Cmd + Click** to multi-select tables; clicking a swatch applies a harmonious hue family across all selected tables
+- Right-click a selected table to create a DBML `TableGroup` from the complete selection
 - Click a selected table again to deselect; click empty canvas to clear selection
 
 ### Relationship Lines
@@ -69,6 +70,7 @@ Open [http://localhost:5173](http://localhost:5173).
 - Define groups in DBML with `TableGroup Name { table1 table2 }`
 - Rendered as colored dashed rectangles with a label badge behind the tables
 - Toggle visibility with the **Table Groups** switch in the bottom bar
+- Multi-select tables, right-click one of them, and enter a name to append a new `TableGroup` block to the DBML
 - **Drag a group's label** to move all member tables together
 - DBML-defined group colors and notes are honored
 
@@ -186,6 +188,7 @@ The current editor is intentionally a single DBML document. Multi-file module de
 | Zoom | Trackpad pinch or `Ctrl / Cmd + Scroll` |
 | Select table | Click table |
 | Multi-select | `Ctrl / Cmd + Click` |
+| Create table group | Multi-select, then right-click a selected table |
 | Drag table | Click and drag table header |
 | Reroute a line | Drag the grip dot on the line's vertical segment |
 | Rename file | Click filename (top-left of canvas) |

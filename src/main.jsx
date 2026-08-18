@@ -4,7 +4,11 @@ import SketchER from './SketchER.jsx'
 
 const style = document.createElement('style')
 style.textContent = `
-  * { margin: 0; padding: 0; box-sizing: border-box; }
+  *:not(.monaco-editor):not(.monaco-editor *) {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
   body { overflow: hidden; }
   @import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600&family=DM+Sans:wght@400;500;600;700&display=swap');
 `
