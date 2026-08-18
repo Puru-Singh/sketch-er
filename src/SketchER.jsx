@@ -1565,6 +1565,7 @@ export default function SketchER() {
     () => new Set(Array.isArray(saved?.collapsedTables) ? saved.collapsedTables : [])
   );
   const [selectedTables, setSelectedTables] = useState(new Set());
+  const selectedTablesRef = useRef(selectedTables);
   const [tableGroupMenu, setTableGroupMenu] = useState(null);
   const [newTableGroupName, setNewTableGroupName] = useState("");
   const [hoveredTable, setHoveredTable] = useState(null);
@@ -1899,7 +1900,9 @@ export default function SketchER() {
   const handleCanvasMouseDown = (e) => {
     setIsPanning(true);
     setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
-    setSelectedTables(new Set());
+    const emptySelection = new Set();
+    selectedTablesRef.current = emptySelection;
+    setSelectedTables(emptySelection);
   };
 
   const handleLineDragStart = useCallback((pathKey, clientX, currentMidX) => {
@@ -1943,7 +1946,7 @@ export default function SketchER() {
     } else if (isPanning && panStart) {
       setCanvasOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
     } else if (isResizing) {
-      setEditorWidth(Math.max(260, Math.min(600, e.clientX)));
+      setEditorWidth(Math.max(360, Math.min(600, e.clientX)));
     }
   }, [draggingGroup, draggingLine, dragging, isPanning, panStart, zoom, canvasOffset, isResizing]);
 
@@ -2087,14 +2090,15 @@ export default function SketchER() {
 
   const handleTableSelect = useCallback((tableName, isMulti) => {
     if (isMulti) {
-      setSelectedTables((prev) => {
-        const next = new Set(prev);
-        if (next.has(tableName)) next.delete(tableName);
-        else next.add(tableName);
-        return next;
-      });
+      const next = new Set(selectedTablesRef.current);
+      if (next.has(tableName)) next.delete(tableName);
+      else next.add(tableName);
+      selectedTablesRef.current = next;
+      setSelectedTables(next);
     } else {
-      setSelectedTables(new Set([tableName]));
+      const next = new Set([tableName]);
+      selectedTablesRef.current = next;
+      setSelectedTables(next);
     }
     // Jump to table definition in editor + glow highlight
     if (jumpToTableOnClick && monacoEditorRef.current) {
@@ -2143,7 +2147,7 @@ export default function SketchER() {
   }, [jumpToTableOnClick, tables]);
 
   const handleTableContextMenu = useCallback((tableName, event) => {
-    const nextSelection = new Set(selectedTables);
+    const nextSelection = new Set(selectedTablesRef.current);
     if (event.ctrlKey || event.metaKey) {
       nextSelection.add(tableName);
     } else if (!nextSelection.has(tableName)) {
@@ -2151,6 +2155,7 @@ export default function SketchER() {
       nextSelection.add(tableName);
     }
 
+    selectedTablesRef.current = nextSelection;
     setSelectedTables(nextSelection);
     setNewTableGroupName(nextTableGroupName(groups));
     setTableGroupMenu({
@@ -2158,7 +2163,7 @@ export default function SketchER() {
       y: Math.max(8, Math.min(event.clientY, window.innerHeight - 190)),
       tableNames: [...nextSelection],
     });
-  }, [groups, selectedTables]);
+  }, [groups]);
 
   const tableGroupNameExists = groups.some((group) => group.name === newTableGroupName.trim());
 
@@ -2325,12 +2330,26 @@ export default function SketchER() {
           background: rgba(16,185,129,0.15) !important;
           transition: background 0.5s ease-out;
         }
+        .monaco-editor .find-widget.narrow-find-widget:not(.collapsed-find-widget) {
+          max-width: calc(100% - 16px) !important;
+        }
+        .monaco-editor .find-widget .find-actions,
+        .monaco-editor .find-widget .replace-actions {
+          position: relative;
+          z-index: 2;
+          flex-shrink: 0;
+        }
+        .monaco-editor .find-widget .button {
+          box-sizing: content-box;
+          pointer-events: auto;
+          flex-shrink: 0;
+        }
       `}</style>
       {/* ===== Editor Panel ===== */}
       <div
         style={{
           width: editorWidth,
-          minWidth: 260,
+          minWidth: 360,
           display: "flex",
           flexDirection: "column",
           background: theme.editorPanelBg,
