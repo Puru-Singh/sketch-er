@@ -1,9 +1,10 @@
 // Copyright (c) 2025 Puru Singh — https://github.com/Puru-Singh
 // Licensed under the MIT License — see LICENSE for details.
 
-import { useState, useRef, useCallback, useEffect, useMemo } from "react";
+import { useState, useRef, useCallback, useEffect, useMemo, useDeferredValue } from "react";
 import MonacoEditor from "@monaco-editor/react";
 import LZString from "lz-string";
+import { dbmlLanguageConfig, dbmlMonarchTokensProvider, EMPTY_DBML_MODEL, parseDBMLDocument } from "./dbmlParser.js";
 
 const DEFAULT_DBML = `Table users {
   id int [pk]
@@ -181,61 +182,11 @@ const DARK_THEME = {
   activeColBg: "rgba(59,130,246,0.14)",
 };
 
-function parseDBML(text) {
-  const tables = [];
-  const refs = [];
-  const tableRegex = /Table\s+(\w+)\s*\{([^}]*)\}/gi;
-  let match;
-  while ((match = tableRegex.exec(text)) !== null) {
-    const tableName = match[1];
-    const body = match[2];
-    const columns = [];
-    const lines = body.split("\n").map((l) => l.trim()).filter(Boolean);
-    for (const line of lines) {
-      const colMatch = line.match(/^(\w+)\s+(\w+)(.*)$/);
-      if (colMatch) {
-        const colName = colMatch[1];
-        const colType = colMatch[2];
-        const rest = colMatch[3] || "";
-        const isPk = /\[.*pk.*\]/i.test(rest);
-        const refMatch = rest.match(/ref:\s*([<>-])\s*(\w+)\.(\w+)/i);
-        if (refMatch) {
-          refs.push({
-            from: { table: tableName, column: colName },
-            to: { table: refMatch[2], column: refMatch[3] },
-            type: refMatch[1],
-          });
-        }
-        columns.push({ name: colName, type: colType, isPk });
-      }
-    }
-    tables.push({ name: tableName, columns });
-  }
-  const refLineRegex = /Ref:\s*(\w+)\.(\w+)\s*([<>-])\s*(\w+)\.(\w+)/gi;
-  let refMatch;
-  while ((refMatch = refLineRegex.exec(text)) !== null) {
-    refs.push({
-      from: { table: refMatch[1], column: refMatch[2] },
-      to: { table: refMatch[4], column: refMatch[5] },
-      type: refMatch[3],
-    });
-  }
-  const groups = [];
-  const groupRegex = /TableGroup\s+(\w+)\s*\{([^}]*)\}/gi;
-  let gMatch;
-  while ((gMatch = groupRegex.exec(text)) !== null) {
-    const groupName = gMatch[1];
-    const members = gMatch[2].split("\n").map((l) => l.trim()).filter(Boolean);
-    groups.push({ name: groupName, tables: members });
-  }
-  return { tables, refs, groups };
-}
-
-
 const COL_HEIGHT = 32;
 const HEADER_HEIGHT = 42;
 const TABLE_WIDTH = 230;
 const TABLE_CORNER_RADIUS = 6;
+const TABLE_META_HEIGHT = 24;
 
 // 0 = fully transparent, 1 = fully black. Tweak to taste.
 const TABLE_NAME_DARKNESS = 0.5;
@@ -247,6 +198,14 @@ function getColumnY(table, colIndex) {
   return table.y + HEADER_HEIGHT + colIndex * COL_HEIGHT + COL_HEIGHT / 2;
 }
 
+function hasTableMeta(table) {
+  return Boolean(table.note || table.indexes?.length || table.checks?.length || table.records?.length);
+}
+
+function getTableHeight(table) {
+  return HEADER_HEIGHT + table.columns.length * COL_HEIGHT + (hasTableMeta(table) ? TABLE_META_HEIGHT : 0);
+}
+
 // Crow's foot (many/FK) end — vertical bar + two prongs
 function CrowFoot({ x, y, dir, color }) {
   const spread = 6, depth = 10;
@@ -256,6 +215,26 @@ function CrowFoot({ x, y, dir, color }) {
       <line x1={x} y1={y - spread} x2={x} y2={y + spread} stroke={color} strokeWidth="1.3" strokeLinecap="round" />
       <line x1={x} y1={y} x2={px} y2={y - spread} stroke={color} strokeWidth="1.3" strokeLinecap="round" />
       <line x1={x} y1={y} x2={px} y2={y + spread} stroke={color} strokeWidth="1.3" strokeLinecap="round" />
+    </>
+  );
+}
+
+// Draw an endpoint from the normalized DBML cardinality (1, 0..1, *, 1..*, 0..*).
+function CardinalityEnd({ x, y, dir, cardinality, color }) {
+  const sign = dir === "right" ? 1 : -1;
+  const relation = cardinality || "1";
+  const isMany = relation.includes("*");
+  const isOptional = relation.startsWith("0") || relation === "?";
+  const hasOne = relation.includes("1") || !isMany;
+  const outerX = x + sign * 10;
+  return (
+    <>
+      {isOptional && <circle cx={x + sign * 4} cy={y} r="3.2" fill="none" stroke={color} strokeWidth="1.3" />}
+      {hasOne && (
+        <line x1={outerX} y1={y - 5} x2={outerX} y2={y + 5}
+          stroke={color} strokeWidth="1.3" strokeLinecap="round" />
+      )}
+      {isMany && <CrowFoot x={outerX} y={y} dir={dir} color={color} />}
     </>
   );
 }
@@ -394,9 +373,9 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
     const isActive = showAllConnections
       || hoveredTable === ref.from.table || hoveredTable === ref.to.table
       || selectedTables.has(ref.from.table) || selectedTables.has(ref.to.table);
-    const lineColor = isActive
+    const lineColor = ref.color || (isActive
       ? (tableColors[ref.from.table] || theme.lineColor)
-      : theme.lineColor;
+      : theme.lineColor);
     const hasFilter = !showAllConnections && (hoveredTable || selectedTables.size > 0);
     const opacity = hasFilter && !isActive ? 0.18 : 1;
 
@@ -407,7 +386,8 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
     const cardX      = (crowDir === "right" || crowDir === "vert-left") ? x2 - 13 : x2 + 13;
     const cardAnchor = (crowDir === "right" || crowDir === "vert-left") ? "end"   : "start";
 
-    const pathKey = `rline-${ref.from.table}-${ref.from.column}-${ref.to.table}-${ref.to.column}`;
+    const legacyPathKey = `rline-${ref.from.table}-${ref.from.column}-${ref.to.table}-${ref.to.column}`;
+    const pathKey = ref.composite ? `${legacyPathKey}-${ref.id}` : legacyPathKey;
     // Apply user's manual midX drag override if present
     const finalMidX = lineMidXOverrides[pathKey] ?? midX;
     const path = `M ${pathX1} ${fromY} H ${finalMidX} V ${toYAdj} H ${pathX2}`;
@@ -420,7 +400,15 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
 
     lines.push(
       <g key={pathKey} opacity={opacity}>
-        <path id={pathKey} d={path} fill="none" stroke={lineColor} strokeWidth="1.3" />
+        <title>{[
+          ref.name && `Relationship: ${ref.name}`,
+          `${ref.from.table}.${ref.from.column} (${ref.from.cardinality}) → ${ref.to.table}.${ref.to.column} (${ref.to.cardinality})`,
+          ref.onDelete && `ON DELETE ${ref.onDelete}`,
+          ref.onUpdate && `ON UPDATE ${ref.onUpdate}`,
+          ref.inactive && "Inactive relationship",
+        ].filter(Boolean).join("\n")}</title>
+        <path id={pathKey} d={path} fill="none" stroke={lineColor} strokeWidth="1.3"
+          strokeDasharray={ref.inactive ? "6 5" : undefined} />
 
         {/* Draggable hit area on the vertical corridor segment */}
         {hasVertSeg && (
@@ -438,14 +426,18 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
             style={{ pointerEvents: "none" }} />
         )}
 
-        <CrowFoot x={x1} y={fromY} dir={crowDir === "right" ? "right" : "left"} color={lineColor} />
-        <circle cx={circleX} cy={toYAdj} r="3.5" fill="none" stroke={lineColor} strokeWidth="1.3" />
+        <CardinalityEnd x={x1} y={fromY}
+          dir={crowDir === "right" ? "right" : "left"}
+          cardinality={ref.from.cardinality} color={lineColor} />
+        <CardinalityEnd x={x2} y={toYAdj}
+          dir={(crowDir === "right" || crowDir === "vert-left") ? "left" : "right"}
+          cardinality={ref.to.cardinality} color={lineColor} />
 
         {/* Cardinality labels */}
         <text x={starX} y={fromY - 7} fill={lineColor} fontSize="11"
-          fontFamily="'DM Sans', sans-serif" textAnchor={starAnchor} fontWeight="700">*</text>
+          fontFamily="'DM Sans', sans-serif" textAnchor={starAnchor} fontWeight="700">{ref.from.cardinality}</text>
         <text x={cardX} y={toYAdj - 7} fill={lineColor} fontSize="9.5"
-          fontFamily="'DM Sans', sans-serif" textAnchor={cardAnchor} opacity="0.85">0..1</text>
+          fontFamily="'DM Sans', sans-serif" textAnchor={cardAnchor} opacity="0.85">{ref.to.cardinality}</text>
 
         {/* Animated dot — moves PK → FK (reversed); always shown when showAllConnections */}
         {isActive && (
@@ -509,6 +501,7 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
       onMouseDown={handleMouseDown}
       onMouseEnter={() => onHover(table.name)}
       onMouseLeave={() => onHover(null)}
+      title={[table.alias && `Alias: ${table.alias}`, table.note].filter(Boolean).join("\n") || undefined}
       style={{
         position: "absolute",
         left: position.x,
@@ -606,6 +599,13 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           return (
             <div
               key={col.name}
+              title={[
+                col.note,
+                col.notNull && "NOT NULL",
+                col.isUnique && "UNIQUE",
+                col.increment && "AUTO INCREMENT",
+                col.defaultValue != null && `Default: ${col.defaultValue}`,
+              ].filter(Boolean).join(" · ") || undefined}
               style={{
                 height: COL_HEIGHT,
                 display: "flex",
@@ -641,14 +641,44 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
                   fontSize: "11px",
                   fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
                   fontWeight: 400,
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "5px",
                 }}
               >
-                {col.type}
+                <span>{col.type}</span>
+                {col.isUnique && !col.isPk && <span style={{ color: "#8b5cf6", fontSize: "9px" }}>UQ</span>}
+                {col.increment && <span style={{ color: "#10b981", fontSize: "9px" }}>++</span>}
+                {col.notNull && !col.isPk && <span style={{ color: theme.textMuted, fontSize: "9px" }}>NN</span>}
               </span>
             </div>
           );
         })}
       </div>
+      {hasTableMeta(table) && (
+        <div title={[
+          table.note,
+          table.indexes?.length && `${table.indexes.length} indexes`,
+          table.checks?.length && `${table.checks.length} checks`,
+          table.records?.length && `${table.records.length} record sets`,
+        ].filter(Boolean).join(" · ")}
+          style={{
+            height: TABLE_META_HEIGHT,
+            display: "flex",
+            alignItems: "center",
+            gap: "8px",
+            padding: "0 12px",
+            borderTop: `1px solid ${theme.colDivider}`,
+            color: theme.textMuted,
+            fontSize: "9.5px",
+            fontFamily: "'DM Sans', sans-serif",
+          }}>
+          {table.note && <span>note</span>}
+          {table.indexes?.length > 0 && <span>{table.indexes.length} idx</span>}
+          {table.checks?.length > 0 && <span>{table.checks.length} check</span>}
+          {table.records?.length > 0 && <span>{table.records.length} data</span>}
+        </div>
+      )}
     </div>
   );
 }
@@ -916,6 +946,7 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetVi
 const INFO_SECTIONS = [
   { id: "tables",        label: "Tables",          color: "#10b981" },
   { id: "relationships", label: "Relationships",   color: "#3b82f6" },
+  { id: "advanced",      label: "Advanced DBML",   color: "#14b8a6" },
   { id: "groups",        label: "Table Groups",    color: "#8b5cf6" },
   { id: "canvas",        label: "Canvas Controls", color: "#f59e0b" },
   { id: "colors",        label: "Colors & Theming",color: "#ec4899" },
@@ -1108,54 +1139,76 @@ function InfoModal({ theme, onClose }) {
           >
             <Section id="tables" color="#10b981" title="Creating Tables"
               icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>}>
-              <p style={{ marginTop: 0 }}>Each table block defines a database table. Column types are free-form — use whatever fits your schema.</p>
-              <Code>{`Table users {
-  id         int      [pk]
-  username   varchar
-  email      varchar
-  bio        text
-  role_id    int      [ref: > roles.id]
-  created_at datetime
+              <p style={{ marginTop: 0 }}>SketchER uses the official DBML v2 parser. Schemas, quoted identifiers, aliases, parameterized or quoted types, defaults, checks, notes, indexes, metadata, and reusable partials are accepted.</p>
+              <Code>{`Table core.users as U [headercolor: #3498DB] {
+  id       bigint       [pk, increment]
+  email    varchar(255) [not null, unique]
+  balance  decimal(10,2) [default: 0, check: \`balance >= 0\`]
+  full_name "character varying" [note: 'Display name']
+
+  indexes {
+    (email, full_name) [name: 'users_search_idx']
+  }
 }`}</Code>
-              <Row label="[pk]">Marks column as primary key — shown with a key icon</Row>
+              <Row label="Column settings"><KBD>pk</KBD>, <KBD>not null</KBD>, <KBD>unique</KBD>, <KBD>increment</KBD>, <KBD>default</KBD>, <KBD>check</KBD>, and <KBD>note</KBD></Row>
+              <Row label="Validation">Errors show at their exact Monaco line and the canvas keeps the last valid diagram visible</Row>
               <Row label="Column order">Top-to-bottom matches left-panel definition order</Row>
-              <Row label="Types">Any word is valid — int, varchar, text, uuid, decimal, …</Row>
+              <Row label="Types">All database types are accepted; quote types containing spaces</Row>
             </Section>
 
             <Section id="relationships" color="#3b82f6" title="Relationships & References"
               icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>}>
               <p style={{ marginTop: 0 }}>References define foreign key lines. Use inline syntax on a column, or standalone <KBD>Ref:</KBD> blocks anywhere in the file.</p>
-              <Code>{`// Inline — on the column itself
+              <Code>{`// Inline
 Table orders {
   id      int [pk]
-  user_id int [ref: > users.id]   // many-to-one
-  item_id int [ref: < items.id]   // one-to-many
+  user_id int [ref: >? users.id]
 }
 
-// Standalone — anywhere in the file
-Ref: order_items.order_id   > orders.id
-Ref: order_items.product_id > products.id`}</Code>
-              <Row label={<><KBD>ref: {">"} table.col</KBD></>}>Many-to-one — crow's foot exits this table</Row>
-              <Row label={<><KBD>ref: {"<"} table.col</KBD></>}>One-to-many — crow's foot exits the target</Row>
+// Named, composite, cross-schema relationship
+Ref order_owner {
+  sales.orders.(tenant_id, user_id) > core.users.(tenant_id, id) [delete: cascade, color: #79AD51]
+}`}</Code>
+              <Row label="Cardinalities"><KBD>&lt;</KBD> one-to-many, <KBD>&gt;</KBD> many-to-one, <KBD>-</KBD> one-to-one, <KBD>&lt;&gt;</KBD> many-to-many</Row>
+              <Row label="Optional endpoints">Add <KBD>?</KBD> on either side of an operator, such as <KBD>&gt;?</KBD> or <KBD>?&gt;</KBD></Row>
+              <Row label="Ref settings"><KBD>delete</KBD>, <KBD>update</KBD>, <KBD>color</KBD>, and <KBD>inactive</KBD> are rendered and exposed in line tooltips</Row>
               <Row label="Drag line midpoint">Hover a line to reveal its grip dot, then drag to reroute</Row>
+            </Section>
+
+            <Section id="advanced" color="#14b8a6" title="Advanced DBML"
+              icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>}>
+              <Code>{`TablePartial timestamps {
+  created_at timestamp [default: \`now()\`]
+  updated_at timestamp
+}
+
+Enum core.status {
+  pending
+  active [note: 'Visible to users']
+}
+
+Table core.items {
+  ~timestamps
+  id int [pk]
+  status core.status
+  records (id, status, created_at, updated_at) {
+    1, pending, \`now()\`, null
+  }
+}`}</Code>
+              <Row label="Supported">Project, schemas, aliases, enums, checks, indexes, records, TablePartial, sticky notes, DiagramView, custom metadata, and multiline strings</Row>
+              <Row label="Single document">The editor validates one DBML document; multi-file <KBD>use … from …</KBD> projects require a future file-workspace UI</Row>
             </Section>
 
             <Section id="groups" color="#8b5cf6" title="Table Groups"
               icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="2" y="2" width="9" height="9" rx="1.5"/><rect x="13" y="2" width="9" height="9" rx="1.5"/><rect x="2" y="13" width="9" height="9" rx="1.5"/><rect x="13" y="13" width="9" height="9" rx="1.5"/></svg>}>
               <p style={{ marginTop: 0 }}>Group related tables visually with a <KBD>TableGroup</KBD> block. Each member goes on its own line — just the table name, no punctuation.</p>
-              <Code>{`TableGroup Auth {
-  users
-  roles
+              <Code>{`TableGroup Auth [color: #8b5cf6, note: 'Identity domain'] {
+  core.users
+  core.roles
   sessions
-}
-
-TableGroup Catalog {
-  products
-  categories
-  tags
 }`}</Code>
               <Row label="Enable groups">Toggle the <strong>Table Groups</strong> switch in the bottom bar of the canvas</Row>
-              <Row label="Group colors">Auto-assigned per group (violet → blue → emerald → amber → …)</Row>
+              <Row label="Group colors">Use the DBML <KBD>color</KBD> setting, or let SketchER assign an accent</Row>
               <Row label="Drag a group">Grab the group label strip at the top of its bounding box to move all member tables together</Row>
               <Row label="Membership">Driven purely by DBML — moving a table out of a group box does not change membership</Row>
             </Section>
@@ -1240,7 +1293,7 @@ function MiniMap({ tablePositions, tableData, colors, canvasOffset, zoom, canvas
             x={(pos.x - minX) * scale}
             y={(pos.y - minY) * scale}
             width={(tableWidths[name] || TABLE_WIDTH) * scale}
-            height={(HEADER_HEIGHT + (tableData.find((t) => t.name === name)?.columns.length || 1) * COL_HEIGHT) * scale}
+            height={getTableHeight(tableData.find((t) => t.name === name) || { columns: [{}] }) * scale}
             fill={colors[name] || "#10b981"}
             rx="1"
             opacity="0.65"
@@ -1292,7 +1345,7 @@ function GroupOverlay({ groups, tablePositions, tableWidths, tableData, groupsVi
   return (
     <>
       {groups.map((group, gi) => {
-        const color = GROUP_ACCENT_COLORS[gi % GROUP_ACCENT_COLORS.length];
+        const color = group.color || GROUP_ACCENT_COLORS[gi % GROUP_ACCENT_COLORS.length];
         const members = group.tables.filter((n) => tablePositions[n]);
         if (members.length === 0) return null;
 
@@ -1300,7 +1353,7 @@ function GroupOverlay({ groups, tablePositions, tableWidths, tableData, groupsVi
           x: tablePositions[n].x,
           y: tablePositions[n].y,
           w: tableWidths[n] || TABLE_WIDTH,
-          h: HEADER_HEIGHT + (tableData.find((t) => t.name === n)?.columns.length || 0) * COL_HEIGHT,
+          h: getTableHeight(tableData.find((t) => t.name === n) || { columns: [] }),
         }));
 
         const minX = Math.min(...positions.map((p) => p.x)) - GROUP_PAD;
@@ -1312,6 +1365,7 @@ function GroupOverlay({ groups, tablePositions, tableWidths, tableData, groupsVi
 
         return (
           <g key={group.name}>
+            {group.note && <title>{group.note}</title>}
             {/* D — Background fill */}
             <rect x={minX} y={minY} width={bw} height={bh} rx="12"
               fill={color} opacity="0.06" style={{ pointerEvents: "none" }} />
@@ -1459,8 +1513,16 @@ export default function SketchER() {
   const glowDecorationsRef = useRef([]);
   const monacoEditorRef = useRef(null);
   const monacoRef = useRef(null);
+  const [editorMounted, setEditorMounted] = useState(false);
 
-  const { tables, refs, groups } = useMemo(() => parseDBML(dbml), [dbml]);
+  const deferredDbml = useDeferredValue(dbml);
+  const parseResult = useMemo(() => parseDBMLDocument(deferredDbml), [deferredDbml]);
+  const lastValidModelRef = useRef(parseResult.model || EMPTY_DBML_MODEL);
+  if (parseResult.model) lastValidModelRef.current = parseResult.model;
+  const { tables, refs, groups, enums } = parseResult.model || lastValidModelRef.current;
+  const parseErrors = parseResult.errors;
+  const parseWarnings = parseResult.warnings || [];
+  const relationshipCount = useMemo(() => new Set(refs.map((ref) => ref.id.split(":")[0])).size, [refs]);
 
   // Which columns to highlight per table when a table is hovered
   const activeColumns = useMemo(() => {
@@ -1469,9 +1531,9 @@ export default function SketchER() {
     for (const ref of refs) {
       if (ref.from.table === hoveredTable || ref.to.table === hoveredTable) {
         if (!map[ref.from.table]) map[ref.from.table] = new Set();
-        map[ref.from.table].add(ref.from.column);
+        for (const column of ref.from.columns || [ref.from.column]) map[ref.from.table].add(column);
         if (!map[ref.to.table]) map[ref.to.table] = new Set();
-        map[ref.to.table].add(ref.to.column);
+        for (const column of ref.to.columns || [ref.to.column]) map[ref.to.table].add(column);
       }
     }
     return map;
@@ -1488,12 +1550,15 @@ export default function SketchER() {
     return connected;
   }, [hoveredTable, refs]);
 
-  // Which columns are FK (many) side
+  // Columns participating in a relationship. This includes both ends because
+  // one-to-one and many-to-many DBML relationships do not always have one FK side.
   const fkMap = useMemo(() => {
     const map = {};
     for (const ref of refs) {
       if (!map[ref.from.table]) map[ref.from.table] = new Set();
-      map[ref.from.table].add(ref.from.column);
+      for (const column of ref.from.columns || [ref.from.column]) map[ref.from.table].add(column);
+      if (!map[ref.to.table]) map[ref.to.table] = new Set();
+      for (const column of ref.to.columns || [ref.to.column]) map[ref.to.table].add(column);
     }
     return map;
   }, [refs]);
@@ -1517,7 +1582,9 @@ export default function SketchER() {
         const iconW = col.isPk || isFk ? 17 : 0; // 11px icon + 6px gap
         const nameW = measure(col.name, `${col.isPk ? "600" : "400"} 12.5px 'DM Sans', sans-serif`);
         const typeW = measure(col.type, "400 11px 'JetBrains Mono', monospace");
-        const rowW = PAD + iconW + nameW + 20 + typeW + PAD;
+        const badgeW = (col.isUnique && !col.isPk ? 20 : 0)
+          + (col.increment ? 16 : 0) + (col.notNull && !col.isPk ? 20 : 0);
+        const rowW = PAD + iconW + nameW + 20 + typeW + badgeW + PAD;
         maxW = Math.max(maxW, Math.ceil(rowW));
       }
       widths[table.name] = maxW;
@@ -1597,7 +1664,7 @@ export default function SketchER() {
       const td  = tables.find((t) => t.name === name);
       if (!pos || !td) continue;
       const w = tableWidths[name] || TABLE_WIDTH;
-      const h = HEADER_HEIGHT + td.columns.length * COL_HEIGHT;
+      const h = getTableHeight(td);
       minX = Math.min(minX, pos.x); minY = Math.min(minY, pos.y);
       maxX = Math.max(maxX, pos.x + w); maxY = Math.max(maxY, pos.y + h);
     }
@@ -1674,8 +1741,11 @@ export default function SketchER() {
       const next = { ...prev };
       let needsUpdate = false;
       tables.forEach((t, i) => {
-        if (!next[t.name]) {
-          next[t.name] = TABLE_COLORS[i % TABLE_COLORS.length];
+        if (t.headerColor && next[t.name] !== t.headerColor) {
+          next[t.name] = t.headerColor;
+          needsUpdate = true;
+        } else if (!next[t.name]) {
+          next[t.name] = t.headerColor || TABLE_COLORS[i % TABLE_COLORS.length];
           needsUpdate = true;
         }
       });
@@ -1808,7 +1878,7 @@ export default function SketchER() {
       const td = tables.find((t) => t.name === name);
       if (!pos || !td) continue;
       const w = tableWidths[name] || TABLE_WIDTH;
-      const h = HEADER_HEIGHT + td.columns.length * COL_HEIGHT;
+      const h = getTableHeight(td);
       minX = Math.min(minX, pos.x); minY = Math.min(minY, pos.y);
       maxX = Math.max(maxX, pos.x + w); maxY = Math.max(maxY, pos.y + h);
     }
@@ -1855,10 +1925,14 @@ export default function SketchER() {
       const editor = monacoEditorRef.current;
       const model = editor.getModel();
       if (model) {
+        const tableDefinition = tables.find((table) => table.name === tableName);
         const text = model.getValue();
         const lines = text.split("\n");
-        const tableLineRegex = new RegExp(`^\\s*Table\\s+${tableName}\\s*\\{`, "i");
-        const startLine = lines.findIndex((l) => tableLineRegex.test(l));
+        const escapedName = tableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+        const tableLineRegex = new RegExp(`^\\s*Table\\s+${escapedName}(?:\\s+as\\s+\\S+)?(?:\\s*\\[[^\]]*\])?\\s*\\{`, "i");
+        const startLine = tableDefinition?.sourceStartLine
+          ? tableDefinition.sourceStartLine - 1
+          : lines.findIndex((line) => tableLineRegex.test(line));
         if (startLine !== -1) {
           const monacoLine = startLine + 1; // Monaco is 1-indexed
           // Find closing brace
@@ -1890,7 +1964,7 @@ export default function SketchER() {
         }
       }
     }
-  }, [jumpToTableOnClick]);
+  }, [jumpToTableOnClick, tables]);
 
   const handlePaletteColorClick = useCallback((color) => {
     const names = [...selectedTables];
@@ -1919,53 +1993,32 @@ export default function SketchER() {
     return () => document.removeEventListener("mousedown", handler, true);
   }, [showSettings]);
 
+  // Surface the official parser's precise diagnostics in Monaco. The canvas
+  // intentionally keeps rendering the last valid model while the user types.
+  useEffect(() => {
+    const editor = monacoEditorRef.current;
+    const monaco = monacoRef.current;
+    const model = editor?.getModel();
+    if (!editorMounted || !monaco || !model) return;
+    monaco.editor.setModelMarkers(model, "dbml", [
+      ...parseErrors.map((error) => ({ ...error, severity: monaco.MarkerSeverity.Error, source: "DBML" })),
+      ...parseWarnings.map((warning) => ({ ...warning, severity: monaco.MarkerSeverity.Warning, source: "DBML" })),
+    ]);
+  }, [editorMounted, parseErrors, parseWarnings]);
+
   // Monaco Editor mount handler — register DBML language + themes
   const handleEditorMount = useCallback((editor, monaco) => {
     monacoEditorRef.current = editor;
     monacoRef.current = monaco;
+    setEditorMounted(true);
 
     // Register DBML language if not already registered
     if (!monaco.languages.getLanguages().some((l) => l.id === "dbml")) {
       monaco.languages.register({ id: "dbml" });
-      monaco.languages.setMonarchTokensProvider("dbml", {
-        keywords: ["Table", "TableGroup", "Ref", "Enum", "Note"],
-        typeKeywords: [
-          "int", "integer", "bigint", "smallint", "tinyint", "float", "double",
-          "decimal", "numeric", "real", "varchar", "char", "text", "blob", "clob",
-          "boolean", "bool", "date", "datetime", "timestamp", "time", "json",
-          "jsonb", "uuid", "serial", "bytea", "inet", "money",
-        ],
-        attrs: ["pk", "primary", "key", "unique", "not", "null", "increment", "default", "note", "ref"],
-        tokenizer: {
-          root: [
-            [/--.*$/, "comment"],
-            [/\b(Table|TableGroup|Ref|Enum|Note)\b/, "keyword"],
-            [/[{}]/, "delimiter.bracket"],
-            [/[\[\]]/, "delimiter.square"],
-            [/[<>-]/, "operator"],
-            [/:/, "delimiter"],
-            [/\b(pk|primary key|unique|not null|null|increment|default|note)\b/i, "attribute"],
-            [/\b(ref)\s*:/i, "attribute"],
-            [/\b(int|integer|bigint|smallint|tinyint|float|double|decimal|numeric|real|varchar|char|text|blob|clob|boolean|bool|date|datetime|timestamp|time|json|jsonb|uuid|serial|bytea|inet|money)\b/i, "type"],
-            [/'[^']*'/, "string"],
-            [/"[^"]*"/, "string"],
-            [/\d+/, "number"],
-            [/[a-zA-Z_]\w*/, "identifier"],
-          ],
-        },
-      });
+      monaco.languages.setMonarchTokensProvider("dbml", dbmlMonarchTokensProvider);
 
       // Comment configuration for Ctrl+/
-      monaco.languages.setLanguageConfiguration("dbml", {
-        comments: { lineComment: "--" },
-        brackets: [["{", "}"], ["[", "]"]],
-        autoClosingPairs: [
-          { open: "{", close: "}" },
-          { open: "[", close: "]" },
-          { open: "'", close: "'" },
-          { open: '"', close: '"' },
-        ],
-      });
+      monaco.languages.setLanguageConfiguration("dbml", dbmlLanguageConfig);
     }
 
     // Light theme
@@ -2195,19 +2248,33 @@ export default function SketchER() {
             padding: "8px 18px",
             borderBottom: `1px solid ${theme.border}`,
             display: "flex",
-            gap: "18px",
+            gap: "6px 14px",
+            flexWrap: "wrap",
             fontSize: "11px",
             color: theme.statText,
             fontWeight: 500,
           }}
         >
           <span><span style={{ color: "#10b981", fontWeight: 700 }}>{tables.length}</span> tables</span>
-          <span><span style={{ color: "#8b5cf6", fontWeight: 700 }}>{refs.length}</span> refs</span>
+          <span><span style={{ color: "#8b5cf6", fontWeight: 700 }}>{relationshipCount}</span> refs</span>
+          <span><span style={{ color: "#f59e0b", fontWeight: 700 }}>{enums.length}</span> enums</span>
           <span>
             <span style={{ color: "#3b82f6", fontWeight: 700 }}>
               {tables.reduce((s, t) => s + t.columns.length, 0)}
             </span> cols
           </span>
+          {parseErrors.length > 0 && (
+            <span title={parseErrors.map((error) => error.message).join("\n")}
+              style={{ marginLeft: "auto", color: "#ef4444", fontWeight: 700 }}>
+              {parseErrors.length} {parseErrors.length === 1 ? "error" : "errors"} · showing last valid
+            </span>
+          )}
+          {parseErrors.length === 0 && parseWarnings.length > 0 && (
+            <span title={parseWarnings.map((warning) => warning.message).join("\n")}
+              style={{ marginLeft: "auto", color: "#f59e0b", fontWeight: 700 }}>
+              {parseWarnings.length} {parseWarnings.length === 1 ? "warning" : "warnings"}
+            </span>
+          )}
         </div>
 
         {/* Monaco Editor */}

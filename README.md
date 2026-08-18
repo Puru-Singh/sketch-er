@@ -20,7 +20,9 @@ Open [http://localhost:5173](http://localhost:5173).
 ## Features
 
 ### DBML Editor
-- Live-parsing DBML editor with line numbers and syntax support
+- Official DBML v2 parser with complete single-document syntax support
+- Precise Monaco diagnostics with line/column markers; the last valid diagram stays visible while fixing errors
+- Schemas, aliases, quoted identifiers and types, enums, indexes, checks, defaults, metadata, records, notes, and table partials
 - Displays a stats bar showing table count, relationship count, and total column count
 - Auto-saves all state to `localStorage` every 400 ms — nothing is ever lost on refresh
 - Resizable editor panel — drag the divider between editor and canvas
@@ -36,6 +38,8 @@ Open [http://localhost:5173](http://localhost:5173).
 - Each column row shows the column name and type side by side
 - **Primary key** columns are marked with a key icon and bold name
 - **Foreign key** columns are marked with a link icon and italic name
+- Unique, not-null, and auto-increment columns receive compact badges and metadata tooltips
+- Schema-qualified names prevent collisions between tables with the same name
 - Table width auto-sizes to fit the longest column name or header text — nothing is ever clipped
 - Click the **color wheel** icon in a table header to open the native color picker
 - **Drag** any table to reposition it on the canvas
@@ -46,9 +50,10 @@ Open [http://localhost:5173](http://localhost:5173).
 - Click a selected table again to deselect; click empty canvas to clear selection
 
 ### Relationship Lines
-- Auto-drawn orthogonal (right-angle) lines from `[ref:]` syntax
-- **Crow's foot** notation on the many (FK) end; a circle on the one (PK) end
-- Cardinality labels (`*` and `0..1`) on each end
+- Auto-drawn orthogonal lines from inline, short-form, long-form, named, composite, and cross-schema references
+- Correct endpoint notation for one-to-one, one-to-many, many-to-one, many-to-many, and optional cardinalities
+- Composite references connect each participating column
+- Relationship colors, `inactive` styling, names, and update/delete actions are honored
 - **Drag the vertical corridor** of any line to reroute it — a grip dot appears on hover
 - Lines fan out automatically when multiple connections leave the same table side
 - Multiple connections arriving at the same PK column are spread apart so circles don't overlap
@@ -64,6 +69,7 @@ Open [http://localhost:5173](http://localhost:5173).
 - Rendered as colored dashed rectangles with a label badge behind the tables
 - Toggle visibility with the **Table Groups** switch in the bottom bar
 - **Drag a group's label** to move all member tables together
+- DBML-defined group colors and notes are honored
 
 ### Toolbar (top-right)
 | Button | Action |
@@ -104,46 +110,68 @@ Open [http://localhost:5173](http://localhost:5173).
 
 ## DBML Syntax Reference
 
+SketchER uses the official `@dbml/parse` v2 compiler. The full single-document language is accepted, including Project, schemas, aliases, complex types, column settings, checks, indexes, every relationship form/cardinality, enums, TablePartial injection, records, notes, custom metadata, TableGroup settings, DiagramView, comments, and multiline strings.
+
 ```
-Table users {
-  id         int      [pk]
-  username   varchar
-  email      varchar
-  created_at datetime
-  role_id    int      [ref: > roles.id]
+Project commerce {
+  database_type: 'PostgreSQL'
+  Note: 'Commerce schema'
 }
 
-Table roles {
-  id          int  [pk]
-  name        varchar
-  description text
+TablePartial timestamps {
+  created_at timestamp [not null, default: `now()`]
+  updated_at timestamp
+}
+
+Enum core.role {
+  admin [note: 'Administrator']
+  member
+}
+
+Table core.users as U [headercolor: #3498DB] {
+  ~timestamps
+  id       bigint       [pk, increment]
+  email    varchar(255) [not null, unique]
+  role     core.role    [default: 'member']
+  balance  decimal(10,2) [check: `balance >= 0`]
+
+  indexes {
+    (email, role) [unique, name: 'users_identity_idx']
+  }
 }
 
 Table posts {
-  id          int  [pk]
-  title       varchar
-  author_id   int  [ref: > users.id]
-  category_id int  [ref: > categories.id]
+  id          bigint [pk]
+  author_id   bigint [ref: > core.users.id]
+  reviewer_id bigint
 }
 
--- Standalone reference syntax
-Ref: comments.post_id > posts.id
+Ref reviewer: posts.reviewer_id >? U.id [delete: set null, inactive]
 
--- Table groups
-TableGroup Auth {
-  users
-  roles
+TableGroup Auth [color: #8b5cf6, note: 'Identity domain'] {
+  core.users
+  posts
 }
 ```
 
 | Syntax | Meaning |
 |---|---|
 | `[pk]` | Marks a primary key column |
+| `[not null, unique, increment]` | Common column constraints |
+| `[default: value]` | Literal, boolean, numeric, or backtick-expression default |
+| ``[check: `expression`]`` | Column check constraint |
 | `[ref: > table.col]` | Many-to-one FK relationship |
 | `[ref: < table.col]` | One-to-many FK relationship |
 | `[ref: - table.col]` | One-to-one relationship |
+| `[ref: <> table.col]` | Many-to-many relationship |
+| `>?`, `?>`, etc. | Optional relationship endpoint |
 | `Ref: a.col > b.col` | Standalone reference declaration |
+| `Ref: a.(x,y) > b.(x,y)` | Composite reference |
+| `Enum schema.name { ... }` | Schema-qualified enum |
+| `TablePartial name { ... }` / `~name` | Reusable table definition |
 | `TableGroup Name { ... }` | Groups tables visually on the canvas |
+
+The current editor is intentionally a single DBML document. Multi-file module declarations such as `use * from 'schema'` need a project/file workspace and are not resolved in this release.
 
 ---
 
@@ -167,6 +195,7 @@ TableGroup Auth {
 
 - **React 18** + **Vite**
 - **html2canvas** for PNG export
+- **@dbml/parse v2** for the official DBML grammar, semantic validation, and Monaco tokenization
 - Zero external UI libraries — all components hand-written
 - All state persisted in `localStorage`
 
