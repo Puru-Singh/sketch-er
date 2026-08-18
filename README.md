@@ -28,8 +28,8 @@ Open [http://localhost:5173](http://localhost:5173).
 - Resizable editor panel — drag the divider between editor and canvas
 
 ### Canvas
-- **Pan** — drag any empty area of the canvas
-- **Zoom** — `Ctrl + Scroll` or the `+` / `−` toolbar buttons
+- **Pan** — two-finger swipe on a trackpad, or drag any empty area of the canvas
+- **Zoom** — pinch on a trackpad, `Ctrl / Cmd + Scroll`, or the `+` / `−` toolbar buttons; gesture zoom stays centered under the pointer
 - **Dot grid** background that scales with zoom
 - **Minimap** — live overview in the bottom-right; shows viewport position relative to all tables
 
@@ -182,8 +182,8 @@ The current editor is intentionally a single DBML document. Multi-file module de
 
 | Action | How |
 |---|---|
-| Pan canvas | Drag empty area |
-| Zoom | `Ctrl + Scroll` |
+| Pan canvas | Two-finger swipe or drag empty area |
+| Zoom | Trackpad pinch or `Ctrl / Cmd + Scroll` |
 | Select table | Click table |
 | Multi-select | `Ctrl / Cmd + Click` |
 | Drag table | Click and drag table header |

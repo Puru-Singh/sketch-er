@@ -486,6 +486,8 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
 
   const handleMouseDown = (e) => {
     if (e.target.closest(".color-picker-area") || e.target.closest(".table-collapse-toggle")) return;
+    // Prevent the browser's native text/image drag ghost while moving a table.
+    e.preventDefault();
     e.stopPropagation();
     if (e.ctrlKey || e.metaKey) {
       // Ctrl/Cmd+click: toggle membership in multi-selection, no drag
@@ -499,6 +501,7 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
   return (
     <div
       onMouseDown={handleMouseDown}
+      onDragStart={(e) => e.preventDefault()}
       onMouseEnter={() => onHover(table.name)}
       onMouseLeave={() => onHover(null)}
       title={[table.alias && `Alias: ${table.alias}`, table.note].filter(Boolean).join("\n") || undefined}
@@ -514,6 +517,8 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           : `0 2px 8px rgba(0,0,0,0.09), 0 0 0 1px ${theme.tableBorder}`,
         cursor: "grab",
         userSelect: "none",
+        WebkitUserSelect: "none",
+        WebkitUserDrag: "none",
         opacity: isDimmed ? 0.35 : 1,
         transition: "box-shadow 0.15s ease, opacity 0.2s ease",
         background: theme.tableBg,
@@ -1254,7 +1259,8 @@ Table core.items {
 
             <Section id="canvas" color="#f59e0b" title="Canvas Controls"
               icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg>}>
-              <Row label={<><KBD>Ctrl</KBD> + scroll</>}>Zoom in / out</Row>
+              <Row label="Trackpad pinch">Zoom around the pointer (Ctrl/Cmd + scroll also works)</Row>
+              <Row label="Two-finger swipe">Pan horizontally and vertically across the canvas</Row>
               <Row label="Click zoom %">Opens a slider + typeable zoom control</Row>
               <Row label="Drag canvas">Pan the diagram (click and drag any empty area)</Row>
               <Row label="Drag table">Reposition any individual table</Row>
@@ -1544,6 +1550,8 @@ export default function SketchER() {
   const [isPanning, setIsPanning] = useState(false);
   const [panStart, setPanStart] = useState(null);
   const [zoom, setZoom] = useState(1);
+  const zoomRef = useRef(zoom);
+  const canvasOffsetRef = useRef(canvasOffset);
   const [editorWidth, setEditorWidth] = useState(370);
   const [isResizing, setIsResizing] = useState(false);
   const canvasRef = useRef(null);
@@ -1558,6 +1566,9 @@ export default function SketchER() {
   const monacoEditorRef = useRef(null);
   const monacoRef = useRef(null);
   const [editorMounted, setEditorMounted] = useState(false);
+
+  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
+  useEffect(() => { canvasOffsetRef.current = canvasOffset; }, [canvasOffset]);
 
   const deferredDbml = useDeferredValue(dbml);
   const parseResult = useMemo(() => parseDBMLDocument(deferredDbml), [deferredDbml]);
@@ -1926,13 +1937,68 @@ export default function SketchER() {
     };
   }, [handleMouseMove, handleMouseUp]);
 
-  const handleWheel = (e) => {
+  // Disable selection globally while an interaction crosses table/canvas bounds.
+  useEffect(() => {
+    if (!dragging && !draggingGroup && !draggingLine && !isPanning && !isResizing) return;
+    const previousUserSelect = document.body.style.userSelect;
+    const previousWebkitUserSelect = document.body.style.webkitUserSelect;
+    document.body.style.userSelect = "none";
+    document.body.style.webkitUserSelect = "none";
+    return () => {
+      document.body.style.userSelect = previousUserSelect;
+      document.body.style.webkitUserSelect = previousWebkitUserSelect;
+    };
+  }, [dragging, draggingGroup, draggingLine, isPanning, isResizing]);
+
+  const handleWheel = useCallback((e) => {
+    e.preventDefault();
+    const modeScale = e.deltaMode === 1
+      ? 16
+      : e.deltaMode === 2
+      ? Math.max(canvasSize.h, 1)
+      : 1;
+    const deltaX = e.deltaX * modeScale;
+    const deltaY = e.deltaY * modeScale;
+
     if (e.ctrlKey || e.metaKey) {
-      e.preventDefault();
-      const delta = e.deltaY > 0 ? -0.1 : 0.1;
-      setZoom((z) => Math.max(0.25, Math.min(2, z + delta)));
+      // Trackpad pinch gestures arrive as Ctrl/Cmd-modified wheel events.
+      // Preserve the world point under the pointer for natural zooming.
+      const rect = canvasRef.current?.getBoundingClientRect();
+      const pointerX = rect ? e.clientX - rect.left : canvasSize.w / 2;
+      const pointerY = rect ? e.clientY - rect.top : canvasSize.h / 2;
+      const currentZoom = zoomRef.current;
+      const currentOffset = canvasOffsetRef.current;
+      const nextZoom = Math.max(0.25, Math.min(2, currentZoom * Math.exp(-deltaY * 0.0025)));
+      if (nextZoom === currentZoom) return;
+      const scale = nextZoom / currentZoom;
+      const nextOffset = {
+        x: pointerX - (pointerX - currentOffset.x) * scale,
+        y: pointerY - (pointerY - currentOffset.y) * scale,
+      };
+      zoomRef.current = nextZoom;
+      canvasOffsetRef.current = nextOffset;
+      setZoom(nextZoom);
+      setCanvasOffset(nextOffset);
+    } else {
+      // Two-finger trackpad scrolling pans in both axes. Shift+wheel is a
+      // horizontal fallback for conventional mice.
+      const panX = e.shiftKey && deltaX === 0 ? deltaY : deltaX;
+      const panY = e.shiftKey && deltaX === 0 ? 0 : deltaY;
+      const currentOffset = canvasOffsetRef.current;
+      const nextOffset = { x: currentOffset.x - panX, y: currentOffset.y - panY };
+      canvasOffsetRef.current = nextOffset;
+      setCanvasOffset(nextOffset);
     }
-  };
+  }, [canvasSize.h, canvasSize.w]);
+
+  // A non-passive native listener is required so trackpad gestures stay in
+  // the canvas instead of scrolling or zooming the browser page.
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return undefined;
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+    return () => canvas.removeEventListener("wheel", handleWheel);
+  }, [handleWheel]);
 
   const autoLayout = () => {
     const cols = Math.ceil(Math.sqrt(tables.length));
@@ -2412,7 +2478,7 @@ export default function SketchER() {
           <strong style={{ color: theme.textSecondary }}>Syntax:</strong>{" "}
           Table name {"{ "}col type [pk] [ref: {">"} table.col]{" }"}
           <br />
-          Ctrl+Scroll to zoom · Drag canvas to pan · Hover table to highlight
+          Pinch to zoom · Two-finger swipe or drag canvas to pan · Hover table to highlight
           <div style={{ marginTop: "8px", borderTop: `1px solid ${theme.border}`, paddingTop: "8px", display: "flex", alignItems: "center", gap: "5px" }}>
             <span>Made by</span>
             <a
@@ -2449,11 +2515,12 @@ export default function SketchER() {
       <div
         ref={canvasRef}
         onMouseDown={handleCanvasMouseDown}
-        onWheel={handleWheel}
         style={{
           flex: 1,
           position: "relative",
           overflow: "hidden",
+          touchAction: "none",
+          overscrollBehavior: "none",
           cursor: isPanning ? "move" : "default",
           background: theme.canvasBg,
         }}
