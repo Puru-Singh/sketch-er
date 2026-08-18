@@ -42,6 +42,7 @@ Open [http://localhost:5173](http://localhost:5173).
 - Schema-qualified names prevent collisions between tables with the same name
 - Table width auto-sizes to fit the longest column name or header text — nothing is ever clipped
 - Click the **color wheel** icon in a table header to open the native color picker
+- Click a table's **arrow** to collapse it to primary and relationship key columns, or expand it again
 - **Drag** any table to reposition it on the canvas
 
 ### Selection & Colors
@@ -81,6 +82,7 @@ Open [http://localhost:5173](http://localhost:5173).
 | ↺ | Reset view to 100% at origin |
 | Fit | Fit all tables into the viewport |
 | Layout | Auto-arrange tables in a grid |
+| Collapse All / Expand All | Collapse every table to keys or restore every column |
 | Save | Download diagram as a `.sker` file |
 | Open | Load a previously saved `.sker` file |
 | Export | Export the full diagram as a 2× resolution PNG |
@@ -90,6 +92,7 @@ Open [http://localhost:5173](http://localhost:5173).
 - **Filename** is displayed in the top-left of the canvas; click it to rename inline
 - The filename is used when saving (`.sker`) and exporting (`.png`)
 - Filename persists across refreshes via `localStorage`
+- Individual table collapse state persists in local storage, share links, and `.sker` files
 - `.sker` files are plain JSON — safe to version in git or share with teammates
 
 ### PNG Export

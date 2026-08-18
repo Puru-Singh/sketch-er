@@ -479,13 +479,13 @@ function ColorWheelIcon({ lit }) {
   );
 }
 
-function TableNode({ table, position, color, onDragStart, onColorChange, isSelected, onSelect, theme, fkColumns, activeColumns, onHover, width, isDimmed }) {
+function TableNode({ table, position, color, onDragStart, onColorChange, isSelected, onSelect, theme, fkColumns, activeColumns, onHover, width, isDimmed, isCollapsed, onToggleCollapse }) {
   const [pickerHovered, setPickerHovered] = useState(false);
   const [pickerFocused, setPickerFocused] = useState(false);
   const pickerLit = pickerHovered || pickerFocused;
 
   const handleMouseDown = (e) => {
-    if (e.target.closest(".color-picker-area")) return;
+    if (e.target.closest(".color-picker-area") || e.target.closest(".table-collapse-toggle")) return;
     e.stopPropagation();
     if (e.ctrlKey || e.metaKey) {
       // Ctrl/Cmd+click: toggle membership in multi-selection, no drag
@@ -542,6 +542,34 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           fontWeight: 700,
           whiteSpace: "nowrap",
         }}>{table.name}</span>
+        <button
+          className="table-collapse-toggle"
+          type="button"
+          title={isCollapsed ? `Expand ${table.name}` : `Collapse ${table.name} to keys`}
+          aria-label={isCollapsed ? `Expand ${table.name}` : `Collapse ${table.name} to keys`}
+          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
+          onClick={(e) => { e.stopPropagation(); onToggleCollapse(table.name); }}
+          style={{
+            position: "absolute",
+            right: 40,
+            width: 20,
+            height: 20,
+            padding: 0,
+            border: "none",
+            borderRadius: "5px",
+            background: "rgba(0,0,0,0.16)",
+            color: "#fff",
+            cursor: "pointer",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+          }}
+        >
+          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
+            style={{ transform: `rotate(${isCollapsed ? 0 : 90}deg)`, transition: "transform 0.15s ease" }}>
+            <polyline points="4,2 8,6 4,10" />
+          </svg>
+        </button>
         {/* Color wheel: always 12px from right edge */}
         <div
           className="color-picker-area"
@@ -857,7 +885,7 @@ function ZoomControl({ zoom, onZoomSet, theme }) {
   );
 }
 
-function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp, onShare, shareCopied }) {
+function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp, onShare, shareCopied, allTablesCollapsed, onToggleAllTables }) {
   return (
     <div data-export-hide="1" onMouseDown={(e) => e.stopPropagation()} style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
       <TBtn onClick={onToggleTheme} tip={isDark ? "Switch to light mode" : "Switch to dark mode"} theme={theme}>
@@ -896,6 +924,17 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetVi
           <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
         </svg>
         Layout
+      </TBtn>
+      <TBtn onClick={onToggleAllTables}
+        tip={allTablesCollapsed ? "Expand every table" : "Collapse every table to keys"}
+        theme={theme}>
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+          <rect x="4" y="4" width="16" height="16" rx="2" />
+          {allTablesCollapsed
+            ? <><path d="M8 10l4-4 4 4"/><path d="M8 14l4 4 4-4"/></>
+            : <><path d="M8 7l4 4 4-4"/><path d="M8 17l4-4 4 4"/></>}
+        </svg>
+        {allTablesCollapsed ? "Expand All" : "Collapse All"}
       </TBtn>
       <TBtn onClick={onSave} tip="Save diagram to .sker file" theme={theme}>
         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1219,6 +1258,8 @@ Table core.items {
               <Row label="Click zoom %">Opens a slider + typeable zoom control</Row>
               <Row label="Drag canvas">Pan the diagram (click and drag any empty area)</Row>
               <Row label="Drag table">Reposition any individual table</Row>
+              <Row label="Table arrow">Collapse one table to primary/relationship keys, or expand it again</Row>
+              <Row label="Collapse All">Use the toolbar button to collapse every table to keys; it changes to <strong>Expand All</strong></Row>
               <Row label="Drag line grip">Reroute a relationship line's vertical corridor</Row>
               <Row label="Drag group label">Move all tables in a group at once</Row>
               <Row label="Layout button">Auto-arrange all tables in a grid</Row>
@@ -1488,6 +1529,9 @@ export default function SketchER() {
   const [dbml, setDbml] = useState(saved?.dbml ?? DEFAULT_DBML);
   const [tablePositions, setTablePositions] = useState(saved?.tablePositions ?? {});
   const [tableColors, setTableColors] = useState(saved?.tableColors ?? {});
+  const [collapsedTables, setCollapsedTables] = useState(
+    () => new Set(Array.isArray(saved?.collapsedTables) ? saved.collapsedTables : [])
+  );
   const [selectedTables, setSelectedTables] = useState(new Set());
   const [hoveredTable, setHoveredTable] = useState(null);
   const [dragging, setDragging] = useState(null);
@@ -1563,6 +1607,38 @@ export default function SketchER() {
     return map;
   }, [refs]);
 
+  // Collapsed tables keep primary keys and every relationship endpoint visible.
+  // Geometry consumers use this derived model so lines remain attached to rows.
+  const diagramTables = useMemo(() => tables.map((table) => {
+    if (!collapsedTables.has(table.name)) return { ...table, isCollapsed: false, hiddenColumnCount: 0 };
+    const visibleColumns = table.columns.filter((column) =>
+      column.isPk || fkMap[table.name]?.has(column.name));
+    return {
+      ...table,
+      columns: visibleColumns,
+      isCollapsed: true,
+      hiddenColumnCount: table.columns.length - visibleColumns.length,
+    };
+  }), [tables, fkMap, collapsedTables]);
+
+  const allTablesCollapsed = tables.length > 0
+    && tables.every((table) => collapsedTables.has(table.name));
+
+  const toggleTableCollapsed = useCallback((tableName) => {
+    setCollapsedTables((previous) => {
+      const next = new Set(previous);
+      if (next.has(tableName)) next.delete(tableName);
+      else next.add(tableName);
+      return next;
+    });
+  }, []);
+
+  const toggleAllTablesCollapsed = useCallback(() => {
+    setCollapsedTables(allTablesCollapsed
+      ? new Set()
+      : new Set(tables.map((table) => table.name)));
+  }, [allTablesCollapsed, tables]);
+
   // Compute per-table widths based on actual text content
   const tableWidths = useMemo(() => {
     const cvs = document.createElement("canvas");
@@ -1572,9 +1648,9 @@ export default function SketchER() {
     const PAD = 12; // horizontal padding on each side
 
     const widths = {};
-    for (const table of tables) {
+    for (const table of diagramTables) {
       // Header: pill left pad + name + pill right pad + gap + wheel + right edge
-      const headerW = PAD + measure(table.name, "700 12px 'DM Sans', sans-serif") + PAD + PAD + 18 + PAD;
+      const headerW = PAD + measure(table.name, "700 12px 'DM Sans', sans-serif") + PAD + PAD + 18 + 28 + PAD;
 
       let maxW = Math.max(MIN_W, Math.ceil(headerW));
       for (const col of table.columns) {
@@ -1590,32 +1666,32 @@ export default function SketchER() {
       widths[table.name] = maxW;
     }
     return widths;
-  }, [tables, fkMap]);
+  }, [diagramTables, fkMap]);
 
   // Auto-save to localStorage on every meaningful change
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick }));
       } catch {}
     }, 400);
     return () => clearTimeout(timer);
-  }, [dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick]);
+  }, [dbml, tablePositions, tableColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick]);
 
   const [shareCopied, setShareCopied] = useState(false);
   const copyShareLink = useCallback(() => {
-    const encoded = encodeShareState({ dbml, tablePositions, tableColors, lineMidXOverrides, groupsVisible, fileName });
+    const encoded = encodeShareState({ dbml, tablePositions, tableColors, collapsedTables: [...collapsedTables], lineMidXOverrides, groupsVisible, fileName });
     const url = `${window.location.origin}${window.location.pathname}#share=${encoded}`;
     navigator.clipboard.writeText(url).then(() => {
       setShareCopied(true);
       setTimeout(() => setShareCopied(false), 2000);
     });
-  }, [dbml, tablePositions, tableColors, lineMidXOverrides, groupsVisible, fileName]);
+  }, [dbml, tablePositions, tableColors, collapsedTables, lineMidXOverrides, groupsVisible, fileName]);
 
   // Save diagram to a .sker file
   const saveToFile = useCallback(() => {
     const blob = new Blob(
-      [JSON.stringify({ dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible }, null, 2)],
+      [JSON.stringify({ dbml, tablePositions, tableColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible }, null, 2)],
       { type: "application/json" }
     );
     const url = URL.createObjectURL(blob);
@@ -1626,7 +1702,7 @@ export default function SketchER() {
     link.click();
     URL.revokeObjectURL(url);
     if (fileName === "Untitled") setFileName("diagram");
-  }, [dbml, tablePositions, tableColors, isDark, lineMidXOverrides, groupsVisible, fileName]);
+  }, [dbml, tablePositions, tableColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName]);
 
   // Load diagram from a .sker / .json file
   const loadInputRef = useRef(null);
@@ -1640,6 +1716,7 @@ export default function SketchER() {
         if (state.dbml !== undefined)              setDbml(state.dbml);
         if (state.tablePositions !== undefined)    setTablePositions(state.tablePositions);
         if (state.tableColors !== undefined)       setTableColors(state.tableColors);
+        setCollapsedTables(new Set(Array.isArray(state.collapsedTables) ? state.collapsedTables : []));
         if (state.isDark !== undefined)            setIsDark(state.isDark);
         if (state.lineMidXOverrides !== undefined) setLineMidXOverrides(state.lineMidXOverrides);
         if (state.groupsVisible !== undefined)     setGroupsVisible(state.groupsVisible);
@@ -1661,7 +1738,7 @@ export default function SketchER() {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const name of Object.keys(tablePositions)) {
       const pos = tablePositions[name];
-      const td  = tables.find((t) => t.name === name);
+      const td  = diagramTables.find((t) => t.name === name);
       if (!pos || !td) continue;
       const w = tableWidths[name] || TABLE_WIDTH;
       const h = getTableHeight(td);
@@ -1714,7 +1791,7 @@ export default function SketchER() {
     link.download = `${fileName || "diagram"}.png`;
     link.href = canvas.toDataURL("image/png");
     link.click();
-  }, [tablePositions, tables, tableWidths, isDark, fileName]);
+  }, [tablePositions, diagramTables, tableWidths, isDark, fileName]);
 
   useEffect(() => {
     setTablePositions((prev) => {
@@ -1750,6 +1827,11 @@ export default function SketchER() {
         }
       });
       return needsUpdate ? next : prev;
+    });
+    setCollapsedTables((previous) => {
+      const validNames = new Set(tables.map((table) => table.name));
+      const next = new Set([...previous].filter((name) => validNames.has(name)));
+      return next.size === previous.size ? previous : next;
     });
   }, [tables]);
 
@@ -1875,7 +1957,7 @@ export default function SketchER() {
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const name of tableNames) {
       const pos = tablePositions[name];
-      const td = tables.find((t) => t.name === name);
+      const td = diagramTables.find((t) => t.name === name);
       if (!pos || !td) continue;
       const w = tableWidths[name] || TABLE_WIDTH;
       const h = getTableHeight(td);
@@ -1892,7 +1974,7 @@ export default function SketchER() {
       x: (canvasSize.w - contentW * newZoom) / 2 - (minX - PAD) * newZoom,
       y: (canvasSize.h - contentH * newZoom) / 2 - (minY - PAD) * newZoom,
     });
-  }, [tablePositions, tables, tableWidths, canvasSize]);
+  }, [tablePositions, diagramTables, tableWidths, canvasSize]);
 
   // Auto-fit on initial load and after file load
   useEffect(() => {
@@ -2479,6 +2561,8 @@ export default function SketchER() {
           onShare={copyShareLink}
           shareCopied={shareCopied}
           onShowHelp={() => setShowHelp(true)}
+          allTablesCollapsed={allTablesCollapsed}
+          onToggleAllTables={toggleAllTablesCollapsed}
         />
 
         {/* Transform container */}
@@ -2505,14 +2589,14 @@ export default function SketchER() {
               groups={groups}
               tablePositions={tablePositions}
               tableWidths={tableWidths}
-              tableData={tables}
+              tableData={diagramTables}
               groupsVisible={groupsVisible}
               onGroupDragStart={handleGroupDragStart}
             />
             <RelationshipLines
               refs={refs}
               tablePositions={tablePositions}
-              tableData={tables}
+              tableData={diagramTables}
               theme={theme}
               hoveredTable={hoveredTable}
               selectedTables={selectedTables}
@@ -2524,7 +2608,7 @@ export default function SketchER() {
             />
           </svg>
 
-          {tables.map((table) =>
+          {diagramTables.map((table) =>
             tablePositions[table.name] ? (
               <TableNode
                 key={table.name}
@@ -2541,6 +2625,8 @@ export default function SketchER() {
                 onHover={setHoveredTable}
                 width={tableWidths[table.name]}
                 isDimmed={!showAllConnections && connectedToHovered !== null && !connectedToHovered.has(table.name)}
+                isCollapsed={table.isCollapsed}
+                onToggleCollapse={toggleTableCollapsed}
               />
             ) : null
           )}
@@ -2548,7 +2634,7 @@ export default function SketchER() {
 
         <MiniMap
           tablePositions={tablePositions}
-          tableData={tables}
+          tableData={diagramTables}
           colors={tableColors}
           canvasOffset={canvasOffset}
           zoom={zoom}
