@@ -2365,6 +2365,7 @@ export default function SketchER() {
           transition: background 0.5s ease-out;
         }
         .monaco-editor .find-widget {
+          top: 12px !important;
           isolation: isolate;
           pointer-events: auto !important;
         }
@@ -2586,6 +2587,7 @@ export default function SketchER() {
               tabSize: 2,
               insertSpaces: true,
               wordWrap: "on",
+              find: { addExtraSpaceOnTop: true },
               padding: { top: 10 },
               overviewRulerLanes: 0,
               hideCursorInOverviewRuler: true,
