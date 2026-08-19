@@ -2334,6 +2334,23 @@ export default function SketchER() {
           background: rgba(16,185,129,0.15) !important;
           transition: background 0.5s ease-out;
         }
+        .monaco-editor .find-widget {
+          isolation: isolate;
+          pointer-events: auto !important;
+        }
+        .monaco-editor .find-widget .button {
+          position: relative;
+          z-index: 5;
+          pointer-events: auto !important;
+        }
+        .monaco-editor .find-widget .monaco-findInput > .controls {
+          z-index: 5;
+          pointer-events: auto !important;
+        }
+        .monaco-editor .find-widget > .button.codicon-widget-close {
+          position: absolute;
+          z-index: 6;
+        }
       `}</style>
       {/* ===== Editor Panel ===== */}
       <div
@@ -2869,6 +2886,7 @@ export default function SketchER() {
               style={{
                 width: "100%",
                 height: 32,
+                boxSizing: "border-box",
                 padding: "0 9px",
                 borderRadius: "6px",
                 border: `1px solid ${tableGroupNameExists ? "#ef4444" : theme.toolbarBorder}`,
@@ -2888,6 +2906,7 @@ export default function SketchER() {
               style={{
                 width: "100%",
                 height: 32,
+                boxSizing: "border-box",
                 border: "none",
                 borderRadius: "6px",
                 background: "#10b981",
