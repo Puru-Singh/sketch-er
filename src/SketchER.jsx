@@ -206,6 +206,9 @@ const HEADER_HEIGHT = 42;
 const TABLE_WIDTH = 230;
 const TABLE_CORNER_RADIUS = 6;
 const TABLE_META_HEIGHT = 24;
+const TABLE_HEADER_GAP = 12;
+const TABLE_COLLAPSE_SIZE = 20;
+const TABLE_COLOR_SIZE = 18;
 
 // 0 = fully transparent, 1 = fully black. Tweak to taste.
 const TABLE_NAME_DARKNESS = 0.5;
@@ -564,6 +567,9 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           background: color,
           display: "flex",
           alignItems: "center",
+          gap: TABLE_HEADER_GAP,
+          paddingRight: TABLE_HEADER_GAP,
+          boxSizing: "border-box",
           position: "relative",
           fontFamily: "'DM Sans', sans-serif",
         }}
@@ -578,6 +584,8 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           fontSize: "12px",
           fontWeight: 700,
           whiteSpace: "nowrap",
+          flex: "1 0 auto",
+          minWidth: 0,
         }}>{table.name}</span>
         <button
           className="table-collapse-toggle"
@@ -587,10 +595,9 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
           onClick={(e) => { e.stopPropagation(); onToggleCollapse(table.name); }}
           style={{
-            position: "absolute",
-            right: 40,
-            width: 20,
-            height: 20,
+            width: TABLE_COLLAPSE_SIZE,
+            height: TABLE_COLLAPSE_SIZE,
+            flexShrink: 0,
             padding: 0,
             border: "none",
             borderRadius: "5px",
@@ -607,10 +614,10 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
             <polyline points="4,2 8,6 4,10" />
           </svg>
         </button>
-        {/* Color wheel: always 12px from right edge */}
+        {/* Header gaps are equal: title → collapse → color → right edge. */}
         <div
           className="color-picker-area"
-          style={{ position: "absolute", right: 12, width: 18, height: 18 }}
+          style={{ position: "relative", width: TABLE_COLOR_SIZE, height: TABLE_COLOR_SIZE, flexShrink: 0 }}
           onMouseEnter={() => setPickerHovered(true)}
           onMouseLeave={() => setPickerHovered(false)}
         >
@@ -1696,8 +1703,12 @@ export default function SketchER() {
 
     const widths = {};
     for (const table of diagramTables) {
-      // Header: pill left pad + name + pill right pad + gap + wheel + right edge
-      const headerW = PAD + measure(table.name, "700 12px 'DM Sans', sans-serif") + PAD + PAD + 18 + 28 + PAD;
+      // Header: title padding + three equal gaps around the two controls.
+      const headerW = measure(table.name, "700 12px 'DM Sans', sans-serif")
+        + PAD * 2
+        + TABLE_HEADER_GAP * 3
+        + TABLE_COLLAPSE_SIZE
+        + TABLE_COLOR_SIZE;
 
       let maxW = Math.max(MIN_W, Math.ceil(headerW));
       for (const col of table.columns) {
