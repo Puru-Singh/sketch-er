@@ -16,7 +16,7 @@ const DEFAULT_DBML = `Table users {
 
 Table roles {
   id int [pk]
-  name varchar
+  name varcharff
   description text
 }
 
@@ -2365,7 +2365,7 @@ export default function SketchER() {
           transition: background 0.5s ease-out;
         }
         .monaco-editor .find-widget {
-          top: 12px !important;
+          top: 30px !important;
           isolation: isolate;
           pointer-events: auto !important;
         }
