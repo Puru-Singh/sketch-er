@@ -1479,7 +1479,7 @@ Table core.items {
 }`}</Code>
               <Row label="Enable groups">Toggle the <strong>Table Groups</strong> switch in the bottom bar of the canvas</Row>
               <Row label="Create from selection">Select tables with <KBD>Ctrl/Cmd</KBD> + click, then right-click a selected table and name the new group</Row>
-              <Row label="Group colors">Use the DBML <KBD>color</KBD> setting, or let SketchER assign an accent</Row>
+              <Row label="Group colors">Click a group label or outline, then choose a common, recent, or custom color from the left palette</Row>
               <Row label="Drag a group">Grab the group label strip at the top of its bounding box to move all member tables together</Row>
               <Row label="Membership">Driven purely by DBML — moving a table out of a group box does not change membership</Row>
             </Section>
@@ -1502,9 +1502,10 @@ Table core.items {
             <Section id="colors" color="#ec4899" title="Colors & Theming"
               icon={<svg width="13" height="13" viewBox="0 0 20 20"><path d="M10 1.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17z" fill="none" stroke="currentColor" strokeWidth="1.8"/></svg>}>
               <Row label="Table header color">Click the color wheel icon in a table's header to open the native color picker</Row>
-              <Row label="Quick palette">Click any table to reveal a color swatch row in the left panel</Row>
+              <Row label="Quick palette">Select a table or group to reveal common colors and a custom color wheel in the left panel</Row>
+              <Row label="Recent colors">The last 12 colors you apply are kept in a reusable history row</Row>
               <Row label="Dark / light mode">Use the sun / moon icon in the toolbar to toggle themes</Row>
-              <Row label="Group accent colors">Auto-assigned from a fixed palette based on group order</Row>
+              <Row label="Group accent colors">Auto-assigned initially, then independently overridable from the quick palette</Row>
             </Section>
 
             <Section id="saving" color="#06b6d4" title="Saving & Export"
@@ -1613,13 +1614,14 @@ function ToggleSwitch({ checked, onChange, theme }) {
 const GROUP_PAD = 22;
 const GROUP_LABEL_H = 26;
 
-function GroupOverlay({ groups, tablePositions, tableWidths, tableData, groupsVisible, onGroupDragStart }) {
+function GroupOverlay({ groups, groupColors, selectedGroupName, tablePositions, tableWidths, tableData, groupsVisible, onGroupDragStart, onGroupSelect }) {
   if (!groupsVisible || groups.length === 0) return null;
 
   return (
     <>
       {groups.map((group, gi) => {
-        const color = group.color || GROUP_ACCENT_COLORS[gi % GROUP_ACCENT_COLORS.length];
+        const color = groupColors[group.name] || group.color || GROUP_ACCENT_COLORS[gi % GROUP_ACCENT_COLORS.length];
+        const isSelected = selectedGroupName === group.name;
         const members = group.tables.filter((n) => tablePositions[n]);
         if (members.length === 0) return null;
 
@@ -1646,8 +1648,16 @@ function GroupOverlay({ groups, tablePositions, tableWidths, tableData, groupsVi
 
             {/* A — Dashed border box */}
             <rect x={minX} y={minY} width={bw} height={bh} rx="12"
-              fill="none" stroke={color} strokeWidth="1.5" strokeDasharray="7 4"
-              opacity="0.35" style={{ pointerEvents: "none" }} />
+              fill="none" stroke={color} strokeWidth={isSelected ? "2.5" : "1.5"} strokeDasharray="7 4"
+              opacity={isSelected ? 0.9 : 0.35}
+              style={{ pointerEvents: "stroke", cursor: "pointer" }}
+              onMouseDown={(e) => {
+                e.stopPropagation();
+                onGroupSelect(group.name);
+              }} />
+
+            {isSelected && <rect x={minX - 4} y={minY - 4} width={bw + 8} height={bh + 8} rx="15"
+              fill="none" stroke={color} strokeWidth="1" opacity="0.28" style={{ pointerEvents: "none" }} />}
 
             {/* B — Label background pill */}
             <rect x={minX + 12} y={minY + 6} width={group.name.length * 7 + 18} height={20}
@@ -1666,7 +1676,9 @@ function GroupOverlay({ groups, tablePositions, tableWidths, tableData, groupsVi
               fill="transparent" rx="12"
               style={{ cursor: "move", pointerEvents: "all" }}
               onMouseDown={(e) => {
+                e.preventDefault();
                 e.stopPropagation();
+                onGroupSelect(group.name);
                 onGroupDragStart(group.name, members, e.clientX, e.clientY);
               }}
             />
@@ -1762,11 +1774,16 @@ export default function SketchER() {
   const [dbml, setDbml] = useState(saved?.dbml ?? DEFAULT_DBML);
   const [tablePositions, setTablePositions] = useState(saved?.tablePositions ?? {});
   const [tableColors, setTableColors] = useState(saved?.tableColors ?? {});
+  const [groupColors, setGroupColors] = useState(saved?.groupColors ?? {});
+  const [recentColors, setRecentColors] = useState(
+    () => Array.isArray(saved?.recentColors) ? saved.recentColors.slice(0, 12) : []
+  );
   const [collapsedTables, setCollapsedTables] = useState(
     () => new Set(Array.isArray(saved?.collapsedTables) ? saved.collapsedTables : [])
   );
   const [selectedTables, setSelectedTables] = useState(new Set());
   const selectedTablesRef = useRef(selectedTables);
+  const [selectedGroupName, setSelectedGroupName] = useState(null);
   const [tableGroupMenu, setTableGroupMenu] = useState(null);
   const [newTableGroupName, setNewTableGroupName] = useState("");
   const [hoveredTable, setHoveredTable] = useState(null);
@@ -1919,26 +1936,26 @@ export default function SketchER() {
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick }));
       } catch {}
     }, 400);
     return () => clearTimeout(timer);
-  }, [dbml, tablePositions, tableColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick]);
+  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick]);
 
   const [shareCopied, setShareCopied] = useState(false);
   const copyShareLink = useCallback(() => {
-    const encoded = encodeShareState({ dbml, tablePositions, tableColors, collapsedTables: [...collapsedTables], lineMidXOverrides, groupsVisible, fileName });
+    const encoded = encodeShareState({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], lineMidXOverrides, groupsVisible, fileName });
     const url = `${window.location.origin}${window.location.pathname}#share=${encoded}`;
     navigator.clipboard.writeText(url).then(() => {
       setShareCopied(true);
       setTimeout(() => setShareCopied(false), 2000);
     });
-  }, [dbml, tablePositions, tableColors, collapsedTables, lineMidXOverrides, groupsVisible, fileName]);
+  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, lineMidXOverrides, groupsVisible, fileName]);
 
   // Save diagram to a .sker file
   const saveToFile = useCallback(() => {
     const blob = new Blob(
-      [JSON.stringify({ dbml, tablePositions, tableColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible }, null, 2)],
+      [JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible }, null, 2)],
       { type: "application/json" }
     );
     const url = URL.createObjectURL(blob);
@@ -1949,7 +1966,7 @@ export default function SketchER() {
     link.click();
     URL.revokeObjectURL(url);
     if (fileName === "Untitled") setFileName("diagram");
-  }, [dbml, tablePositions, tableColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName]);
+  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName]);
 
   // Load diagram from a .sker / .json file
   const loadInputRef = useRef(null);
@@ -1963,6 +1980,8 @@ export default function SketchER() {
         if (state.dbml !== undefined)              setDbml(state.dbml);
         if (state.tablePositions !== undefined)    setTablePositions(state.tablePositions);
         if (state.tableColors !== undefined)       setTableColors(state.tableColors);
+        if (state.groupColors !== undefined)       setGroupColors(state.groupColors);
+        if (Array.isArray(state.recentColors))      setRecentColors(state.recentColors.slice(0, 12));
         setCollapsedTables(new Set(Array.isArray(state.collapsedTables) ? state.collapsedTables : []));
         if (state.isDark !== undefined)            setIsDark(state.isDark);
         if (state.lineMidXOverrides !== undefined) setLineMidXOverrides(state.lineMidXOverrides);
@@ -2146,6 +2165,7 @@ export default function SketchER() {
     const emptySelection = new Set();
     selectedTablesRef.current = emptySelection;
     setSelectedTables(emptySelection);
+    setSelectedGroupName(null);
   };
 
   const handleLineDragStart = useCallback((pathKey, clientX, currentMidX) => {
@@ -2371,11 +2391,20 @@ export default function SketchER() {
     }
   }, [tablePositions, canvasSize, fitToCanvas]);
 
-  const handleColorChange = (tableName, color) => {
+  const addRecentColors = useCallback((colors) => {
+    setRecentColors((previous) => {
+      const next = [...colors, ...previous.filter((color) => !colors.includes(color))];
+      return next.slice(0, 12);
+    });
+  }, []);
+
+  const handleColorChange = useCallback((tableName, color) => {
     setTableColors((prev) => ({ ...prev, [tableName]: color }));
-  };
+    addRecentColors([color]);
+  }, [addRecentColors]);
 
   const handleTableSelect = useCallback((tableName, isMulti) => {
+    setSelectedGroupName(null);
     if (isMulti) {
       const next = new Set(selectedTablesRef.current);
       if (next.has(tableName)) next.delete(tableName);
@@ -2433,7 +2462,15 @@ export default function SketchER() {
     }
   }, [jumpToTableOnClick, tables]);
 
+  const handleGroupSelect = useCallback((groupName) => {
+    const emptySelection = new Set();
+    selectedTablesRef.current = emptySelection;
+    setSelectedTables(emptySelection);
+    setSelectedGroupName(groupName);
+  }, []);
+
   const handleTableContextMenu = useCallback((tableName, event) => {
+    setSelectedGroupName(null);
     const nextSelection = new Set(selectedTablesRef.current);
     if (event.ctrlKey || event.metaKey) {
       nextSelection.add(tableName);
@@ -2472,6 +2509,11 @@ export default function SketchER() {
   }, [groups, newTableGroupName, tableGroupMenu]);
 
   const handlePaletteColorClick = useCallback((color) => {
+    if (selectedGroupName) {
+      setGroupColors((previous) => ({ ...previous, [selectedGroupName]: color }));
+      addRecentColors([color]);
+      return;
+    }
     const names = [...selectedTables];
     if (names.length === 0) return;
     if (names.length === 1) {
@@ -2483,8 +2525,14 @@ export default function SketchER() {
         names.forEach((name, i) => { next[name] = variants[i]; });
         return next;
       });
+      addRecentColors(variants);
     }
-  }, [selectedTables]);
+  }, [addRecentColors, handleColorChange, selectedGroupName, selectedTables]);
+
+  useEffect(() => {
+    const validGroupNames = new Set(groups.map((group) => group.name));
+    setSelectedGroupName((previous) => previous && validGroupNames.has(previous) ? previous : null);
+  }, [groups]);
 
   // Close settings dropdown on outside click
   useEffect(() => {
@@ -2599,6 +2647,18 @@ export default function SketchER() {
     // Apply the initial theme
     monaco.editor.setTheme(isDark ? "dbml-dark" : "dbml-light");
   }, [isDark]);
+
+  const selectedGroupIndex = groups.findIndex((group) => group.name === selectedGroupName);
+  const selectedGroup = selectedGroupIndex >= 0 ? groups[selectedGroupIndex] : null;
+  const hasPaletteSelection = selectedTables.size > 0 || Boolean(selectedGroup);
+  const selectedPaletteColor = selectedGroup
+    ? groupColors[selectedGroup.name] || selectedGroup.color || GROUP_ACCENT_COLORS[selectedGroupIndex % GROUP_ACCENT_COLORS.length]
+    : selectedTables.size === 1
+    ? tableColors[[...selectedTables][0]]
+    : null;
+  const customColorValue = /^#[0-9a-f]{6}$/i.test(selectedPaletteColor || "")
+    ? selectedPaletteColor
+    : recentColors.find((color) => /^#[0-9a-f]{6}$/i.test(color)) || "#10b981";
 
   return (
     <div
@@ -2732,8 +2792,8 @@ export default function SketchER() {
           </div>
         </div>
 
-        {/* Color palette (when table selected) */}
-        {selectedTables.size > 0 && (
+        {/* Color palette for the selected table(s) or group */}
+        {hasPaletteSelection && (
           <div
             style={{
               padding: "10px 18px",
@@ -2746,28 +2806,96 @@ export default function SketchER() {
             }}
           >
             <span style={{ color: theme.textSecondary, fontWeight: 600, fontSize: "11.5px" }}>
-              {selectedTables.size === 1 ? [...selectedTables][0] : `${selectedTables.size} tables selected`}
+              {selectedGroup
+                ? `Group: ${selectedGroup.name}`
+                : selectedTables.size === 1
+                ? [...selectedTables][0]
+                : `${selectedTables.size} tables selected`}
             </span>
-            <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-            {TABLE_COLORS.map((c) => (
-              <div
-                key={c}
-                onClick={() => handlePaletteColorClick(c)}
-                title={selectedTables.size > 1 ? "Apply hue family" : undefined}
-                style={{
-                  width: 19,
-                  height: 19,
-                  borderRadius: "50%",
-                  background: c,
-                  cursor: "pointer",
-                  border: selectedTables.size === 1 && tableColors[[...selectedTables][0]] === c
-                    ? `2.5px solid ${isDark ? "#fff" : "#1e1e1e"}`
-                    : "2.5px solid transparent",
-                  transition: "all 0.15s",
-                  flexShrink: 0,
-                }}
-              />
-            ))}
+            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
+              <span style={{ width: 42, color: theme.textMuted, fontSize: "9.5px", fontWeight: 600, flexShrink: 0 }}>COMMON</span>
+              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                {TABLE_COLORS.map((c) => (
+                  <button
+                    type="button"
+                    key={c}
+                    onClick={() => handlePaletteColorClick(c)}
+                    title={selectedTables.size > 1 ? "Apply hue family" : `Apply ${c}`}
+                    aria-label={`Apply color ${c}`}
+                    style={{
+                      width: 19,
+                      height: 19,
+                      padding: 0,
+                      borderRadius: "50%",
+                      background: c,
+                      cursor: "pointer",
+                      border: selectedPaletteColor === c
+                        ? `2.5px solid ${isDark ? "#fff" : "#1e1e1e"}`
+                        : "2.5px solid transparent",
+                      transition: "all 0.15s",
+                      flexShrink: 0,
+                    }}
+                  />
+                ))}
+                <label
+                  title="Choose a custom color"
+                  style={{
+                    position: "relative",
+                    width: 19,
+                    height: 19,
+                    borderRadius: "50%",
+                    cursor: "pointer",
+                    flexShrink: 0,
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "center",
+                    border: selectedPaletteColor && !TABLE_COLORS.includes(selectedPaletteColor)
+                      ? `2.5px solid ${isDark ? "#fff" : "#1e1e1e"}`
+                      : "2.5px solid transparent",
+                    boxSizing: "border-box",
+                  }}
+                >
+                  <ColorWheelIcon lit />
+                  <input
+                    type="color"
+                    value={customColorValue}
+                    aria-label="Choose a custom color"
+                    onChange={(event) => handlePaletteColorClick(event.target.value)}
+                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", border: 0, padding: 0 }}
+                  />
+                </label>
+              </div>
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "8px", minHeight: 19 }}>
+              <span style={{ width: 42, color: theme.textMuted, fontSize: "9.5px", fontWeight: 600, flexShrink: 0 }}>RECENT</span>
+              {recentColors.length > 0 ? (
+                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
+                  {recentColors.map((c) => (
+                    <button
+                      type="button"
+                      key={c}
+                      onClick={() => handlePaletteColorClick(c)}
+                      title={`Apply recent color ${c}`}
+                      aria-label={`Apply recent color ${c}`}
+                      style={{
+                        width: 19,
+                        height: 19,
+                        padding: 0,
+                        borderRadius: "50%",
+                        background: c,
+                        cursor: "pointer",
+                        border: selectedPaletteColor === c
+                          ? `2.5px solid ${isDark ? "#fff" : "#1e1e1e"}`
+                          : `2.5px solid ${theme.toolbarBorder}`,
+                        transition: "all 0.15s",
+                        flexShrink: 0,
+                      }}
+                    />
+                  ))}
+                </div>
+              ) : (
+                <span style={{ color: theme.textMuted, fontSize: "10px" }}>Colors you use will appear here</span>
+              )}
             </div>
           </div>
         )}
@@ -3038,11 +3166,14 @@ export default function SketchER() {
           >
             <GroupOverlay
               groups={groups}
+              groupColors={groupColors}
+              selectedGroupName={selectedGroupName}
               tablePositions={tablePositions}
               tableWidths={tableWidths}
               tableData={diagramTables}
               groupsVisible={groupsVisible}
               onGroupDragStart={handleGroupDragStart}
+              onGroupSelect={handleGroupSelect}
             />
             <RelationshipLines
               refs={refs}
