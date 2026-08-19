@@ -1605,6 +1605,7 @@ function GroupOverlay({ groups, groupColors, selectedGroupName, tablePositions, 
             {group.note && <title>{group.note}</title>}
             {/* D — Background fill */}
             <rect x={minX} y={minY} width={bw} height={bh} rx="12"
+              data-export-hide="1"
               fill={color} opacity="0.06" style={{ pointerEvents: "none" }} />
 
             {/* A — Dashed border box */}
@@ -1634,6 +1635,7 @@ function GroupOverlay({ groups, groupColors, selectedGroupName, tablePositions, 
 
             {/* E — Drag hit area (top strip of the group box) */}
             <rect x={minX} y={minY} width={bw} height={GROUP_LABEL_H + 4}
+              data-export-hide="1"
               fill="transparent" rx="12"
               style={{ cursor: "move", pointerEvents: "all" }}
               onMouseDown={(e) => {
@@ -2010,6 +2012,10 @@ export default function SketchER() {
     ].join(";");
 
     const exportScene = sourceScene.cloneNode(true);
+    // Translucent group fills can be promoted to opaque-looking rounded panels
+    // when html2canvas flattens the cloned SVG. They, and other interaction-only
+    // hit targets, are explicitly excluded without affecting the live canvas.
+    exportScene.querySelectorAll("[data-export-hide]").forEach((element) => element.remove());
     exportScene.style.cssText = [
       `position:absolute`,
       `left:${-minX}px`,
