@@ -474,7 +474,7 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
           ref.onUpdate && `ON UPDATE ${ref.onUpdate}`,
           ref.inactive && "Inactive relationship",
         ].filter(Boolean).join("\n")}</title>
-        <path id={pathKey} d={path} fill="none" stroke={lineColor} strokeWidth="1.3"
+        <path id={pathKey} data-export-bounds="1" d={path} fill="none" stroke={lineColor} strokeWidth="1.3"
           strokeDasharray={ref.inactive ? "6 5" : undefined} />
 
         {/* Draggable hit area on the vertical corridor segment */}
@@ -1490,6 +1490,7 @@ Table core.items {
               <Row label="Two-finger swipe">Pan horizontally and vertically across the canvas</Row>
               <Row label="Click zoom %">Opens a slider + typeable zoom control</Row>
               <Row label="Drag canvas">Pan the diagram (click and drag any empty area)</Row>
+              <Row label="Collapse editor">Use the arrow in the code header to give the canvas the full window; the left-edge arrow restores it</Row>
               <Row label="Drag table">Reposition any individual table</Row>
               <Row label="Table arrow">Collapse one table to primary/relationship keys, or expand it again</Row>
               <Row label="Collapse All">Use the toolbar button to collapse every table to keys; it changes to <strong>Expand All</strong></Row>
@@ -1640,7 +1641,7 @@ function GroupOverlay({ groups, groupColors, selectedGroupName, tablePositions, 
         const bh = maxY - minY;
 
         return (
-          <g key={group.name}>
+          <g key={group.name} data-export-bounds="1">
             {group.note && <title>{group.note}</title>}
             {/* D — Background fill */}
             <rect x={minX} y={minY} width={bw} height={bh} rx="12"
@@ -1800,6 +1801,7 @@ export default function SketchER() {
   const zoomRef = useRef(zoom);
   const canvasOffsetRef = useRef(canvasOffset);
   const [editorWidth, setEditorWidth] = useState(470);
+  const [isEditorCollapsed, setIsEditorCollapsed] = useState(saved?.isEditorCollapsed ?? false);
   const [isResizing, setIsResizing] = useState(false);
   const canvasRef = useRef(null);
   const transformRef = useRef(null);
@@ -1936,26 +1938,26 @@ export default function SketchER() {
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick, isEditorCollapsed }));
       } catch {}
     }, 400);
     return () => clearTimeout(timer);
-  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick]);
+  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick, isEditorCollapsed]);
 
   const [shareCopied, setShareCopied] = useState(false);
   const copyShareLink = useCallback(() => {
-    const encoded = encodeShareState({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], lineMidXOverrides, groupsVisible, fileName });
+    const encoded = encodeShareState({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], lineMidXOverrides, groupsVisible, fileName, isEditorCollapsed });
     const url = `${window.location.origin}${window.location.pathname}#share=${encoded}`;
     navigator.clipboard.writeText(url).then(() => {
       setShareCopied(true);
       setTimeout(() => setShareCopied(false), 2000);
     });
-  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, lineMidXOverrides, groupsVisible, fileName]);
+  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, lineMidXOverrides, groupsVisible, fileName, isEditorCollapsed]);
 
   // Save diagram to a .sker file
   const saveToFile = useCallback(() => {
     const blob = new Blob(
-      [JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible }, null, 2)],
+      [JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, isEditorCollapsed }, null, 2)],
       { type: "application/json" }
     );
     const url = URL.createObjectURL(blob);
@@ -1966,7 +1968,7 @@ export default function SketchER() {
     link.click();
     URL.revokeObjectURL(url);
     if (fileName === "Untitled") setFileName("diagram");
-  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName]);
+  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName, isEditorCollapsed]);
 
   // Load diagram from a .sker / .json file
   const loadInputRef = useRef(null);
@@ -1986,6 +1988,7 @@ export default function SketchER() {
         if (state.isDark !== undefined)            setIsDark(state.isDark);
         if (state.lineMidXOverrides !== undefined) setLineMidXOverrides(state.lineMidXOverrides);
         if (state.groupsVisible !== undefined)     setGroupsVisible(state.groupsVisible);
+        if (state.isEditorCollapsed !== undefined) setIsEditorCollapsed(state.isEditorCollapsed);
         setFileName(file.name.replace(/\.(sker|json)$/i, ""));
         pendingFitRef.current = true;
       } catch {}
@@ -1999,8 +2002,10 @@ export default function SketchER() {
     const outerEl = canvasRef.current;
     if (!outerEl || !Object.keys(tablePositions).length) return;
 
-    // ── Bounding box of all table content ────────────────────────────────────
-    const PAD = 80;
+    // ── Bounding box of every rendered diagram element ──────────────────────
+    // Tables are HTML, while groups and relationship routes live in the SVG.
+    // Include both instead of relying on a fixed amount of table-only padding.
+    const PAD = 40;
     let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
     for (const name of Object.keys(tablePositions)) {
       const pos = tablePositions[name];
@@ -2011,7 +2016,18 @@ export default function SketchER() {
       minX = Math.min(minX, pos.x); minY = Math.min(minY, pos.y);
       maxX = Math.max(maxX, pos.x + w); maxY = Math.max(maxY, pos.y + h);
     }
-    // Extra room for lines that route outside table edges
+    const sourceDiagramSvg = transformRef.current?.querySelector("[data-diagram-svg]");
+    sourceDiagramSvg?.querySelectorAll("[data-export-bounds]").forEach((element) => {
+      try {
+        const bounds = element.getBBox();
+        if (bounds.width > 0 || bounds.height > 0) {
+          minX = Math.min(minX, bounds.x);
+          minY = Math.min(minY, bounds.y);
+          maxX = Math.max(maxX, bounds.x + bounds.width);
+          maxY = Math.max(maxY, bounds.y + bounds.height);
+        }
+      } catch {}
+    });
     minX -= PAD; minY -= PAD; maxX += PAD; maxY += PAD;
     const W = Math.ceil(maxX - minX);
     const H = Math.ceil(maxY - minY);
@@ -2032,6 +2048,16 @@ export default function SketchER() {
     const cloneInner = clone.querySelector("[data-transform-container]");
     if (cloneInner) {
       cloneInner.style.transform = `translate(${-minX}px,${-minY}px) scale(1)`;
+      const cloneDiagramSvg = cloneInner.querySelector("[data-diagram-svg]");
+      if (cloneDiagramSvg) {
+        cloneDiagramSvg.setAttribute("viewBox", `${minX} ${minY} ${W} ${H}`);
+        cloneDiagramSvg.setAttribute("width", String(W));
+        cloneDiagramSvg.setAttribute("height", String(H));
+        cloneDiagramSvg.style.left = `${minX}px`;
+        cloneDiagramSvg.style.top = `${minY}px`;
+        cloneDiagramSvg.style.width = `${W}px`;
+        cloneDiagramSvg.style.height = `${H}px`;
+      }
     }
 
     // Remove UI overlays (toolbar, minimap, filename, bottom pane)
@@ -2692,13 +2718,15 @@ export default function SketchER() {
       {/* ===== Editor Panel ===== */}
       <div
         style={{
-          width: editorWidth,
-          minWidth: 460,
+          width: isEditorCollapsed ? 0 : editorWidth,
+          minWidth: isEditorCollapsed ? 0 : 460,
           display: "flex",
           flexDirection: "column",
           background: theme.editorPanelBg,
-          borderRight: `1px solid ${theme.border}`,
+          borderRight: isEditorCollapsed ? "none" : `1px solid ${theme.border}`,
           flexShrink: 0,
+          overflow: "hidden",
+          transition: isResizing ? "none" : "width 0.18s ease, min-width 0.18s ease",
         }}
       >
         {/* Logo / Header */}
@@ -2742,6 +2770,31 @@ export default function SketchER() {
           >
             DBML
           </span>
+          <button
+            type="button"
+            onClick={() => {
+              setShowSettings(false);
+              setIsEditorCollapsed(true);
+            }}
+            title="Collapse code panel"
+            aria-label="Collapse code panel"
+            style={{
+              background: "none",
+              border: "none",
+              cursor: "pointer",
+              padding: "4px",
+              borderRadius: "4px",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              color: theme.textSecondary,
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="15 18 9 12 15 6" />
+              <line x1="19" y1="5" x2="19" y2="19" />
+            </svg>
+          </button>
           {/* Settings gear */}
           <div ref={settingsRef} style={{ position: "relative" }}>
             <button
@@ -3011,12 +3064,13 @@ export default function SketchER() {
       <div
         onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); }}
         style={{
-          width: "5px",
+          width: isEditorCollapsed ? 0 : "5px",
           cursor: "col-resize",
           background: isResizing ? "#10b981" : "transparent",
           transition: "background 0.15s",
           flexShrink: 0,
           zIndex: 30,
+          overflow: "hidden",
         }}
         onMouseEnter={(e) => (e.target.style.background = theme.resizeHandleHover)}
         onMouseLeave={(e) => { if (!isResizing) e.target.style.background = "transparent"; }}
@@ -3053,6 +3107,40 @@ export default function SketchER() {
           <rect width="100%" height="100%" fill="url(#grid)" />
         </svg>
 
+        {isEditorCollapsed && (
+          <button
+            type="button"
+            data-export-hide="1"
+            onMouseDown={(e) => e.stopPropagation()}
+            onClick={() => setIsEditorCollapsed(false)}
+            title="Expand code panel"
+            aria-label="Expand code panel"
+            style={{
+              position: "absolute",
+              top: 12,
+              left: 12,
+              width: 34,
+              height: 32,
+              padding: 0,
+              borderRadius: "8px",
+              border: `1px solid ${theme.toolbarBorder}`,
+              background: theme.toolbarBg,
+              color: theme.toolbarText,
+              cursor: "pointer",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "center",
+              zIndex: 20,
+              boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
+            }}
+          >
+            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <polyline points="9 18 15 12 9 6" />
+              <line x1="5" y1="5" x2="5" y2="19" />
+            </svg>
+          </button>
+        )}
+
         {/* Filename display / edit */}
         <div
           data-export-hide="1"
@@ -3060,7 +3148,7 @@ export default function SketchER() {
           style={{
             position: "absolute",
             top: 12,
-            left: 12,
+            left: isEditorCollapsed ? 54 : 12,
             display: "flex",
             alignItems: "center",
             gap: "6px",
@@ -3156,6 +3244,7 @@ export default function SketchER() {
           }}
         >
           <svg
+            data-diagram-svg="1"
             style={{
               position: "absolute",
               top: 0, left: 0,
