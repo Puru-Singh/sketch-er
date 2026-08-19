@@ -239,20 +239,8 @@ function getTableHeight(table) {
   return HEADER_HEIGHT + table.columns.length * COL_HEIGHT + (hasTableMeta(table) ? TABLE_META_HEIGHT : 0);
 }
 
-// Crow's foot (many/FK) end — vertical bar + two prongs
-function CrowFoot({ x, y, dir, color }) {
-  const spread = 6, depth = 10;
-  const px = dir === "right" ? x + depth : x - depth;
-  return (
-    <>
-      <line x1={x} y1={y - spread} x2={x} y2={y + spread} stroke={color} strokeWidth="1.3" strokeLinecap="round" />
-      <line x1={x} y1={y} x2={px} y2={y - spread} stroke={color} strokeWidth="1.3" strokeLinecap="round" />
-      <line x1={x} y1={y} x2={px} y2={y + spread} stroke={color} strokeWidth="1.3" strokeLinecap="round" />
-    </>
-  );
-}
-
-// Draw an endpoint from the normalized DBML cardinality (1, 0..1, *, 1..*, 0..*).
+// Draw non-directional endpoint markers. Many cardinality stays visible in the
+// adjacent text label, avoiding a crow's-foot that can be mistaken for flow.
 function CardinalityEnd({ x, y, dir, cardinality, color }) {
   const sign = dir === "right" ? 1 : -1;
   const relation = cardinality || "1";
@@ -267,7 +255,6 @@ function CardinalityEnd({ x, y, dir, cardinality, color }) {
         <line x1={outerX} y1={y - 5} x2={outerX} y2={y + 5}
           stroke={color} strokeWidth="1.3" strokeLinecap="round" />
       )}
-      {isMany && <CrowFoot x={outerX} y={y} dir={dir} color={color} />}
     </>
   );
 }
@@ -1463,7 +1450,7 @@ Table core.items {
               <Row label="Two-finger swipe">Pan horizontally and vertically across the canvas</Row>
               <Row label="Click zoom %">Opens a slider + typeable zoom control</Row>
               <Row label="Drag canvas">Pan the diagram (click and drag any empty area)</Row>
-              <Row label="Collapse editor">Use the arrow in the code header to give the canvas the full window; the left-edge arrow restores it</Row>
+              <Row label="Collapse editor">Use the triangle in the code header to give the canvas the full window; the right-pointing triangle restores it</Row>
               <Row label="Drag table">Reposition any individual table</Row>
               <Row label="Table arrow">Collapse one table to primary/relationship keys, or expand it again</Row>
               <Row label="Collapse All">Use the toolbar button to collapse every table to keys; it changes to <strong>Expand All</strong></Row>
@@ -2796,9 +2783,8 @@ export default function SketchER() {
               color: theme.textSecondary,
             }}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="15 18 9 12 15 6" />
-              <line x1="19" y1="5" x2="19" y2="19" />
+            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M8.5 1.8 3.5 6l5 4.2z" fill="currentColor" />
             </svg>
           </button>
           {/* Settings gear */}
@@ -3152,9 +3138,8 @@ export default function SketchER() {
               boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
             }}
           >
-            <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <polyline points="9 18 15 12 9 6" />
-              <line x1="5" y1="5" x2="5" y2="19" />
+            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
+              <path d="M3.5 1.8 8.5 6l-5 4.2z" fill="currentColor" />
             </svg>
           </button>
         )}
