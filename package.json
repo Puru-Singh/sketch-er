@@ -12,6 +12,7 @@
   "dependencies": {
     "@dbml/parse": "^9.1.1",
     "@monaco-editor/react": "^4.6.0",
+    "elkjs": "^0.12.0",
     "html2canvas": "^1.4.1",
     "lz-string": "^1.5.0",
     "monaco-editor": "^0.52.0",

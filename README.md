@@ -83,7 +83,7 @@ Open [http://localhost:5173](http://localhost:5173).
 | + | Zoom in |
 | ↺ | Reset view to 100% at origin |
 | Fit | Fit all tables into the viewport |
-| Layout | Auto-arrange tables in a grid |
+| Layout | Choose a group-aware smart layout or a reversible leaf-to-root hierarchy |
 | Collapse All / Expand All | Collapse every table to keys or restore every column |
 | Save | Download diagram as a `.sker` file |
 | Open | Load a previously saved `.sker` file |

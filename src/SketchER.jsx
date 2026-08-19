@@ -5,6 +5,12 @@ import { useState, useRef, useCallback, useEffect, useMemo, useDeferredValue } f
 import MonacoEditor from "@monaco-editor/react";
 import LZString from "lz-string";
 import { dbmlLanguageConfig, dbmlMonarchTokensProvider, EMPTY_DBML_MODEL, parseDBMLDocument } from "./dbmlParser.js";
+import {
+  buildHierarchicalLayout,
+  buildSmartLayout,
+  HIERARCHY_LEAVES_LEFT,
+  HIERARCHY_ROOTS_LEFT,
+} from "./autoLayout.js";
 
 const DEFAULT_DBML = `Table users {
   id int [pk]
@@ -929,7 +935,158 @@ function ZoomControl({ zoom, onZoomSet, theme }) {
   );
 }
 
-function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp, onShare, shareCopied, allTablesCollapsed, onToggleAllTables }) {
+function ArrangeControl({ onArrange, isArranging, theme }) {
+  const [open, setOpen] = useState(false);
+  const [hierarchyDirection, setHierarchyDirection] = useState(HIERARCHY_LEAVES_LEFT);
+  const ref = useRef(null);
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const handleOutsideClick = (event) => {
+      if (ref.current && !ref.current.contains(event.target)) setOpen(false);
+    };
+    document.addEventListener("pointerdown", handleOutsideClick);
+    return () => document.removeEventListener("pointerdown", handleOutsideClick);
+  }, [open]);
+
+  const runLayout = (mode, direction = hierarchyDirection) => {
+    setOpen(false);
+    onArrange(mode, direction);
+  };
+
+  const swapHierarchyDirection = (event) => {
+    event.stopPropagation();
+    const nextDirection = hierarchyDirection === HIERARCHY_LEAVES_LEFT
+      ? HIERARCHY_ROOTS_LEFT
+      : HIERARCHY_LEAVES_LEFT;
+    setHierarchyDirection(nextDirection);
+    onArrange("hierarchical", nextDirection);
+  };
+
+  const optionStyle = {
+    width: "100%",
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    padding: "10px",
+    border: "none",
+    borderRadius: "8px",
+    background: "transparent",
+    color: theme.textPrimary,
+    cursor: isArranging ? "wait" : "pointer",
+    textAlign: "left",
+    fontFamily: "'DM Sans', sans-serif",
+  };
+
+  return (
+    <div ref={ref} style={{ position: "relative" }}>
+      <button
+        type="button"
+        disabled={isArranging}
+        onClick={() => setOpen((value) => !value)}
+        style={{
+          padding: "7px 12px",
+          background: open ? "#10b98122" : theme.toolbarBg,
+          border: `1px solid ${open ? "#10b981" : theme.toolbarBorder}`,
+          borderRadius: "8px",
+          color: open ? "#10b981" : theme.toolbarText,
+          cursor: isArranging ? "wait" : "pointer",
+          fontSize: "12px",
+          display: "flex",
+          alignItems: "center",
+          gap: "5px",
+          fontFamily: "'DM Sans', sans-serif",
+          fontWeight: 500,
+          opacity: isArranging ? 0.65 : 1,
+        }}
+      >
+        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+          <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
+          <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
+        </svg>
+        {isArranging ? "Arranging…" : "Layout"}
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
+          style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+          <polyline points="2,4 6,8 10,4" />
+        </svg>
+      </button>
+
+      {open && (
+        <div style={{
+          position: "absolute",
+          top: "calc(100% + 8px)",
+          right: 0,
+          width: "286px",
+          padding: "7px",
+          background: theme.toolbarBg,
+          border: `1px solid ${theme.toolbarBorder}`,
+          borderRadius: "11px",
+          boxShadow: "0 10px 32px rgba(0,0,0,0.18)",
+          zIndex: 250,
+          fontFamily: "'DM Sans', sans-serif",
+        }}>
+          <button type="button" disabled={isArranging} onClick={() => runLayout("smart")} style={optionStyle}>
+            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+              <path d="M4 7h6M14 7h6M7 4v6M17 4v6"/><path d="M7 10v4h10v-4M12 14v6"/>
+            </svg>
+            <span style={{ flex: 1 }}>
+              <span style={{ display: "flex", alignItems: "center", gap: "7px", fontSize: "12px", fontWeight: 700 }}>
+                Smart grouped
+                <span style={{ padding: "2px 5px", borderRadius: "4px", background: "#10b98120", color: "#10b981", fontSize: "8px", letterSpacing: "0.4px" }}>RECOMMENDED</span>
+              </span>
+              <span style={{ display: "block", marginTop: "3px", color: theme.textMuted, fontSize: "10px", lineHeight: 1.35 }}>
+                Keeps groups together and minimizes crossings
+              </span>
+            </span>
+          </button>
+
+          <div style={{ height: 1, margin: "3px 7px", background: theme.toolbarBorder }} />
+
+          <div style={{ display: "flex", alignItems: "stretch", gap: "5px" }}>
+            <button type="button" disabled={isArranging} onClick={() => runLayout("hierarchical")} style={{ ...optionStyle, flex: 1 }}>
+              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
+                <circle cx="4" cy="6" r="2"/><circle cx="4" cy="18" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="12" r="2"/>
+                <path d="M6 6h2a4 4 0 0 1 4 4M6 18h2a4 4 0 0 0 4-4M14 12h4"/>
+              </svg>
+              <span style={{ flex: 1 }}>
+                <span style={{ display: "block", fontSize: "12px", fontWeight: 700 }}>Strict hierarchy</span>
+                <span style={{ display: "block", marginTop: "3px", color: theme.textMuted, fontSize: "10px", lineHeight: 1.35 }}>
+                  {hierarchyDirection === HIERARCHY_LEAVES_LEFT ? "Leaves → roots" : "Roots → leaves"}
+                </span>
+              </span>
+            </button>
+            <button
+              type="button"
+              disabled={isArranging}
+              onClick={swapHierarchyDirection}
+              title="Swap hierarchy left and right"
+              aria-label="Swap hierarchy left and right"
+              style={{
+                width: "38px",
+                margin: "6px 4px 6px 0",
+                padding: 0,
+                borderRadius: "7px",
+                border: `1px solid ${theme.toolbarBorder}`,
+                background: theme.editorPanelBg,
+                color: theme.textSecondary,
+                cursor: isArranging ? "wait" : "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+              }}
+            >
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+                <path d="M7 7h12l-3-3M17 17H5l3 3"/>
+              </svg>
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function Toolbar({ onAutoLayout, isAutoLayoutRunning, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp, onShare, shareCopied, allTablesCollapsed, onToggleAllTables }) {
   return (
     <div data-export-hide="1" onMouseDown={(e) => e.stopPropagation()} style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
       <TBtn onClick={onToggleTheme} tip={isDark ? "Switch to light mode" : "Switch to dark mode"} theme={theme}>
@@ -962,13 +1119,7 @@ function Toolbar({ onAutoLayout, onZoomIn, onZoomOut, onZoomSet, zoom, onResetVi
         </svg>
         Fit
       </TBtn>
-      <TBtn onClick={onAutoLayout} tip="Auto-arrange tables" theme={theme}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
-          <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
-        </svg>
-        Layout
-      </TBtn>
+      <ArrangeControl onArrange={onAutoLayout} isArranging={isAutoLayoutRunning} theme={theme} />
       <TBtn onClick={onToggleAllTables}
         tip={allTablesCollapsed ? "Expand every table" : "Collapse every table to keys"}
         theme={theme}>
@@ -1308,7 +1459,7 @@ Table core.items {
               <Row label="Collapse All">Use the toolbar button to collapse every table to keys; it changes to <strong>Expand All</strong></Row>
               <Row label="Drag line grip">Reroute a relationship line's vertical corridor</Row>
               <Row label="Drag group label">Move all tables in a group at once</Row>
-              <Row label="Layout button">Auto-arrange all tables in a grid</Row>
+              <Row label="Layout button">Choose <strong>Smart grouped</strong> or a strict lineage hierarchy; use the swap control to reverse hierarchy direction</Row>
               <Row label="Reset view">Return to 100% zoom at origin</Row>
             </Section>
 
@@ -1601,6 +1752,7 @@ export default function SketchER() {
   const transformRef = useRef(null);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   const [showAllConnections, setShowAllConnections] = useState(false);
+  const [isAutoLayoutRunning, setIsAutoLayoutRunning] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
   const settingsRef = useRef(null);
   const [jumpToTableOnClick, setJumpToTableOnClick] = useState(saved?.jumpToTableOnClick ?? false);
@@ -2076,17 +2228,35 @@ export default function SketchER() {
     return () => canvas.removeEventListener("wheel", handleWheel);
   }, [handleWheel]);
 
-  const autoLayout = () => {
-    const cols = Math.ceil(Math.sqrt(tables.length));
-    const newPos = {};
-    tables.forEach((t, i) => {
-      newPos[t.name] = {
-        x: 60 + (i % cols) * (TABLE_WIDTH + 100),
-        y: 60 + Math.floor(i / cols) * 300,
-      };
-    });
-    setTablePositions(newPos);
-  };
+  const autoLayout = useCallback(async (mode, hierarchyDirection = HIERARCHY_LEAVES_LEFT) => {
+    if (!tables.length || isAutoLayoutRunning) return;
+    setIsAutoLayoutRunning(true);
+    try {
+      const layoutInput = { tables: diagramTables, refs, groups, tableWidths };
+      const newPositions = mode === "smart"
+        ? await buildSmartLayout(layoutInput)
+        : buildHierarchicalLayout({ ...layoutInput, direction: hierarchyDirection });
+      // Manually positioned line corridors belong to the old table geometry.
+      setLineMidXOverrides({});
+      pendingFitRef.current = true;
+      setTablePositions(newPositions);
+    } catch (error) {
+      console.error("Unable to auto-arrange tables", error);
+      // ELK should not leave the control unusable; strict hierarchy is a safe,
+      // deterministic fallback that supports the same table dimensions.
+      const fallbackPositions = buildHierarchicalLayout({
+        tables: diagramTables,
+        refs,
+        tableWidths,
+        direction: hierarchyDirection,
+      });
+      setLineMidXOverrides({});
+      pendingFitRef.current = true;
+      setTablePositions(fallbackPositions);
+    } finally {
+      setIsAutoLayoutRunning(false);
+    }
+  }, [diagramTables, groups, isAutoLayoutRunning, refs, tableWidths, tables.length]);
 
   const resetView = () => {
     setCanvasOffset({ x: 0, y: 0 });
@@ -2754,6 +2924,7 @@ export default function SketchER() {
 
         <Toolbar
           onAutoLayout={autoLayout}
+          isAutoLayoutRunning={isAutoLayoutRunning}
           onResetView={resetView}
           onFit={fitToCanvas}
           onZoomIn={() => setZoom((z) => Math.min(2, z + 0.1))}
