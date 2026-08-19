@@ -1,7 +1,7 @@
 // Copyright (c) 2025 Puru Singh — https://github.com/Puru-Singh
 // Licensed under the MIT License — see LICENSE for details.
 
-import { useState, useRef, useCallback, useEffect, useMemo, useDeferredValue } from "react";
+import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, useDeferredValue } from "react";
 import MonacoEditor from "@monaco-editor/react";
 import LZString from "lz-string";
 import { dbmlLanguageConfig, dbmlMonarchTokensProvider, EMPTY_DBML_MODEL, parseDBMLDocument } from "./dbmlParser.js";
@@ -16,6 +16,7 @@ import {
   orthogonalPointsToPath,
   routeOrthogonalConnection,
 } from "./relationshipRouting.js";
+import { detectTableRenames } from "./tableIdentity.js";
 
 const DEFAULT_DBML = `Table users {
   id int [pk]
@@ -1808,6 +1809,7 @@ export default function SketchER() {
   const parseErrors = parseResult.errors;
   const parseWarnings = parseResult.warnings || [];
   const relationshipCount = useMemo(() => new Set(refs.map((ref) => ref.id.split(":")[0])).size, [refs]);
+  const previousTablesRef = useRef(tables);
 
   // Which columns to highlight per table when a table is hovered
   const activeColumns = useMemo(() => {
@@ -2038,10 +2040,24 @@ export default function SketchER() {
     link.click();
   }, [tablePositions, diagramTables, tableWidths, isDark, fileName]);
 
-  useEffect(() => {
+  useLayoutEffect(() => {
+    const tableRenames = detectTableRenames(previousTablesRef.current, tables);
+    previousTablesRef.current = tables;
+    const validNames = new Set(tables.map((table) => table.name));
+
     setTablePositions((prev) => {
       const next = { ...prev };
       let needsUpdate = false;
+      for (const [oldName, newName] of tableRenames) {
+        if (next[oldName] && !next[newName]) {
+          next[newName] = next[oldName];
+          needsUpdate = true;
+        }
+        if (oldName in next) {
+          delete next[oldName];
+          needsUpdate = true;
+        }
+      }
       const cols = Math.ceil(Math.sqrt(tables.length));
       tables.forEach((t, i) => {
         if (!next[t.name]) {
@@ -2052,7 +2068,7 @@ export default function SketchER() {
         }
       });
       for (const key of Object.keys(next)) {
-        if (!tables.find((t) => t.name === key)) {
+        if (!validNames.has(key)) {
           delete next[key];
           needsUpdate = true;
         }
@@ -2062,6 +2078,16 @@ export default function SketchER() {
     setTableColors((prev) => {
       const next = { ...prev };
       let needsUpdate = false;
+      for (const [oldName, newName] of tableRenames) {
+        if (next[oldName] && !next[newName]) {
+          next[newName] = next[oldName];
+          needsUpdate = true;
+        }
+        if (oldName in next) {
+          delete next[oldName];
+          needsUpdate = true;
+        }
+      }
       tables.forEach((t, i) => {
         if (t.headerColor && next[t.name] !== t.headerColor) {
           next[t.name] = t.headerColor;
@@ -2074,10 +2100,21 @@ export default function SketchER() {
       return needsUpdate ? next : prev;
     });
     setCollapsedTables((previous) => {
-      const validNames = new Set(tables.map((table) => table.name));
-      const next = new Set([...previous].filter((name) => validNames.has(name)));
-      return next.size === previous.size ? previous : next;
+      const next = new Set([...previous].map((name) => tableRenames.get(name) || name)
+        .filter((name) => validNames.has(name)));
+      const unchanged = next.size === previous.size && [...next].every((name) => previous.has(name));
+      return unchanged ? previous : next;
     });
+
+    if (tableRenames.size) {
+      setSelectedTables((previous) => {
+        const next = new Set([...previous].map((name) => tableRenames.get(name) || name)
+          .filter((name) => validNames.has(name)));
+        selectedTablesRef.current = next;
+        return next;
+      });
+      setHoveredTable((previous) => tableRenames.get(previous) || previous);
+    }
   }, [tables]);
 
   useEffect(() => {
