@@ -263,6 +263,11 @@ const LANE_SPACING = 24;
 // How far apart to spread multiple connections arriving at the same PK column
 const ARRIVE_SPREAD = 8;
 
+function getRelationshipPathKey(ref) {
+  const legacyPathKey = `rline-${ref.from.table}-${ref.from.column}-${ref.to.table}-${ref.to.column}`;
+  return ref.composite ? `${legacyPathKey}-${ref.id}` : legacyPathKey;
+}
+
 function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTable, selectedTables, showAllConnections, tableColors, tableWidths, lineMidXOverrides, onLineDragStart }) {
   // ── Phase 1: resolve direction + column indices for every valid ref ──────
   const items = useMemo(() => {
@@ -405,8 +410,7 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
     const cardX      = (crowDir === "right" || crowDir === "vert-left") ? x2 - 13 : x2 + 13;
     const cardAnchor = (crowDir === "right" || crowDir === "vert-left") ? "end"   : "start";
 
-    const legacyPathKey = `rline-${ref.from.table}-${ref.from.column}-${ref.to.table}-${ref.to.column}`;
-    const pathKey = ref.composite ? `${legacyPathKey}-${ref.id}` : legacyPathKey;
+    const pathKey = getRelationshipPathKey(ref);
     // Apply user's manual midX drag override if present
     const finalMidX = lineMidXOverrides[pathKey] ?? midX;
     const path = `M ${pathX1} ${fromY} H ${finalMidX} V ${toYAdj} H ${pathX2}`;
@@ -1918,8 +1922,24 @@ export default function SketchER() {
     for (const name of memberTables) {
       if (tablePositions[name]) startPositions[name] = { ...tablePositions[name] };
     }
-    setDraggingGroup({ groupName, memberTables, startClientX: clientX, startClientY: clientY, startPositions });
-  }, [tablePositions]);
+    const memberSet = new Set(memberTables);
+    const internalLineMidXs = {};
+    for (const ref of refs) {
+      if (!memberSet.has(ref.from.table) || !memberSet.has(ref.to.table)) continue;
+      const pathKey = getRelationshipPathKey(ref);
+      if (lineMidXOverrides[pathKey] != null) {
+        internalLineMidXs[pathKey] = lineMidXOverrides[pathKey];
+      }
+    }
+    setDraggingGroup({
+      groupName,
+      memberTables,
+      startClientX: clientX,
+      startClientY: clientY,
+      startPositions,
+      internalLineMidXs,
+    });
+  }, [tablePositions, refs, lineMidXOverrides]);
 
   const handleMouseMove = useCallback((e) => {
     if (draggingGroup) {
@@ -1933,6 +1953,16 @@ export default function SketchER() {
         }
         return next;
       });
+      const internalLines = Object.entries(draggingGroup.internalLineMidXs);
+      if (internalLines.length > 0) {
+        setLineMidXOverrides((prev) => {
+          const next = { ...prev };
+          for (const [pathKey, startMidX] of internalLines) {
+            next[pathKey] = startMidX + dx;
+          }
+          return next;
+        });
+      }
     } else if (draggingLine) {
       const dx = (e.clientX - draggingLine.startClientX) / zoom;
       setLineMidXOverrides((prev) => ({
