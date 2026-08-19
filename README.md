@@ -41,7 +41,7 @@ Open [http://localhost:5173](http://localhost:5173).
 - Unique, not-null, and auto-increment columns receive compact badges and metadata tooltips
 - Schema-qualified names prevent collisions between tables with the same name
 - Table width auto-sizes to fit the longest column name or header text — nothing is ever clipped
-- Click the **color wheel** icon in a table header to open the native color picker
+- Right-click a table to use its recent colors or open the native color picker
 - Click a table's **arrow** to collapse it to primary and relationship key columns, or expand it again
 - **Drag** any table to reposition it on the canvas
 

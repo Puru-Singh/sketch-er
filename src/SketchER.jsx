@@ -220,12 +220,11 @@ const TABLE_CORNER_RADIUS = 6;
 const TABLE_META_HEIGHT = 24;
 const TABLE_HEADER_GAP = 12;
 const TABLE_COLLAPSE_SIZE = 20;
-const TABLE_COLOR_SIZE = 18;
 
 // 0 = fully transparent, 1 = fully black. Tweak to taste.
 const TABLE_NAME_DARKNESS = 0.5;
 
-// Resting opacity of the color wheel icon in table headers (0–1).
+// Resting opacity of color-wheel controls (0–1).
 const COLOR_WHEEL_RESTING_OPACITY = 0.5;
 
 function getColumnY(table, colIndex) {
@@ -547,18 +546,14 @@ function ColorWheelIcon({ lit }) {
   );
 }
 
-function TableNode({ table, position, color, onDragStart, onColorChange, isSelected, onSelect, onTableContextMenu, theme, fkColumns, activeColumns, onHover, width, isDimmed, isCollapsed, onToggleCollapse }) {
-  const [pickerHovered, setPickerHovered] = useState(false);
-  const [pickerFocused, setPickerFocused] = useState(false);
-  const pickerLit = pickerHovered || pickerFocused;
-
+function TableNode({ table, position, color, onDragStart, isSelected, onSelect, onTableContextMenu, theme, fkColumns, activeColumns, onHover, width, isDimmed, isCollapsed, onToggleCollapse }) {
   const handleMouseDown = (e) => {
     // Every mouse button originating on a table must stay out of the canvas
     // handler. In particular, a right-click must not clear multi-selection
     // before the subsequent contextmenu event reads it.
     e.stopPropagation();
     if (e.button !== 0) return;
-    if (e.target.closest(".color-picker-area") || e.target.closest(".table-collapse-toggle")) return;
+    if (e.target.closest(".table-collapse-toggle")) return;
     // Prevent the browser's native text/image drag ghost while moving a table.
     e.preventDefault();
     if (e.ctrlKey || e.metaKey) {
@@ -616,7 +611,7 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
           fontFamily: "'DM Sans', sans-serif",
         }}
       >
-        {/* Left-flush pill: square left edge, rounded right, capped before color wheel zone */}
+        {/* Left-flush pill: square left edge, rounded right, capped before the collapse control */}
         <span style={{
           display: "inline-block",
           background: `rgba(0,0,0,${TABLE_NAME_DARKNESS})`,
@@ -656,54 +651,6 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
             <polyline points="4,2 8,6 4,10" />
           </svg>
         </button>
-        {/* Header gaps are equal: title → collapse → color → right edge. */}
-        <div
-          className="color-picker-area"
-          style={{ position: "relative", width: TABLE_COLOR_SIZE, height: TABLE_COLOR_SIZE, flexShrink: 0 }}
-          onMouseEnter={() => setPickerHovered(true)}
-          onMouseLeave={() => setPickerHovered(false)}
-        >
-          <ColorWheelIcon lit={pickerLit} />
-          <input
-            type="color"
-            value={color}
-            onChange={(e) => onColorChange(table.name, e.target.value)}
-            onFocus={() => setPickerFocused(true)}
-            onBlur={() => setPickerFocused(false)}
-            style={{
-              position: "absolute",
-              inset: 0,
-              opacity: 0,
-              width: "100%",
-              height: "100%",
-              cursor: "pointer",
-              padding: 0,
-              border: "none",
-            }}
-          />
-          {pickerLit && (
-            <div style={{
-              position: "absolute",
-              top: "calc(100% + 10px)",
-              right: 0,
-              background: theme.toolbarBg,
-              border: `1px solid ${theme.toolbarBorder}`,
-              color: theme.textPrimary,
-              fontSize: "12.5px",
-              fontWeight: 500,
-              padding: "7px 14px",
-              borderRadius: "8px",
-              whiteSpace: "nowrap",
-              boxShadow: "0 6px 20px rgba(0,0,0,0.13)",
-              zIndex: 100,
-              fontFamily: "'DM Sans', sans-serif",
-              pointerEvents: "none",
-              letterSpacing: "0.1px",
-            }}>
-              Pick table color
-            </div>
-          )}
-        </div>
       </div>
 
       <div>
@@ -1502,9 +1449,9 @@ Table core.items {
 
             <Section id="colors" color="#ec4899" title="Colors & Theming"
               icon={<svg width="13" height="13" viewBox="0 0 20 20"><path d="M10 1.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17z" fill="none" stroke="currentColor" strokeWidth="1.8"/></svg>}>
-              <Row label="Table header color">Click the color wheel icon in a table's header to open the native color picker</Row>
+              <Row label="Table color">Right-click a table for its five recent colors and custom color wheel</Row>
               <Row label="Quick palette">Select a table or group to reveal common colors and a custom color wheel in the left panel</Row>
-              <Row label="Recent colors">The last 12 colors you apply are kept in a reusable history row</Row>
+              <Row label="Recent colors">The last 12 settled colors are kept in a reusable history row; wheel previews are debounced</Row>
               <Row label="Dark / light mode">Use the sun / moon icon in the toolbar to toggle themes</Row>
               <Row label="Group accent colors">Auto-assigned initially, then independently overridable from the quick palette</Row>
             </Section>
@@ -1779,6 +1726,8 @@ export default function SketchER() {
   const [recentColors, setRecentColors] = useState(
     () => Array.isArray(saved?.recentColors) ? saved.recentColors.slice(0, 12) : []
   );
+  const recentHistoryTimerRef = useRef(null);
+  const pendingRecentColorsRef = useRef([]);
   const [collapsedTables, setCollapsedTables] = useState(
     () => new Set(Array.isArray(saved?.collapsedTables) ? saved.collapsedTables : [])
   );
@@ -1911,12 +1860,11 @@ export default function SketchER() {
 
     const widths = {};
     for (const table of diagramTables) {
-      // Header: title padding + three equal gaps around the two controls.
+      // Header: title padding + equal gaps before and after the collapse control.
       const headerW = measure(table.name, "700 12px 'DM Sans', sans-serif")
         + PAD * 2
-        + TABLE_HEADER_GAP * 3
-        + TABLE_COLLAPSE_SIZE
-        + TABLE_COLOR_SIZE;
+        + TABLE_HEADER_GAP * 2
+        + TABLE_COLLAPSE_SIZE;
 
       let maxW = Math.max(MIN_W, Math.ceil(headerW));
       for (const col of table.columns) {
@@ -2418,16 +2366,33 @@ export default function SketchER() {
   }, [tablePositions, canvasSize, fitToCanvas]);
 
   const addRecentColors = useCallback((colors) => {
+    clearTimeout(recentHistoryTimerRef.current);
+    recentHistoryTimerRef.current = null;
+    pendingRecentColorsRef.current = [];
     setRecentColors((previous) => {
       const next = [...colors, ...previous.filter((color) => !colors.includes(color))];
       return next.slice(0, 12);
     });
   }, []);
 
-  const handleColorChange = useCallback((tableName, color) => {
-    setTableColors((prev) => ({ ...prev, [tableName]: color }));
-    addRecentColors([color]);
+  const scheduleRecentColors = useCallback((colors) => {
+    pendingRecentColorsRef.current = colors;
+    clearTimeout(recentHistoryTimerRef.current);
+    recentHistoryTimerRef.current = setTimeout(() => {
+      const settledColors = pendingRecentColorsRef.current;
+      pendingRecentColorsRef.current = [];
+      recentHistoryTimerRef.current = null;
+      addRecentColors(settledColors);
+    }, 650);
   }, [addRecentColors]);
+
+  useEffect(() => () => clearTimeout(recentHistoryTimerRef.current), []);
+
+  const handleColorChange = useCallback((tableName, color, deferHistory = false) => {
+    setTableColors((prev) => ({ ...prev, [tableName]: color }));
+    if (deferHistory) scheduleRecentColors([color]);
+    else addRecentColors([color]);
+  }, [addRecentColors, scheduleRecentColors]);
 
   const handleTableSelect = useCallback((tableName, isMulti) => {
     setSelectedGroupName(null);
@@ -2509,8 +2474,9 @@ export default function SketchER() {
     setSelectedTables(nextSelection);
     setNewTableGroupName(nextTableGroupName(groups));
     setTableGroupMenu({
-      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 280)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 190)),
+      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 296)),
+      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 350)),
+      targetTableName: tableName,
       tableNames: [...nextSelection],
     });
   }, [groups]);
@@ -2534,16 +2500,17 @@ export default function SketchER() {
     setTableGroupMenu(null);
   }, [groups, newTableGroupName, tableGroupMenu]);
 
-  const handlePaletteColorClick = useCallback((color) => {
+  const handlePaletteColorClick = useCallback((color, deferHistory = false) => {
     if (selectedGroupName) {
       setGroupColors((previous) => ({ ...previous, [selectedGroupName]: color }));
-      addRecentColors([color]);
+      if (deferHistory) scheduleRecentColors([color]);
+      else addRecentColors([color]);
       return;
     }
     const names = [...selectedTables];
     if (names.length === 0) return;
     if (names.length === 1) {
-      handleColorChange(names[0], color);
+      handleColorChange(names[0], color, deferHistory);
     } else {
       const variants = generateHueFamily(color, names.length);
       setTableColors((prev) => {
@@ -2551,9 +2518,17 @@ export default function SketchER() {
         names.forEach((name, i) => { next[name] = variants[i]; });
         return next;
       });
-      addRecentColors(variants);
+      if (deferHistory) scheduleRecentColors(variants);
+      else addRecentColors(variants);
     }
-  }, [addRecentColors, handleColorChange, selectedGroupName, selectedTables]);
+  }, [addRecentColors, handleColorChange, scheduleRecentColors, selectedGroupName, selectedTables]);
+
+  const handleContextTableColor = useCallback((color, deferHistory = false) => {
+    const tableName = tableGroupMenu?.targetTableName;
+    if (!tableName) return;
+    handleColorChange(tableName, color, deferHistory);
+    if (!deferHistory) setTableGroupMenu(null);
+  }, [handleColorChange, tableGroupMenu]);
 
   useEffect(() => {
     const validGroupNames = new Set(groups.map((group) => group.name));
@@ -2685,6 +2660,9 @@ export default function SketchER() {
   const customColorValue = /^#[0-9a-f]{6}$/i.test(selectedPaletteColor || "")
     ? selectedPaletteColor
     : recentColors.find((color) => /^#[0-9a-f]{6}$/i.test(color)) || "#10b981";
+  const contextTargetColor = tableGroupMenu?.targetTableName
+    ? tableColors[tableGroupMenu.targetTableName] || "#10b981"
+    : "#10b981";
 
   return (
     <div
@@ -2913,7 +2891,7 @@ export default function SketchER() {
                     type="color"
                     value={customColorValue}
                     aria-label="Choose a custom color"
-                    onChange={(event) => handlePaletteColorClick(event.target.value)}
+                    onChange={(event) => handlePaletteColorClick(event.target.value, true)}
                     style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", border: 0, padding: 0 }}
                   />
                 </label>
@@ -3287,7 +3265,6 @@ export default function SketchER() {
                 position={tablePositions[table.name]}
                 color={tableColors[table.name] || "#10b981"}
                 onDragStart={handleDragStart}
-                onColorChange={handleColorChange}
                 isSelected={selectedTables.has(table.name)}
                 onSelect={handleTableSelect}
                 onTableContextMenu={handleTableContextMenu}
@@ -3360,7 +3337,7 @@ export default function SketchER() {
               left: tableGroupMenu.x,
               top: tableGroupMenu.y,
               zIndex: 500,
-              width: 264,
+              width: 272,
               padding: "12px",
               borderRadius: "10px",
               border: `1px solid ${theme.toolbarBorder}`,
@@ -3370,6 +3347,64 @@ export default function SketchER() {
               fontFamily: "'DM Sans', sans-serif",
             }}
           >
+            <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "2px" }}>
+              {tableGroupMenu.targetTableName}
+            </div>
+            <div style={{ fontSize: "9.5px", color: theme.textMuted, textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: "7px" }}>
+              Quick color
+            </div>
+            <div style={{ display: "flex", alignItems: "center", gap: "7px", minHeight: 25 }}>
+              {recentColors.length > 0 ? recentColors.slice(0, 5).map((color) => (
+                <button
+                  type="button"
+                  key={color}
+                  onClick={() => handleContextTableColor(color)}
+                  title={`Apply recent color ${color}`}
+                  aria-label={`Apply recent color ${color}`}
+                  style={{
+                    width: 23,
+                    height: 23,
+                    padding: 0,
+                    borderRadius: "50%",
+                    background: color,
+                    border: contextTargetColor === color
+                      ? `2.5px solid ${isDark ? "#fff" : "#1e1e1e"}`
+                      : `2px solid ${theme.toolbarBorder}`,
+                    cursor: "pointer",
+                    flexShrink: 0,
+                  }}
+                />
+              )) : (
+                <span style={{ color: theme.textMuted, fontSize: "10px", flex: 1 }}>No recent colors yet</span>
+              )}
+              <label
+                title="Choose a custom table color"
+                style={{
+                  position: "relative",
+                  width: 25,
+                  height: 25,
+                  marginLeft: recentColors.length > 0 ? 2 : "auto",
+                  borderRadius: "50%",
+                  border: `1px solid ${theme.toolbarBorder}`,
+                  background: theme.editorPanelBg,
+                  cursor: "pointer",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  flexShrink: 0,
+                }}
+              >
+                <ColorWheelIcon lit />
+                <input
+                  type="color"
+                  value={contextTargetColor}
+                  aria-label="Choose a custom table color"
+                  onChange={(event) => handleContextTableColor(event.target.value, true)}
+                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", padding: 0, border: 0 }}
+                />
+              </label>
+            </div>
+            <div style={{ height: 1, background: theme.toolbarBorder, margin: "10px 0" }} />
             <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "3px" }}>
               Create table group
             </div>
