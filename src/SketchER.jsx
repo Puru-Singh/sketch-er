@@ -2364,31 +2364,16 @@ export default function SketchER() {
           background: rgba(16,185,129,0.15) !important;
           transition: background 0.5s ease-out;
         }
-        .monaco-editor .overlayWidgets {
-          height: 100%;
-          pointer-events: none;
-        }
-        .monaco-editor .overlayWidgets > * {
-          pointer-events: auto;
-        }
         .monaco-editor .find-widget {
-          top: auto !important;
-          bottom: 12px !important;
-          isolation: isolate;
-          pointer-events: auto !important;
+          top: 30px !important;
         }
-        .monaco-editor .find-widget .button {
-          position: relative;
-          z-index: 5;
-          pointer-events: auto !important;
+        body:has(.find-widget .codicon-find-selection:hover) .workbench-hover.compact .hover-contents,
+        body:has(.find-widget .codicon-widget-close:hover) .workbench-hover.compact .hover-contents {
+          white-space: nowrap !important;
         }
-        .monaco-editor .find-widget .monaco-findInput > .controls {
-          z-index: 5;
-          pointer-events: auto !important;
-        }
-        .monaco-editor .find-widget > .button.codicon-widget-close {
-          position: absolute;
-          z-index: 6;
+        body:has(.find-widget .codicon-find-selection:hover) .workbench-hover-container:has(> .workbench-hover.compact),
+        body:has(.find-widget .codicon-widget-close:hover) .workbench-hover-container:has(> .workbench-hover.compact) {
+          pointer-events: none !important;
         }
       `}</style>
       {/* ===== Editor Panel ===== */}
@@ -2595,7 +2580,8 @@ export default function SketchER() {
               tabSize: 2,
               insertSpaces: true,
               wordWrap: "on",
-              padding: { top: 10, bottom: 80 },
+              find: { addExtraSpaceOnTop: true },
+              padding: { top: 10 },
               overviewRulerLanes: 0,
               hideCursorInOverviewRuler: true,
               overviewRulerBorder: false,
