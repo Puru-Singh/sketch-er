@@ -17,6 +17,7 @@ import {
   routeOrthogonalConnection,
 } from "./relationshipRouting.js";
 import { detectTableRenames } from "./tableIdentity.js";
+import { calculateExportBounds, downloadPng, renderDiagramPng } from "./diagramExport.js";
 
 const DEFAULT_DBML = `Table users {
   id int [pk]
@@ -488,6 +489,7 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
         {/* Draggable hit area on the vertical corridor segment */}
         {draggableSegment && (
           <line
+            data-export-hide="1"
             x1={draggableSegment.x} y1={draggableSegment.minY}
             x2={draggableSegment.x} y2={draggableSegment.maxY}
             stroke="transparent" strokeWidth="16"
@@ -497,7 +499,8 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
         )}
         {/* Grip dot — subtle affordance on the vertical segment midpoint */}
         {draggableSegment && (
-          <circle cx={draggableSegment.x} cy={(draggableSegment.minY + draggableSegment.maxY) / 2} r="2.5"
+          <circle data-export-hide="1"
+            cx={draggableSegment.x} cy={(draggableSegment.minY + draggableSegment.maxY) / 2} r="2.5"
             fill={lineColor} opacity={isActive ? 0.6 : 0.25}
             style={{ pointerEvents: "none" }} />
         )}
@@ -518,7 +521,7 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
 
         {/* Animation follows the selected display flow without changing cardinality semantics. */}
         {isActive && (
-          <circle r="2.8" fill={lineColor} opacity="0.9">
+          <circle data-export-hide="1" r="2.8" fill={lineColor} opacity="0.9">
             <animateMotion dur="1.8s" repeatCount="indefinite"
               keyPoints={reverseConnectionFlow ? "0;1" : "1;0"}
               keyTimes="0;1" calcMode="linear">
@@ -579,6 +582,7 @@ function TableNode({ table, position, color, onDragStart, isSelected, onSelect, 
 
   return (
     <div
+      data-diagram-table={table.name}
       onMouseDown={handleMouseDown}
       onContextMenu={(e) => {
         e.preventDefault();
@@ -1605,7 +1609,6 @@ function GroupOverlay({ groups, groupColors, selectedGroupName, tablePositions, 
             {group.note && <title>{group.note}</title>}
             {/* D — Background fill */}
             <rect x={minX} y={minY} width={bw} height={bh} rx="12"
-              data-export-hide="1"
               fill={color} opacity="0.06" style={{ pointerEvents: "none" }} />
 
             {/* A — Dashed border box */}
@@ -1618,7 +1621,8 @@ function GroupOverlay({ groups, groupColors, selectedGroupName, tablePositions, 
                 onGroupSelect(group.name);
               }} />
 
-            {isSelected && <rect x={minX - 4} y={minY - 4} width={bw + 8} height={bh + 8} rx="15"
+            {isSelected && <rect data-export-hide="1"
+              x={minX - 4} y={minY - 4} width={bw + 8} height={bh + 8} rx="15"
               fill="none" stroke={color} strokeWidth="1" opacity="0.28" style={{ pointerEvents: "none" }} />}
 
             {/* B — Label background pill */}
@@ -1963,94 +1967,46 @@ export default function SketchER() {
   }, []);
 
   const exportToPng = useCallback(async () => {
-    const { default: html2canvas } = await import("html2canvas");
     const sourceScene = transformRef.current;
     if (!sourceScene || !Object.keys(tablePositions).length) return;
 
-    // ── Bounding box of every rendered diagram element ──────────────────────
-    // Tables are HTML, while groups and relationship routes live in the SVG.
-    // Include both instead of relying on a fixed amount of table-only padding.
-    const PAD = 40;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+    const tableElementMap = new Map(
+      [...sourceScene.querySelectorAll("[data-diagram-table]")]
+        .map((node) => [node.getAttribute("data-diagram-table"), node]),
+    );
+    const tableNodes = [];
+    const rectangles = [];
     for (const name of Object.keys(tablePositions)) {
       const pos = tablePositions[name];
-      const td  = diagramTables.find((t) => t.name === name);
-      if (!pos || !td) continue;
-      const w = tableWidths[name] || TABLE_WIDTH;
-      const h = getTableHeight(td);
-      minX = Math.min(minX, pos.x); minY = Math.min(minY, pos.y);
-      maxX = Math.max(maxX, pos.x + w); maxY = Math.max(maxY, pos.y + h);
+      const node = tableElementMap.get(name);
+      if (!pos || !node) continue;
+      tableNodes.push({ node, x: pos.x, y: pos.y });
+      rectangles.push({
+        x: pos.x,
+        y: pos.y,
+        width: node.offsetWidth,
+        height: node.offsetHeight,
+      });
     }
+
     const sourceDiagramSvg = sourceScene.querySelector("[data-diagram-svg]");
     sourceDiagramSvg?.querySelectorAll("[data-export-bounds]").forEach((element) => {
       try {
         const bounds = element.getBBox();
-        if (bounds.width > 0 || bounds.height > 0) {
-          minX = Math.min(minX, bounds.x);
-          minY = Math.min(minY, bounds.y);
-          maxX = Math.max(maxX, bounds.x + bounds.width);
-          maxY = Math.max(maxY, bounds.y + bounds.height);
-        }
+        if (bounds.width > 0 || bounds.height > 0) rectangles.push(bounds);
       } catch {}
     });
-    minX -= PAD; minY -= PAD; maxX += PAD; maxY += PAD;
-    const W = Math.ceil(maxX - minX);
-    const H = Math.ceil(maxY - minY);
+    const bounds = calculateExportBounds(rectangles);
+    if (!bounds || !sourceDiagramSvg || tableNodes.length === 0) return;
 
-    // Clone only the diagram scene. Both the HTML tables and SVG connections
-    // then receive exactly one shared world-to-export translation.
-    const exportStage = document.createElement("div");
-    exportStage.style.cssText = [
-      `position:fixed`,
-      `top:-${H + 200}px`,
-      `left:0`,
-      `width:${W}px`,
-      `height:${H}px`,
-      `overflow:hidden`,
-      `pointer-events:none`,
-      `background:${isDark ? "#1e1e1e" : "#f5f5f5"}`,
-    ].join(";");
-
-    const exportScene = sourceScene.cloneNode(true);
-    // Translucent group fills can be promoted to opaque-looking rounded panels
-    // when html2canvas flattens the cloned SVG. They, and other interaction-only
-    // hit targets, are explicitly excluded without affecting the live canvas.
-    exportScene.querySelectorAll("[data-export-hide]").forEach((element) => element.remove());
-    exportScene.style.cssText = [
-      `position:absolute`,
-      `left:${-minX}px`,
-      `top:${-minY}px`,
-      `width:${W}px`,
-      `height:${H}px`,
-      `transform:none`,
-      `transform-origin:0 0`,
-      `pointer-events:none`,
-    ].join(";");
-    exportStage.appendChild(exportScene);
-    document.body.appendChild(exportStage);
-
-    let canvas;
-    try {
-      // Two frames let fonts, SVG paths, and cloned table dimensions settle.
-      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
-      canvas = await html2canvas(exportStage, {
-        backgroundColor: isDark ? "#1e1e1e" : "#f5f5f5",
-        scale: 2,
-        logging: false,
-        useCORS: true,
-        allowTaint: true,
-        width: W,
-        height: H,
-      });
-    } finally {
-      exportStage.remove();
-    }
-
-    const link = document.createElement("a");
-    link.download = `${fileName || "diagram"}.png`;
-    link.href = canvas.toDataURL("image/png");
-    link.click();
-  }, [tablePositions, diagramTables, tableWidths, isDark, fileName]);
+    const png = await renderDiagramPng({
+      diagramSvg: sourceDiagramSvg,
+      tableNodes,
+      bounds,
+      backgroundColor: isDark ? "#1e1e1e" : "#f5f5f5",
+    });
+    downloadPng(png, fileName);
+  }, [tablePositions, isDark, fileName]);
 
   useLayoutEffect(() => {
     const tableRenames = detectTableRenames(previousTablesRef.current, tables);
