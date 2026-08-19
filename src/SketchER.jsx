@@ -1962,8 +1962,8 @@ export default function SketchER() {
 
   const exportToPng = useCallback(async () => {
     const { default: html2canvas } = await import("html2canvas");
-    const outerEl = canvasRef.current;
-    if (!outerEl || !Object.keys(tablePositions).length) return;
+    const sourceScene = transformRef.current;
+    if (!sourceScene || !Object.keys(tablePositions).length) return;
 
     // ── Bounding box of every rendered diagram element ──────────────────────
     // Tables are HTML, while groups and relationship routes live in the SVG.
@@ -1979,7 +1979,7 @@ export default function SketchER() {
       minX = Math.min(minX, pos.x); minY = Math.min(minY, pos.y);
       maxX = Math.max(maxX, pos.x + w); maxY = Math.max(maxY, pos.y + h);
     }
-    const sourceDiagramSvg = transformRef.current?.querySelector("[data-diagram-svg]");
+    const sourceDiagramSvg = sourceScene.querySelector("[data-diagram-svg]");
     sourceDiagramSvg?.querySelectorAll("[data-export-bounds]").forEach((element) => {
       try {
         const bounds = element.getBBox();
@@ -1995,9 +1995,10 @@ export default function SketchER() {
     const W = Math.ceil(maxX - minX);
     const H = Math.ceil(maxY - minY);
 
-    // ── Clone the canvas area off-screen ─────────────────────────────────────
-    const clone = outerEl.cloneNode(true);
-    clone.style.cssText = [
+    // Clone only the diagram scene. Both the HTML tables and SVG connections
+    // then receive exactly one shared world-to-export translation.
+    const exportStage = document.createElement("div");
+    exportStage.style.cssText = [
       `position:fixed`,
       `top:-${H + 200}px`,
       `left:0`,
@@ -2005,42 +2006,39 @@ export default function SketchER() {
       `height:${H}px`,
       `overflow:hidden`,
       `pointer-events:none`,
+      `background:${isDark ? "#1e1e1e" : "#f5f5f5"}`,
     ].join(";");
 
-    // Reset the inner transform so content starts at (0,0) in the clone
-    const cloneInner = clone.querySelector("[data-transform-container]");
-    if (cloneInner) {
-      cloneInner.style.transform = `translate(${-minX}px,${-minY}px) scale(1)`;
-      const cloneDiagramSvg = cloneInner.querySelector("[data-diagram-svg]");
-      if (cloneDiagramSvg) {
-        cloneDiagramSvg.setAttribute("viewBox", `${minX} ${minY} ${W} ${H}`);
-        cloneDiagramSvg.setAttribute("width", String(W));
-        cloneDiagramSvg.setAttribute("height", String(H));
-        cloneDiagramSvg.style.left = `${minX}px`;
-        cloneDiagramSvg.style.top = `${minY}px`;
-        cloneDiagramSvg.style.width = `${W}px`;
-        cloneDiagramSvg.style.height = `${H}px`;
-      }
+    const exportScene = sourceScene.cloneNode(true);
+    exportScene.style.cssText = [
+      `position:absolute`,
+      `left:${-minX}px`,
+      `top:${-minY}px`,
+      `width:${W}px`,
+      `height:${H}px`,
+      `transform:none`,
+      `transform-origin:0 0`,
+      `pointer-events:none`,
+    ].join(";");
+    exportStage.appendChild(exportScene);
+    document.body.appendChild(exportStage);
+
+    let canvas;
+    try {
+      // Two frames let fonts, SVG paths, and cloned table dimensions settle.
+      await new Promise((resolve) => requestAnimationFrame(() => requestAnimationFrame(resolve)));
+      canvas = await html2canvas(exportStage, {
+        backgroundColor: isDark ? "#1e1e1e" : "#f5f5f5",
+        scale: 2,
+        logging: false,
+        useCORS: true,
+        allowTaint: true,
+        width: W,
+        height: H,
+      });
+    } finally {
+      exportStage.remove();
     }
-
-    // Remove UI overlays (toolbar, minimap, filename, bottom pane)
-    clone.querySelectorAll("[data-export-hide]").forEach((el) => el.remove());
-
-    document.body.appendChild(clone);
-    // Two frames — let the browser lay out and paint the clone
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-
-    const canvas = await html2canvas(clone, {
-      backgroundColor: isDark ? "#1e1e1e" : "#f5f5f5",
-      scale: 2,
-      logging: false,
-      useCORS: true,
-      allowTaint: true,
-      width: W,
-      height: H,
-    });
-
-    document.body.removeChild(clone);
 
     const link = document.createElement("a");
     link.download = `${fileName || "diagram"}.png`;
