@@ -11,6 +11,11 @@ import {
   HIERARCHY_LEAVES_LEFT,
   HIERARCHY_ROOTS_LEFT,
 } from "./autoLayout.js";
+import {
+  longestVerticalSegment,
+  orthogonalPointsToPath,
+  routeOrthogonalConnection,
+} from "./relationshipRouting.js";
 
 const DEFAULT_DBML = `Table users {
   id int [pk]
@@ -278,6 +283,19 @@ function getRelationshipPathKey(ref) {
 }
 
 function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTable, selectedTables, showAllConnections, tableColors, tableWidths, lineMidXOverrides, onLineDragStart }) {
+  const routingObstacles = useMemo(() => tableData.flatMap((table) => {
+    const position = tablePositions[table.name];
+    if (!position) return [];
+    const clearance = 12;
+    return [{
+      table: table.name,
+      left: position.x - clearance,
+      top: position.y - clearance,
+      right: position.x + (tableWidths[table.name] || TABLE_WIDTH) + clearance,
+      bottom: position.y + getTableHeight(table) + clearance,
+    }];
+  }), [tableData, tablePositions, tableWidths]);
+
   // ── Phase 1: resolve direction + column indices for every valid ref ──────
   const items = useMemo(() => {
     const result = [];
@@ -355,12 +373,57 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
     return items;
   }, [items]);
 
+  const routedPaths = useMemo(() => {
+    const routes = new Map();
+    for (const item of itemsWithLanes) {
+      const { ref, fromColIdx, toColIdx, crowDir,
+        fromLane, fromLaneCount, toLane, toLaneCount } = item;
+      const fromPos = tablePositions[ref.from.table];
+      const toPos = tablePositions[ref.to.table];
+      const fromRight = fromPos.x + (tableWidths[ref.from.table] || TABLE_WIDTH);
+      const toRight = toPos.x + (tableWidths[ref.to.table] || TABLE_WIDTH);
+      const fromY = getColumnY(fromPos, fromColIdx);
+      const toY = getColumnY(toPos, toColIdx);
+      const x1 = crowDir === "right" ? fromRight + 1 : fromPos.x - 1;
+      const x2 = (crowDir === "right" || crowDir === "vert-left") ? toPos.x - 1 : toRight + 1;
+      const pathX1 = crowDir === "right" ? x1 + 10 : x1 - 10;
+      const pathX2 = (crowDir === "right" || crowDir === "vert-left") ? x2 - 6 : x2 + 6;
+      const laneOffset = fromLaneCount > 1
+        ? (fromLane - (fromLaneCount - 1) / 2) * LANE_SPACING
+        : 0;
+      const preferredMidX = crowDir === "vert-left"
+        ? Math.min(fromPos.x, toPos.x) - 30 - Math.abs(laneOffset)
+        : (pathX1 + pathX2) / 2 + (crowDir === "right" ? laneOffset : -laneOffset);
+      const arriveOffset = toLaneCount > 1
+        ? (toLane - (toLaneCount - 1) / 2) * ARRIVE_SPREAD
+        : 0;
+      const toYAdjusted = toY + arriveOffset;
+      const pathKey = getRelationshipPathKey(ref);
+      const points = routeOrthogonalConnection({
+        start: { x: pathX1, y: fromY },
+        end: { x: pathX2, y: toYAdjusted },
+        preferredMidX,
+        startDirection: crowDir === "right" ? 1 : -1,
+        endDirection: (crowDir === "right" || crowDir === "vert-left") ? -1 : 1,
+        obstacles: routingObstacles.filter(({ table }) =>
+          table !== ref.from.table && table !== ref.to.table),
+        manualMidX: lineMidXOverrides[pathKey],
+        lane: fromLane,
+      });
+      routes.set(pathKey, {
+        path: orthogonalPointsToPath(points),
+        draggableSegment: longestVerticalSegment(points),
+      });
+    }
+    return routes;
+  }, [itemsWithLanes, lineMidXOverrides, routingObstacles, tablePositions, tableWidths]);
+
   // ── Render ────────────────────────────────────────────────────────────────
   const lines = [];
 
   for (const item of itemsWithLanes) {
     const { ref, fromColIdx, toColIdx, crowDir,
-            fromLane, fromLaneCount, toLane, toLaneCount } = item;
+            toLane, toLaneCount } = item;
 
     const fromPos = tablePositions[ref.from.table];
     const toPos   = tablePositions[ref.to.table];
@@ -374,27 +437,6 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
     // vert-left: FROM uses left edge, TO also uses left edge (C-shape around outside)
     const x1 = crowDir === "right" ? fromRight + 1 : fromPos.x - 1;
     const x2 = (crowDir === "right" || crowDir === "vert-left") ? toPos.x - 1 : toRight + 1;
-
-    // Crow's foot depth = 10px; circle sits 10px from the table edge
-    const pathX1  = crowDir === "right" ? x1 + 10 : x1 - 10;
-    const pathX2  = (crowDir === "right" || crowDir === "vert-left") ? x2 - 6  : x2 + 6;
-    const circleX = (crowDir === "right" || crowDir === "vert-left") ? x2 - 10 : x2 + 10;
-
-    // ── FROM-side lane: offset midpoint so parallel corridors don't overlap ──
-    const laneOffset = fromLaneCount > 1
-      ? (fromLane - (fromLaneCount - 1) / 2) * LANE_SPACING
-      : 0;
-    let midX;
-    if (crowDir === "vert-left") {
-      // C-shape: midX is to the LEFT of both tables' left edges, lanes spread further left
-      const outerLeft = Math.min(fromPos.x, toPos.x) - 30;
-      midX = outerLeft - Math.abs(laneOffset);
-    } else {
-      const baseMidX = (pathX1 + pathX2) / 2;
-      // For "right", higher lane index → larger midX (fan out rightward).
-      // For "left",  higher lane index → smaller midX (fan out leftward) — hence the sign flip.
-      midX = baseMidX + (crowDir === "right" ? laneOffset : -laneOffset);
-    }
 
     // ── TO-side lane: spread circles that land on the same PK column ─────────
     const arriveOffset = toLaneCount > 1
@@ -420,15 +462,7 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
     const cardAnchor = (crowDir === "right" || crowDir === "vert-left") ? "end"   : "start";
 
     const pathKey = getRelationshipPathKey(ref);
-    // Apply user's manual midX drag override if present
-    const finalMidX = lineMidXOverrides[pathKey] ?? midX;
-    const path = `M ${pathX1} ${fromY} H ${finalMidX} V ${toYAdj} H ${pathX2}`;
-
-    // Vertical segment geometry (for hit area + grip dot)
-    const segMinY = Math.min(fromY, toYAdj);
-    const segMaxY = Math.max(fromY, toYAdj);
-    const segMidY = (fromY + toYAdj) / 2;
-    const hasVertSeg = segMaxY - segMinY > 4;
+    const { path, draggableSegment } = routedPaths.get(pathKey);
 
     lines.push(
       <g key={pathKey} opacity={opacity}>
@@ -443,17 +477,18 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
           strokeDasharray={ref.inactive ? "6 5" : undefined} />
 
         {/* Draggable hit area on the vertical corridor segment */}
-        {hasVertSeg && (
+        {draggableSegment && (
           <line
-            x1={finalMidX} y1={segMinY} x2={finalMidX} y2={segMaxY}
+            x1={draggableSegment.x} y1={draggableSegment.minY}
+            x2={draggableSegment.x} y2={draggableSegment.maxY}
             stroke="transparent" strokeWidth="16"
             style={{ cursor: "col-resize", pointerEvents: "stroke" }}
-            onMouseDown={(e) => { e.stopPropagation(); onLineDragStart(pathKey, e.clientX, finalMidX); }}
+            onMouseDown={(e) => { e.stopPropagation(); onLineDragStart(pathKey, e.clientX, draggableSegment.x); }}
           />
         )}
         {/* Grip dot — subtle affordance on the vertical segment midpoint */}
-        {hasVertSeg && (
-          <circle cx={finalMidX} cy={segMidY} r="2.5"
+        {draggableSegment && (
+          <circle cx={draggableSegment.x} cy={(draggableSegment.minY + draggableSegment.maxY) / 2} r="2.5"
             fill={lineColor} opacity={isActive ? 0.6 : 0.25}
             style={{ pointerEvents: "none" }} />
         )}
