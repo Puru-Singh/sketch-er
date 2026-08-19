@@ -2364,8 +2364,16 @@ export default function SketchER() {
           background: rgba(16,185,129,0.15) !important;
           transition: background 0.5s ease-out;
         }
+        .monaco-editor .overlayWidgets {
+          height: 100%;
+          pointer-events: none;
+        }
+        .monaco-editor .overlayWidgets > * {
+          pointer-events: auto;
+        }
         .monaco-editor .find-widget {
-          top: 30px !important;
+          top: auto !important;
+          bottom: 12px !important;
           isolation: isolate;
           pointer-events: auto !important;
         }
@@ -2587,8 +2595,7 @@ export default function SketchER() {
               tabSize: 2,
               insertSpaces: true,
               wordWrap: "on",
-              find: { addExtraSpaceOnTop: true },
-              padding: { top: 10 },
+              padding: { top: 10, bottom: 80 },
               overviewRulerLanes: 0,
               hideCursorInOverviewRuler: true,
               overviewRulerBorder: false,
