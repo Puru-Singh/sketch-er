@@ -272,6 +272,22 @@ function CardinalityEnd({ x, y, dir, cardinality, color }) {
   );
 }
 
+function FlowArrow({ x, y, direction, color }) {
+  const baseX = x - direction * 6;
+  return (
+    <polyline
+      points={`${baseX},${y - 4} ${x},${y} ${baseX},${y + 4}`}
+      fill="none"
+      stroke={color}
+      strokeWidth="1.5"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      opacity="0.85"
+      style={{ pointerEvents: "none" }}
+    />
+  );
+}
+
 // How far apart to spread parallel connections that exit the same table side
 const LANE_SPACING = 24;
 // How far apart to spread multiple connections arriving at the same PK column
@@ -282,7 +298,7 @@ function getRelationshipPathKey(ref) {
   return ref.composite ? `${legacyPathKey}-${ref.id}` : legacyPathKey;
 }
 
-function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTable, selectedTables, showAllConnections, tableColors, tableWidths, lineMidXOverrides, onLineDragStart }) {
+function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTable, selectedTables, showAllConnections, tableColors, tableWidths, lineMidXOverrides, onLineDragStart, reverseConnectionFlow }) {
   const routingObstacles = useMemo(() => tableData.flatMap((table) => {
     const position = tablePositions[table.name];
     if (!position) return [];
@@ -437,12 +453,18 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
     // vert-left: FROM uses left edge, TO also uses left edge (C-shape around outside)
     const x1 = crowDir === "right" ? fromRight + 1 : fromPos.x - 1;
     const x2 = (crowDir === "right" || crowDir === "vert-left") ? toPos.x - 1 : toRight + 1;
-
     // ── TO-side lane: spread circles that land on the same PK column ─────────
     const arriveOffset = toLaneCount > 1
       ? (toLane - (toLaneCount - 1) / 2) * ARRIVE_SPREAD
       : 0;
     const toYAdj = toY + arriveOffset;
+    const fromTableDirection = crowDir === "right" ? -1 : 1;
+    const toTableDirection = (crowDir === "right" || crowDir === "vert-left") ? 1 : -1;
+    const flowArrowX = reverseConnectionFlow
+      ? x2 - toTableDirection * 18
+      : x1 - fromTableDirection * 18;
+    const flowArrowY = reverseConnectionFlow ? toYAdj : fromY;
+    const flowArrowDirection = reverseConnectionFlow ? toTableDirection : fromTableDirection;
 
     // ── Styling ──────────────────────────────────────────────────────────────
     const isActive = showAllConnections
@@ -499,6 +521,7 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
         <CardinalityEnd x={x2} y={toYAdj}
           dir={(crowDir === "right" || crowDir === "vert-left") ? "left" : "right"}
           cardinality={ref.to.cardinality} color={lineColor} />
+        <FlowArrow x={flowArrowX} y={flowArrowY} direction={flowArrowDirection} color={lineColor} />
 
         {/* Cardinality labels */}
         <text x={starX} y={fromY - 7} fill={lineColor} fontSize="11"
@@ -506,10 +529,12 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
         <text x={cardX} y={toYAdj - 7} fill={lineColor} fontSize="9.5"
           fontFamily="'DM Sans', sans-serif" textAnchor={cardAnchor} opacity="0.85">{ref.to.cardinality}</text>
 
-        {/* Animated dot — moves PK → FK (reversed); always shown when showAllConnections */}
+        {/* Animation follows the selected display flow without changing cardinality semantics. */}
         {isActive && (
           <circle r="2.8" fill={lineColor} opacity="0.9">
-            <animateMotion dur="1.8s" repeatCount="indefinite" keyPoints="1;0" keyTimes="0;1" calcMode="linear">
+            <animateMotion dur="1.8s" repeatCount="indefinite"
+              keyPoints={reverseConnectionFlow ? "0;1" : "1;0"}
+              keyTimes="0;1" calcMode="linear">
               <mpath href={`#${pathKey}`} />
             </animateMotion>
           </circle>
@@ -1390,6 +1415,7 @@ Ref order_owner {
               <Row label="Optional endpoints">Add <KBD>?</KBD> on either side of an operator, such as <KBD>&gt;?</KBD> or <KBD>?&gt;</KBD></Row>
               <Row label="Ref settings"><KBD>delete</KBD>, <KBD>update</KBD>, <KBD>color</KBD>, and <KBD>inactive</KBD> are rendered and exposed in line tooltips</Row>
               <Row label="Drag line midpoint">Hover a line to reveal its grip dot, then drag to reroute</Row>
+              <Row label="Connection flow">Use Settings → <strong>Reverse connection flow</strong> to animate and point from the first DBML endpoint to the second</Row>
             </Section>
 
             <Section id="advanced" color="#14b8a6" title="Advanced DBML"
@@ -1760,6 +1786,7 @@ export default function SketchER() {
   const [showSettings, setShowSettings] = useState(false);
   const settingsRef = useRef(null);
   const [jumpToTableOnClick, setJumpToTableOnClick] = useState(saved?.jumpToTableOnClick ?? false);
+  const [reverseConnectionFlow, setReverseConnectionFlow] = useState(saved?.reverseConnectionFlow ?? false);
   const glowTimerRef = useRef(null);
   const glowDecorationsRef = useRef([]);
   const monacoEditorRef = useRef(null);
@@ -1886,26 +1913,26 @@ export default function SketchER() {
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick, isEditorCollapsed }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick, reverseConnectionFlow, isEditorCollapsed }));
       } catch {}
     }, 400);
     return () => clearTimeout(timer);
-  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick, isEditorCollapsed]);
+  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick, reverseConnectionFlow, isEditorCollapsed]);
 
   const [shareCopied, setShareCopied] = useState(false);
   const copyShareLink = useCallback(() => {
-    const encoded = encodeShareState({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], lineMidXOverrides, groupsVisible, fileName, isEditorCollapsed });
+    const encoded = encodeShareState({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], lineMidXOverrides, groupsVisible, fileName, reverseConnectionFlow, isEditorCollapsed });
     const url = `${window.location.origin}${window.location.pathname}#share=${encoded}`;
     navigator.clipboard.writeText(url).then(() => {
       setShareCopied(true);
       setTimeout(() => setShareCopied(false), 2000);
     });
-  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, lineMidXOverrides, groupsVisible, fileName, isEditorCollapsed]);
+  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, lineMidXOverrides, groupsVisible, fileName, reverseConnectionFlow, isEditorCollapsed]);
 
   // Save diagram to a .sker file
   const saveToFile = useCallback(() => {
     const blob = new Blob(
-      [JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, isEditorCollapsed }, null, 2)],
+      [JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, reverseConnectionFlow, isEditorCollapsed }, null, 2)],
       { type: "application/json" }
     );
     const url = URL.createObjectURL(blob);
@@ -1916,7 +1943,7 @@ export default function SketchER() {
     link.click();
     URL.revokeObjectURL(url);
     if (fileName === "Untitled") setFileName("diagram");
-  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName, isEditorCollapsed]);
+  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName, reverseConnectionFlow, isEditorCollapsed]);
 
   // Load diagram from a .sker / .json file
   const loadInputRef = useRef(null);
@@ -1936,6 +1963,7 @@ export default function SketchER() {
         if (state.isDark !== undefined)            setIsDark(state.isDark);
         if (state.lineMidXOverrides !== undefined) setLineMidXOverrides(state.lineMidXOverrides);
         if (state.groupsVisible !== undefined)     setGroupsVisible(state.groupsVisible);
+        if (state.reverseConnectionFlow !== undefined) setReverseConnectionFlow(state.reverseConnectionFlow);
         if (state.isEditorCollapsed !== undefined) setIsEditorCollapsed(state.isEditorCollapsed);
         setFileName(file.name.replace(/\.(sker|json)$/i, ""));
         pendingFitRef.current = true;
@@ -2818,6 +2846,18 @@ export default function SketchER() {
                   <ToggleSwitch checked={jumpToTableOnClick} onChange={() => setJumpToTableOnClick((v) => !v)} theme={theme} />
                   <span style={{ fontSize: "12.5px", fontWeight: 500 }}>Jump to table code on click</span>
                 </label>
+                <div style={{ height: 1, background: theme.toolbarBorder, margin: "12px 0" }} />
+                <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", userSelect: "none" }}>
+                  <ToggleSwitch checked={reverseConnectionFlow} onChange={() => setReverseConnectionFlow((value) => !value)} theme={theme} />
+                  <div>
+                    <div style={{ fontSize: "12.5px", fontWeight: 500 }}>Reverse connection flow</div>
+                    <div style={{ color: theme.textMuted, fontSize: "10px", lineHeight: 1.4, marginTop: "3px" }}>
+                      {reverseConnectionFlow
+                        ? "First DBML endpoint → second endpoint"
+                        : "Second DBML endpoint → first endpoint"}
+                    </div>
+                  </div>
+                </div>
               </div>
             )}
           </div>
@@ -3254,6 +3294,7 @@ export default function SketchER() {
               tableWidths={tableWidths}
               lineMidXOverrides={lineMidXOverrides}
               onLineDragStart={handleLineDragStart}
+              reverseConnectionFlow={reverseConnectionFlow}
             />
           </svg>
 
