@@ -504,11 +504,14 @@ function TableNode({ table, position, color, onDragStart, onColorChange, isSelec
   const pickerLit = pickerHovered || pickerFocused;
 
   const handleMouseDown = (e) => {
+    // Every mouse button originating on a table must stay out of the canvas
+    // handler. In particular, a right-click must not clear multi-selection
+    // before the subsequent contextmenu event reads it.
+    e.stopPropagation();
     if (e.button !== 0) return;
     if (e.target.closest(".color-picker-area") || e.target.closest(".table-collapse-toggle")) return;
     // Prevent the browser's native text/image drag ghost while moving a table.
     e.preventDefault();
-    e.stopPropagation();
     if (e.ctrlKey || e.metaKey) {
       // Ctrl/Cmd+click: toggle membership in multi-selection, no drag
       onSelect(table.name, true);
@@ -1144,7 +1147,7 @@ function InfoModal({ theme, onClose }) {
         </div>
 
         {/* Body = sidebar + content */}
-        <div style={{ display: "flex", flex: 1, overflow: "hidden" }}>
+        <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
 
           {/* Left sidebar */}
           <div style={{
@@ -1204,7 +1207,7 @@ function InfoModal({ theme, onClose }) {
               }
               setActiveSection(current);
             }}
-            style={{ flex: 1, overflowY: "auto", padding: "24px 28px" }}
+            style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", padding: "24px 28px" }}
           >
             <Section id="tables" color="#10b981" title="Creating Tables"
               icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>}>
@@ -1581,7 +1584,7 @@ export default function SketchER() {
   const [zoom, setZoom] = useState(1);
   const zoomRef = useRef(zoom);
   const canvasOffsetRef = useRef(canvasOffset);
-  const [editorWidth, setEditorWidth] = useState(370);
+  const [editorWidth, setEditorWidth] = useState(470);
   const [isResizing, setIsResizing] = useState(false);
   const canvasRef = useRef(null);
   const transformRef = useRef(null);
@@ -1898,6 +1901,7 @@ export default function SketchER() {
   }, [tablePositions, zoom, canvasOffset]);
 
   const handleCanvasMouseDown = (e) => {
+    if (e.button !== 0) return;
     setIsPanning(true);
     setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
     const emptySelection = new Set();
@@ -1946,7 +1950,7 @@ export default function SketchER() {
     } else if (isPanning && panStart) {
       setCanvasOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
     } else if (isResizing) {
-      setEditorWidth(Math.max(360, Math.min(600, e.clientX)));
+      setEditorWidth(Math.max(460, Math.min(600, e.clientX)));
     }
   }, [draggingGroup, draggingLine, dragging, isPanning, panStart, zoom, canvasOffset, isResizing]);
 
@@ -2330,26 +2334,12 @@ export default function SketchER() {
           background: rgba(16,185,129,0.15) !important;
           transition: background 0.5s ease-out;
         }
-        .monaco-editor .find-widget.narrow-find-widget:not(.collapsed-find-widget) {
-          max-width: calc(100% - 16px) !important;
-        }
-        .monaco-editor .find-widget .find-actions,
-        .monaco-editor .find-widget .replace-actions {
-          position: relative;
-          z-index: 2;
-          flex-shrink: 0;
-        }
-        .monaco-editor .find-widget .button {
-          box-sizing: content-box;
-          pointer-events: auto;
-          flex-shrink: 0;
-        }
       `}</style>
       {/* ===== Editor Panel ===== */}
       <div
         style={{
           width: editorWidth,
-          minWidth: 360,
+          minWidth: 460,
           display: "flex",
           flexDirection: "column",
           background: theme.editorPanelBg,
@@ -2913,8 +2903,6 @@ export default function SketchER() {
           </form>
         )}
 
-        {showHelp && <InfoModal theme={theme} onClose={() => setShowHelp(false)} />}
-
         {/* Hidden file input for Open */}
         <input
           ref={loadInputRef}
@@ -2924,6 +2912,8 @@ export default function SketchER() {
           style={{ display: "none" }}
         />
       </div>
+
+      {showHelp && <InfoModal theme={theme} onClose={() => setShowHelp(false)} />}
     </div>
   );
 }
