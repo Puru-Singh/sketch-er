@@ -22,17 +22,26 @@ export async function copyTextToClipboard(text, environment = {}) {
   textarea.readOnly = true;
   textarea.style.position = "fixed";
   textarea.style.left = "-9999px";
+  textarea.style.top = "0";
   textarea.style.opacity = "0";
   documentObject.body.appendChild(textarea);
 
   try {
     textarea.focus();
     textarea.select();
+    textarea.setSelectionRange?.(0, text.length);
     if (!documentObject.execCommand("copy")) {
       throw clipboardError || new Error("The browser rejected the copy request.");
     }
   } finally {
-    textarea.remove();
-    activeElement?.focus?.();
+    try {
+      if (textarea.parentNode) textarea.parentNode.removeChild(textarea);
+      else textarea.remove?.();
+    } catch {}
+    try {
+      activeElement?.focus?.({ preventScroll: true });
+    } catch {
+      try { activeElement?.focus?.(); } catch {}
+    }
   }
 }

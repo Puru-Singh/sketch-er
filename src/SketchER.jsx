@@ -3,7 +3,6 @@
 
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, useDeferredValue } from "react";
 import MonacoEditor from "@monaco-editor/react";
-import LZString from "lz-string";
 import { dbmlLanguageConfig, dbmlMonarchTokensProvider, EMPTY_DBML_MODEL, parseDBMLDocument } from "./dbmlParser.js";
 import {
   buildHierarchicalLayout,
@@ -19,6 +18,9 @@ import {
 import { detectTableRenames } from "./tableIdentity.js";
 import { calculateExportBounds, downloadPng, placeRightSideExportNode, renderDiagramPng } from "./diagramExport.js";
 import { buildColorLegendEntries } from "./colorLegend.js";
+import { copyTextToClipboard } from "./clipboard.js";
+import { buildShareUrl, decodeShareHash } from "./shareLink.js";
+import { generateShareQrDataUrl, SHARE_QR_TOO_LARGE } from "./shareQr.js";
 
 const DEFAULT_DBML = `Table users {
   id int [pk]
@@ -1010,7 +1012,6 @@ function ArrangeControl({ onArrange, isArranging, theme }) {
           <polyline points="2,4 6,8 10,4" />
         </svg>
       </button>
-
       {open && (
         <div style={{
           position: "absolute",
@@ -1086,7 +1087,425 @@ function ArrangeControl({ onArrange, isArranging, theme }) {
   );
 }
 
-function Toolbar({ onAutoLayout, isAutoLayoutRunning, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp, onShare, shareCopied, allTablesCollapsed, onToggleAllTables }) {
+function ShareControl({ onCopyLink, onShowQr, copyStatus, theme, triggerRef }) {
+  const [open, setOpen] = useState(false);
+  const containerRef = useRef(null);
+  const firstItemRef = useRef(null);
+  const lastItemRef = useRef(null);
+  const initialFocusRef = useRef("first");
+
+  useEffect(() => {
+    if (!open) return undefined;
+
+    const focusFrame = requestAnimationFrame(() => {
+      (initialFocusRef.current === "last" ? lastItemRef.current : firstItemRef.current)?.focus();
+    });
+    const handlePointerDown = (event) => {
+      if (containerRef.current && !containerRef.current.contains(event.target)) setOpen(false);
+    };
+    const handleFocusIn = (event) => {
+      if (containerRef.current && !containerRef.current.contains(event.target)) setOpen(false);
+    };
+    const handleKeyDown = (event) => {
+      if (event.key !== "Escape") return;
+      event.preventDefault();
+      setOpen(false);
+      triggerRef.current?.focus();
+    };
+
+    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("focusin", handleFocusIn);
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      cancelAnimationFrame(focusFrame);
+      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("focusin", handleFocusIn);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [open, triggerRef]);
+
+  const handleMenuKeyDown = (event) => {
+    if (event.key === "Tab") {
+      setOpen(false);
+      return;
+    }
+    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
+    event.preventDefault();
+    const items = [...containerRef.current.querySelectorAll('[role="menuitem"]')];
+    const currentIndex = items.indexOf(document.activeElement);
+    const direction = event.key === "ArrowDown" ? 1 : -1;
+    items[(currentIndex + direction + items.length) % items.length]?.focus();
+  };
+
+  const menuItemStyle = {
+    width: "100%",
+    boxSizing: "border-box",
+    display: "flex",
+    alignItems: "center",
+    gap: "10px",
+    padding: "10px",
+    border: "none",
+    borderRadius: "7px",
+    background: "transparent",
+    color: theme.textPrimary,
+    cursor: "pointer",
+    textAlign: "left",
+    fontFamily: "'DM Sans', sans-serif",
+  };
+  const setItemHighlight = (event, highlighted) => {
+    event.currentTarget.style.background = highlighted ? theme.editorPanelBg : "transparent";
+  };
+  return (
+    <div ref={containerRef} style={{ position: "relative" }}>
+      <button
+        ref={triggerRef}
+        type="button"
+        aria-haspopup="menu"
+        aria-expanded={open}
+        aria-label="Share diagram"
+        title="Share diagram"
+        onClick={() => {
+          initialFocusRef.current = "first";
+          setOpen((previous) => !previous);
+        }}
+        onKeyDown={(event) => {
+          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+            event.preventDefault();
+            initialFocusRef.current = event.key === "ArrowUp" ? "last" : "first";
+            if (open) {
+              (event.key === "ArrowUp" ? lastItemRef.current : firstItemRef.current)?.focus();
+            }
+            setOpen(true);
+          }
+        }}
+        style={{
+          position: "relative",
+          padding: "7px 10px 7px 12px",
+          background: open ? "#10b98122" : theme.toolbarBg,
+          border: `1px solid ${open ? "#10b981" : theme.toolbarBorder}`,
+          borderRadius: "8px",
+          color: copyStatus === "error" ? "#ef4444" : copyStatus === "copied" || open ? "#10b981" : theme.toolbarText,
+          cursor: "pointer",
+          fontSize: "12px",
+          display: "flex",
+          alignItems: "center",
+          gap: "5px",
+          fontFamily: "'DM Sans', sans-serif",
+          fontWeight: 500,
+          transition: "all 0.15s",
+        }}
+      >
+        {copyStatus === "copied" ? (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <polyline points="20 6 9 17 4 12"/>
+          </svg>
+        ) : (
+          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
+            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
+          </svg>
+        )}
+        <span>Share</span>
+        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
+          <path d="m3 4.5 3 3 3-3"/>
+        </svg>
+      </button>
+      <span
+        role="status"
+        aria-live="polite"
+        style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}
+      >
+        {copyStatus === "copied" ? "Shareable link copied." : copyStatus === "error" ? "Unable to copy the shareable link." : ""}
+      </span>
+
+      {open && (
+        <div
+          role="menu"
+          aria-label="Share options"
+          onKeyDown={handleMenuKeyDown}
+          style={{
+            position: "absolute",
+            top: "calc(100% + 8px)",
+            right: 0,
+            width: "min(238px, calc(100vw - 24px))",
+            boxSizing: "border-box",
+            padding: "6px",
+            background: theme.toolbarBg,
+            border: `1px solid ${theme.toolbarBorder}`,
+            borderRadius: "10px",
+            boxShadow: "0 10px 30px rgba(0,0,0,0.18)",
+            zIndex: 250,
+            fontFamily: "'DM Sans', sans-serif",
+          }}
+        >
+          <button
+            ref={firstItemRef}
+            type="button"
+            role="menuitem"
+            tabIndex={0}
+            onClick={() => {
+              setOpen(false);
+              void onCopyLink();
+              requestAnimationFrame(() => triggerRef.current?.focus());
+            }}
+            onMouseEnter={(event) => setItemHighlight(event, true)}
+            onMouseLeave={(event) => setItemHighlight(event, false)}
+            onFocus={(event) => setItemHighlight(event, true)}
+            onBlur={(event) => setItemHighlight(event, false)}
+            style={menuItemStyle}
+          >
+            <span style={{ width: 30, height: 30, flexShrink: 0, borderRadius: "7px", background: "#10b98118", color: "#10b981", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
+              </svg>
+            </span>
+            <span>
+              <span style={{ display: "block", fontSize: "12px", fontWeight: 700 }}>Copy shareable link</span>
+              <span style={{ display: "block", marginTop: 2, color: theme.textMuted, fontSize: "10.5px" }}>Copy the current diagram URL</span>
+            </span>
+          </button>
+          <button
+            ref={lastItemRef}
+            type="button"
+            role="menuitem"
+            tabIndex={-1}
+            onClick={() => { setOpen(false); onShowQr(); }}
+            onMouseEnter={(event) => setItemHighlight(event, true)}
+            onMouseLeave={(event) => setItemHighlight(event, false)}
+            onFocus={(event) => setItemHighlight(event, true)}
+            onBlur={(event) => setItemHighlight(event, false)}
+            style={menuItemStyle}
+          >
+            <span style={{ width: 30, height: 30, flexShrink: 0, borderRadius: "7px", background: "#3b82f618", color: "#3b82f6", display: "flex", alignItems: "center", justifyContent: "center" }}>
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM18 18h3v3h-3zM18 14h3M14 18v3"/>
+              </svg>
+            </span>
+            <span>
+              <span style={{ display: "block", fontSize: "12px", fontWeight: 700 }}>Show QR code</span>
+              <span style={{ display: "block", marginTop: 2, color: theme.textMuted, fontSize: "10.5px" }}>Scan from a phone</span>
+            </span>
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
+function ShareQrModal({ url, fileName, theme, copyStatus, onCopy, onClose }) {
+  const [qrDataUrl, setQrDataUrl] = useState(null);
+  const [qrError, setQrError] = useState(null);
+  const panelRef = useRef(null);
+  const closeRef = useRef(null);
+
+  useEffect(() => {
+    let active = true;
+    setQrDataUrl(null);
+    setQrError(null);
+    generateShareQrDataUrl(url).then((result) => {
+      if (!active) return;
+      setQrDataUrl(result.dataUrl);
+      setQrError(result.error);
+    });
+    return () => { active = false; };
+  }, [url]);
+
+  useEffect(() => {
+    const focusFrame = requestAnimationFrame(() => closeRef.current?.focus());
+    const handleKeyDown = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        onClose();
+        return;
+      }
+      if (event.key !== "Tab" || !panelRef.current) return;
+      const focusable = [...panelRef.current.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])')];
+      if (focusable.length === 0) return;
+      const first = focusable[0];
+      const last = focusable[focusable.length - 1];
+      if (!panelRef.current.contains(document.activeElement)) {
+        event.preventDefault();
+        (event.shiftKey ? last : first).focus();
+      } else if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first.focus();
+      }
+    };
+    document.addEventListener("keydown", handleKeyDown);
+    return () => {
+      cancelAnimationFrame(focusFrame);
+      document.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [onClose]);
+
+  let shareHost = "";
+  let isLocalOnly = false;
+  try {
+    const parsedUrl = new URL(url);
+    shareHost = parsedUrl.host || "Local file";
+    const hostname = parsedUrl.hostname.toLowerCase().replace(/\.$/, "");
+    isLocalOnly = parsedUrl.protocol === "file:"
+      || hostname === "localhost"
+      || hostname === "0.0.0.0"
+      || hostname === "[::1]"
+      || hostname === "::1"
+      || /^127(?:\.\d{1,3}){3}$/.test(hostname);
+  } catch {
+    shareHost = window.location.host || "Local file";
+    isLocalOnly = true;
+  }
+  const isTooLarge = qrError === SHARE_QR_TOO_LARGE;
+
+  return (
+    <div
+      data-canvas-wheel-ignore="1"
+      role="dialog"
+      aria-modal="true"
+      aria-labelledby="share-qr-title"
+      onClick={onClose}
+      onWheelCapture={(event) => event.stopPropagation()}
+      style={{
+        position: "fixed",
+        inset: 0,
+        zIndex: 600,
+        display: "flex",
+        alignItems: "center",
+        justifyContent: "center",
+        padding: "20px",
+        boxSizing: "border-box",
+        background: "rgba(0,0,0,0.56)",
+        backdropFilter: "blur(5px)",
+        fontFamily: "'DM Sans', sans-serif",
+      }}
+    >
+      <div
+        ref={panelRef}
+        onClick={(event) => event.stopPropagation()}
+        style={{
+          width: "min(430px, 94vw)",
+          maxHeight: "calc(100dvh - 40px)",
+          overflowY: "auto",
+          boxSizing: "border-box",
+          padding: "20px",
+          border: `1px solid ${theme.toolbarBorder}`,
+          borderRadius: "16px",
+          background: theme.toolbarBg,
+          boxShadow: "0 24px 70px rgba(0,0,0,0.34)",
+        }}
+      >
+        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px", marginBottom: "16px" }}>
+          <div style={{ minWidth: 0 }}>
+            <div id="share-qr-title" style={{ color: theme.textPrimary, fontSize: "16px", fontWeight: 750 }}>Share via QR code</div>
+            <div style={{ marginTop: "5px", color: theme.textSecondary, fontSize: "11.5px", lineHeight: 1.5, overflowWrap: "anywhere" }}>
+              Scan to open <strong>{fileName || "this diagram"}</strong> on another device.
+            </div>
+          </div>
+          <button
+            ref={closeRef}
+            type="button"
+            onClick={onClose}
+            aria-label="Close QR code"
+            title="Close"
+            style={{
+              width: 30,
+              height: 30,
+              boxSizing: "border-box",
+              flexShrink: 0,
+              padding: 0,
+              border: `1px solid ${theme.toolbarBorder}`,
+              borderRadius: "8px",
+              background: theme.editorPanelBg,
+              color: theme.textSecondary,
+              cursor: "pointer",
+              fontSize: "20px",
+              lineHeight: 1,
+            }}
+          >×</button>
+        </div>
+
+        <div
+          aria-live="polite"
+          style={{
+            minHeight: 340,
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            boxSizing: "border-box",
+            padding: "10px",
+            border: "1px solid #e5e7eb",
+            borderRadius: "12px",
+            background: "#ffffff",
+          }}
+        >
+          {qrDataUrl ? (
+            <img src={qrDataUrl} width="320" height="320" alt="QR code for the shared diagram" style={{ display: "block", width: "min(320px, 100%)", height: "auto" }} />
+          ) : qrError ? (
+            <div style={{ maxWidth: 260, textAlign: "center", color: "#374151", fontSize: "12px", lineHeight: 1.6 }}>
+              <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: "block", margin: "0 auto 10px" }}>
+                <path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>
+              </svg>
+              {isTooLarge
+                ? "This diagram is too large to fit in a QR code. Copy the shareable link instead."
+                : "Unable to generate a QR code. You can still copy the shareable link."}
+            </div>
+          ) : (
+            <div style={{ textAlign: "center", color: "#6b7280", fontSize: "12px" }}>
+              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: "block", margin: "0 auto 10px" }}>
+                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM18 18h3v3h-3z"/>
+              </svg>
+              Generating QR code…
+            </div>
+          )}
+        </div>
+
+        <div style={{ marginTop: "12px", display: "flex", justifyContent: "space-between", gap: "10px", color: theme.textMuted, fontSize: "10.5px" }}>
+          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shareHost}</span>
+          <span style={{ flexShrink: 0 }}>{url.length.toLocaleString()} characters</span>
+        </div>
+        {isLocalOnly && (
+          <div role="note" style={{ marginTop: "10px", padding: "8px 10px", border: "1px solid #f59e0b55", borderRadius: "8px", background: "#f59e0b14", color: theme.textSecondary, fontSize: "10.5px", lineHeight: 1.5 }}>
+            This link uses a local address. A phone can open it only when SketchER is served from a deployed or network-accessible URL.
+          </div>
+        )}
+        <button
+          type="button"
+          onClick={() => { void onCopy(url); }}
+          style={{
+            width: "100%",
+            boxSizing: "border-box",
+            marginTop: "14px",
+            padding: "9px 12px",
+            border: "none",
+            borderRadius: "8px",
+            background: copyStatus === "error" ? "#b91c1c" : "#047857",
+            color: "#ffffff",
+            cursor: "pointer",
+            fontFamily: "'DM Sans', sans-serif",
+            fontSize: "12px",
+            fontWeight: 700,
+          }}
+        >
+          {copyStatus === "copied" ? "Link copied!" : copyStatus === "error" ? "Copy failed — try again" : "Copy shareable link"}
+        </button>
+        <span
+          role="status"
+          aria-live="polite"
+          style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}
+        >
+          {copyStatus === "copied" ? "Shareable link copied." : copyStatus === "error" ? "Unable to copy the shareable link." : ""}
+        </span>
+        <div style={{ marginTop: "9px", color: theme.textMuted, textAlign: "center", fontSize: "10px", lineHeight: 1.4 }}>
+          The QR code is generated locally in your browser.
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Toolbar({ onAutoLayout, isAutoLayoutRunning, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp, onCopyShareLink, onShowShareQr, shareCopyStatus, shareTriggerRef, allTablesCollapsed, onToggleAllTables }) {
   return (
     <div data-export-hide="1" onMouseDown={(e) => e.stopPropagation()} style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
       <TBtn onClick={onToggleTheme} tip={isDark ? "Switch to light mode" : "Switch to dark mode"} theme={theme}>
@@ -1153,19 +1572,13 @@ function Toolbar({ onAutoLayout, isAutoLayoutRunning, onZoomIn, onZoomOut, onZoo
         </svg>
         Export
       </TBtn>
-      <TBtn onClick={onShare} tip="Copy shareable link" theme={theme} tipAlign="right">
-        {shareCopied ? (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <polyline points="20 6 9 17 4 12"/>
-          </svg>
-        ) : (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-          </svg>
-        )}
-        {shareCopied ? "Copied!" : "Share"}
-      </TBtn>
+      <ShareControl
+        onCopyLink={onCopyShareLink}
+        onShowQr={onShowShareQr}
+        copyStatus={shareCopyStatus}
+        theme={theme}
+        triggerRef={shareTriggerRef}
+      />
       <TBtn onClick={onShowHelp} tip="Help & reference" theme={theme} tipAlign="right">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
           <circle cx="12" cy="12" r="10"/>
@@ -1481,6 +1894,8 @@ Table core.items {
               <Row label="Save (.sker)">Toolbar → <strong>Save</strong> — downloads a <KBD>diagram.sker</KBD> JSON file</Row>
               <Row label="Open (.sker)">Toolbar → <strong>Open</strong> — loads a previously saved <KBD>.sker</KBD> file</Row>
               <Row label="Export PNG">Toolbar → <strong>Export</strong> — renders a 2× resolution PNG and includes the legend when visible</Row>
+              <Row label="Share link">Toolbar → <strong>Share</strong> → <strong>Copy shareable link</strong></Row>
+              <Row label="Share QR code">Toolbar → <strong>Share</strong> → <strong>Show QR code</strong> — scan it from a phone; oversized diagrams can still be copied as links</Row>
               <p style={{ marginTop: 10, marginBottom: 0 }}>The <KBD>.sker</KBD> file is plain JSON — safe to version in git or share with teammates.</p>
             </Section>
           </div>
@@ -1856,22 +2271,8 @@ function BottomGroupPane({ groupsVisible, onToggle, showAllConnections, onToggle
 
 const STORAGE_KEY = "sketcher-state";
 
-function encodeShareState(state) {
-  return LZString.compressToEncodedURIComponent(JSON.stringify(state));
-}
-
-function decodeShareState() {
-  try {
-    const hash = window.location.hash;
-    if (!hash.startsWith("#share=")) return null;
-    const encoded = hash.slice("#share=".length);
-    const json = LZString.decompressFromEncodedURIComponent(encoded);
-    return json ? JSON.parse(json) : null;
-  } catch { return null; }
-}
-
 function loadInitialState() {
-  const fromHash = decodeShareState();
+  const fromHash = decodeShareHash(window.location.hash);
   if (fromHash) return fromHash;
   try {
     const raw = localStorage.getItem(STORAGE_KEY);
@@ -2085,15 +2486,72 @@ export default function SketchER() {
     return () => clearTimeout(timer);
   }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, fileName, jumpToTableOnClick, reverseConnectionFlow, isEditorCollapsed]);
 
-  const [shareCopied, setShareCopied] = useState(false);
-  const copyShareLink = useCallback(() => {
-    const encoded = encodeShareState({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, fileName, reverseConnectionFlow, isEditorCollapsed });
-    const url = `${window.location.origin}${window.location.pathname}#share=${encoded}`;
-    navigator.clipboard.writeText(url).then(() => {
-      setShareCopied(true);
-      setTimeout(() => setShareCopied(false), 2000);
-    });
-  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, fileName, reverseConnectionFlow, isEditorCollapsed]);
+  const [shareCopyStatus, setShareCopyStatus] = useState("idle");
+  const [shareQrUrl, setShareQrUrl] = useState(null);
+  const shareCopyTimerRef = useRef(null);
+  const shareCopyOperationRef = useRef(0);
+  const shareTriggerRef = useRef(null);
+
+  const createShareUrl = useCallback(() => buildShareUrl({
+    dbml,
+    tablePositions,
+    tableColors,
+    groupColors,
+    recentColors,
+    collapsedTables: [...collapsedTables],
+    lineMidXOverrides,
+    groupsVisible,
+    colorLegendVisible,
+    colorLegendDescriptions,
+    fileName,
+    reverseConnectionFlow,
+    isEditorCollapsed,
+  }, window.location), [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, fileName, reverseConnectionFlow, isEditorCollapsed]);
+
+  const copyShareLink = useCallback(async (urlOverride) => {
+    const url = typeof urlOverride === "string" ? urlOverride : createShareUrl();
+    const operationId = ++shareCopyOperationRef.current;
+    if (shareCopyTimerRef.current) {
+      clearTimeout(shareCopyTimerRef.current);
+      shareCopyTimerRef.current = null;
+    }
+    setShareCopyStatus("idle");
+    try {
+      await copyTextToClipboard(url);
+      if (operationId !== shareCopyOperationRef.current) return;
+      setShareCopyStatus("copied");
+    } catch {
+      if (operationId !== shareCopyOperationRef.current) return;
+      setShareCopyStatus("error");
+    }
+    if (shareCopyTimerRef.current) clearTimeout(shareCopyTimerRef.current);
+    shareCopyTimerRef.current = setTimeout(() => {
+      if (operationId !== shareCopyOperationRef.current) return;
+      setShareCopyStatus("idle");
+      shareCopyTimerRef.current = null;
+    }, 2500);
+  }, [createShareUrl]);
+
+  const showShareQr = useCallback(() => {
+    shareCopyOperationRef.current += 1;
+    if (shareCopyTimerRef.current) {
+      clearTimeout(shareCopyTimerRef.current);
+      shareCopyTimerRef.current = null;
+    }
+    setShareCopyStatus("idle");
+    setShowHelp(false);
+    setShareQrUrl(createShareUrl());
+  }, [createShareUrl]);
+
+  const closeShareQr = useCallback(() => {
+    setShareQrUrl(null);
+    requestAnimationFrame(() => shareTriggerRef.current?.focus());
+  }, []);
+
+  useEffect(() => () => {
+    shareCopyOperationRef.current += 1;
+    if (shareCopyTimerRef.current) clearTimeout(shareCopyTimerRef.current);
+  }, []);
 
   // Save diagram to a .sker file
   const saveToFile = useCallback(() => {
@@ -3391,8 +3849,10 @@ export default function SketchER() {
           onExport={exportToPng}
           onSave={saveToFile}
           onLoad={() => loadInputRef.current?.click()}
-          onShare={copyShareLink}
-          shareCopied={shareCopied}
+          onCopyShareLink={copyShareLink}
+          onShowShareQr={showShareQr}
+          shareCopyStatus={shareCopyStatus}
+          shareTriggerRef={shareTriggerRef}
           onShowHelp={() => setShowHelp(true)}
           allTablesCollapsed={allTablesCollapsed}
           onToggleAllTables={toggleAllTablesCollapsed}
@@ -3669,6 +4129,16 @@ export default function SketchER() {
       </div>
 
       {showHelp && <InfoModal theme={theme} onClose={() => setShowHelp(false)} />}
+      {shareQrUrl && (
+        <ShareQrModal
+          url={shareQrUrl}
+          fileName={fileName}
+          theme={theme}
+          copyStatus={shareCopyStatus}
+          onCopy={copyShareLink}
+          onClose={closeShareQr}
+        />
+      )}
     </div>
   );
 }

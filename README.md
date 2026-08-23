@@ -90,6 +90,7 @@ Open [http://localhost:5173](http://localhost:5173).
 | Save | Download diagram as a `.sker` file |
 | Open | Load a previously saved `.sker` file |
 | Export | Export the full diagram as a 2× resolution PNG |
+| Share | Copy a shareable link or show an on-screen QR code for phone scanning |
 | ? | Open the help & reference modal |
 
 ### File Management
@@ -97,6 +98,8 @@ Open [http://localhost:5173](http://localhost:5173).
 - The filename is used when saving (`.sker`) and exporting (`.png`)
 - Filename persists across refreshes via `localStorage`
 - Individual table collapse state persists in local storage, share links, and `.sker` files
+- The Share menu uses one compressed diagram URL for both link copying and QR codes
+- QR codes are generated locally in the browser; if a diagram exceeds QR capacity, the full shareable link remains available to copy
 - `.sker` files are plain JSON — safe to version in git or share with teammates
 
 ### PNG Export
