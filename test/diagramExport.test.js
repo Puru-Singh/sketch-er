@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calculateExportBounds, calculateExportScale } from "../src/diagramExport.js";
+import { calculateExportBounds, calculateExportScale, placeRightSideExportNode } from "../src/diagramExport.js";
 
 test("export bounds include table and group geometry in one coordinate space", () => {
   const bounds = calculateExportBounds([
@@ -38,4 +38,22 @@ test("export scale caps oversized diagrams without reducing normal exports", () 
   assert.ok(calculateExportScale(10000, 10000) < 1);
   assert.ok(calculateExportScale(30000, 1000) <= 0.4);
   assert.ok(calculateExportScale(2_000_000, 1000) <= 0.006);
+});
+
+test("a visible legend expands export bounds to the right", () => {
+  const diagramBounds = calculateExportBounds([
+    { x: 100, y: 100, width: 200, height: 100 },
+  ], 40);
+  const placement = placeRightSideExportNode(diagramBounds, { width: 280, height: 240 });
+
+  assert.equal(placement.x, 340);
+  assert.equal(placement.y, 80);
+  assert.deepEqual(placement.bounds, {
+    minX: 60,
+    minY: 60,
+    maxX: 660,
+    maxY: 360,
+    width: 600,
+    height: 300,
+  });
 });

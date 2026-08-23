@@ -50,6 +50,8 @@ Open [http://localhost:5173](http://localhost:5173).
 - **Ctrl / Cmd + Click** to multi-select tables; clicking a swatch applies a harmonious hue family across all selected tables
 - Right-click a selected table to create a DBML `TableGroup` from the complete selection
 - Click a selected table again to deselect; click empty canvas to clear selection
+- Toggle **Colour Legend** in the bottom bar to open an editable right-side legend for every unique table header colour
+- Legend descriptions are shared by tables using the same colour and persist in local storage, share links, and `.sker` files
 
 ### Relationship Lines
 - Auto-drawn orthogonal lines from inline, short-form, long-form, named, composite, and cross-schema references
@@ -100,6 +102,7 @@ Open [http://localhost:5173](http://localhost:5173).
 ### PNG Export
 - Captures the full diagram as rendered — exact fonts, colors, pill headers, and relationship lines
 - UI controls (toolbar, minimap, filename, bottom bar) are excluded from the export
+- Includes the complete colour legend on the right when the legend is visible, even if its on-screen list is scrollable
 - Respects the current **Highlight Links** state
 - Downloads at 2× resolution for sharp display on high-DPI screens
 

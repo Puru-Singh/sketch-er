@@ -17,7 +17,8 @@ import {
   routeOrthogonalConnection,
 } from "./relationshipRouting.js";
 import { detectTableRenames } from "./tableIdentity.js";
-import { calculateExportBounds, downloadPng, renderDiagramPng } from "./diagramExport.js";
+import { calculateExportBounds, downloadPng, placeRightSideExportNode, renderDiagramPng } from "./diagramExport.js";
+import { buildColorLegendEntries } from "./colorLegend.js";
 
 const DEFAULT_DBML = `Table users {
   id int [pk]
@@ -1469,6 +1470,7 @@ Table core.items {
               <Row label="Table color">Right-click a table for its five recent colors and custom color wheel</Row>
               <Row label="Quick palette">Select a table or group to reveal common colors and a custom color wheel in the left panel</Row>
               <Row label="Recent colors">The last 12 settled colors are kept in a reusable history row; wheel previews are debounced</Row>
+              <Row label="Colour legend">Enable it from the bottom bar, then describe each unique table colour in the right-side panel</Row>
               <Row label="Dark / light mode">Use the sun / moon icon in the toolbar to toggle themes</Row>
               <Row label="Group accent colors">Auto-assigned initially, then independently overridable from the quick palette</Row>
             </Section>
@@ -1478,7 +1480,7 @@ Table core.items {
               <Row label="Auto-save">All state saves to <KBD>localStorage</KBD> every 400 ms automatically</Row>
               <Row label="Save (.sker)">Toolbar → <strong>Save</strong> — downloads a <KBD>diagram.sker</KBD> JSON file</Row>
               <Row label="Open (.sker)">Toolbar → <strong>Open</strong> — loads a previously saved <KBD>.sker</KBD> file</Row>
-              <Row label="Export PNG">Toolbar → <strong>Export</strong> — renders a 2× resolution PNG</Row>
+              <Row label="Export PNG">Toolbar → <strong>Export</strong> — renders a 2× resolution PNG and includes the legend when visible</Row>
               <p style={{ marginTop: 10, marginBottom: 0 }}>The <KBD>.sker</KBD> file is plain JSON — safe to version in git or share with teammates.</p>
             </Section>
           </div>
@@ -1656,7 +1658,151 @@ function GroupOverlay({ groups, groupColors, selectedGroupName, tablePositions, 
   );
 }
 
-function BottomGroupPane({ groupsVisible, onToggle, showAllConnections, onToggleConnections, theme }) {
+function ColorLegend({ entries, descriptions, onDescriptionChange, onClose, theme, legendRef }) {
+  return (
+    <div
+      ref={legendRef}
+      data-color-legend="1"
+      data-canvas-wheel-ignore="1"
+      onMouseDown={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.stopPropagation()}
+      style={{
+        position: "absolute",
+        top: 64,
+        right: 12,
+        width: 280,
+        minHeight: 120,
+        maxHeight: "calc(100% - 188px)",
+        display: "flex",
+        flexDirection: "column",
+        overflow: "hidden",
+        border: `1px solid ${theme.toolbarBorder}`,
+        borderRadius: 12,
+        background: theme.minimapBg,
+        boxShadow: "0 10px 28px rgba(0,0,0,0.14)",
+        backdropFilter: "blur(10px)",
+        color: theme.textPrimary,
+        fontFamily: "'DM Sans', sans-serif",
+        zIndex: 19,
+      }}
+    >
+      <div style={{
+        padding: "13px 14px 10px",
+        borderBottom: `1px solid ${theme.toolbarBorder}`,
+        display: "flex",
+        alignItems: "flex-start",
+        gap: 10,
+        flexShrink: 0,
+      }}>
+        <div style={{ flex: 1, minWidth: 0 }}>
+          <div style={{ fontSize: 12.5, fontWeight: 700 }}>Table colour legend</div>
+          <div style={{ marginTop: 3, fontSize: 10, lineHeight: 1.35, color: theme.textMuted }}>
+            Describe what each header colour represents.
+          </div>
+        </div>
+        <button
+          type="button"
+          data-export-hide="1"
+          onClick={onClose}
+          title="Hide colour legend"
+          aria-label="Hide colour legend"
+          style={{
+            width: 24,
+            height: 24,
+            padding: 0,
+            border: "none",
+            borderRadius: 6,
+            background: "transparent",
+            color: theme.textMuted,
+            cursor: "pointer",
+            fontSize: 18,
+            lineHeight: 1,
+          }}
+        >×</button>
+      </div>
+
+      <div
+        data-color-legend-items="1"
+        style={{
+          flex: 1,
+          minHeight: 0,
+          overflowY: "auto",
+          padding: 10,
+          display: "flex",
+          flexDirection: "column",
+          gap: 8,
+        }}
+      >
+        {entries.length === 0 ? (
+          <div style={{ padding: "16px 8px", color: theme.textMuted, fontSize: 11, lineHeight: 1.5, textAlign: "center" }}>
+            Table colours will appear here once the diagram contains tables.
+          </div>
+        ) : entries.map((entry) => (
+          <div key={entry.color} style={{
+            padding: 10,
+            border: `1px solid ${theme.border}`,
+            borderRadius: 9,
+            background: theme.toolbarBg,
+          }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+              <span style={{
+                width: 18,
+                height: 18,
+                flexShrink: 0,
+                borderRadius: 5,
+                background: entry.color,
+                boxShadow: `0 0 0 1px ${theme.toolbarBorder}`,
+              }} />
+              <span style={{
+                flexShrink: 0,
+                color: theme.textSecondary,
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 9,
+                textTransform: "uppercase",
+              }}>
+                {entry.color}
+              </span>
+              <span style={{
+                minWidth: 0,
+                flex: 1,
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+                color: theme.textSecondary,
+                fontSize: 10,
+              }} title={entry.tables.join(", ")}>
+                {entry.tables.join(", ")}
+              </span>
+            </div>
+            <input
+              type="text"
+              value={descriptions[entry.color] || ""}
+              onChange={(event) => onDescriptionChange(entry.color, event.target.value)}
+              placeholder="Add description…"
+              aria-label={`Description for ${entry.color}`}
+              style={{
+                width: "100%",
+                height: 30,
+                marginTop: 8,
+                boxSizing: "border-box",
+                border: `1px solid ${theme.toolbarBorder}`,
+                borderRadius: 6,
+                outline: "none",
+                padding: "0 8px",
+                background: theme.editorPanelBg,
+                color: theme.textPrimary,
+                fontFamily: "'DM Sans', sans-serif",
+                fontSize: 11,
+              }}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function BottomGroupPane({ groupsVisible, onToggle, showAllConnections, onToggleConnections, legendVisible, onToggleLegend, theme }) {
   const divider = (
     <div style={{ width: 1, height: 18, background: theme.toolbarBorder, flexShrink: 0 }} />
   );
@@ -1696,6 +1842,13 @@ function BottomGroupPane({ groupsVisible, onToggle, showAllConnections, onToggle
       </svg>
       <span style={{ color: showAllConnections ? "#10b981" : undefined }}>Highlight Links</span>
       <ToggleSwitch checked={showAllConnections} onChange={onToggleConnections} theme={theme} />
+      {divider}
+      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={legendVisible ? "#10b981" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+        <rect x="3" y="4" width="5" height="5" rx="1" fill={legendVisible ? "#10b981" : "none"}/>
+        <path d="M11 6.5h10M3 14h5v5H3zM11 16.5h10"/>
+      </svg>
+      <span style={{ color: legendVisible ? "#10b981" : undefined }}>Colour Legend</span>
+      <ToggleSwitch checked={legendVisible} onChange={onToggleLegend} theme={theme} />
     </div>
   );
 }
@@ -1760,6 +1913,12 @@ export default function SketchER() {
   const [draggingLine, setDraggingLine] = useState(null); // { pathKey, startClientX, startMidX }
   const [lineMidXOverrides, setLineMidXOverrides] = useState(saved?.lineMidXOverrides ?? {});
   const [groupsVisible, setGroupsVisible] = useState(saved?.groupsVisible ?? false);
+  const [colorLegendVisible, setColorLegendVisible] = useState(saved?.colorLegendVisible ?? false);
+  const [colorLegendDescriptions, setColorLegendDescriptions] = useState(
+    () => saved?.colorLegendDescriptions && typeof saved.colorLegendDescriptions === "object"
+      ? saved.colorLegendDescriptions
+      : {}
+  );
   const [draggingGroup, setDraggingGroup] = useState(null);
   const [showHelp, setShowHelp] = useState(false); // { memberTables, startClientX, startClientY, startPositions }
   const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
@@ -1773,6 +1932,7 @@ export default function SketchER() {
   const [isResizing, setIsResizing] = useState(false);
   const canvasRef = useRef(null);
   const transformRef = useRef(null);
+  const colorLegendRef = useRef(null);
   const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
   const [showAllConnections, setShowAllConnections] = useState(false);
   const [isAutoLayoutRunning, setIsAutoLayoutRunning] = useState(false);
@@ -1798,6 +1958,19 @@ export default function SketchER() {
   const parseWarnings = parseResult.warnings || [];
   const relationshipCount = useMemo(() => new Set(refs.map((ref) => ref.id.split(":")[0])).size, [refs]);
   const previousTablesRef = useRef(tables);
+  const colorLegendEntries = useMemo(
+    () => buildColorLegendEntries(tables, tableColors),
+    [tables, tableColors],
+  );
+
+  const handleLegendDescriptionChange = useCallback((color, description) => {
+    setColorLegendDescriptions((previous) => {
+      const next = { ...previous };
+      if (description) next[color] = description;
+      else delete next[color];
+      return next;
+    });
+  }, []);
 
   // Which columns to highlight per table when a table is hovered
   const activeColumns = useMemo(() => {
@@ -1906,26 +2079,26 @@ export default function SketchER() {
   useEffect(() => {
     const timer = setTimeout(() => {
       try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick, reverseConnectionFlow, isEditorCollapsed }));
+        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, fileName, jumpToTableOnClick, reverseConnectionFlow, isEditorCollapsed }));
       } catch {}
     }, 400);
     return () => clearTimeout(timer);
-  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName, jumpToTableOnClick, reverseConnectionFlow, isEditorCollapsed]);
+  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, fileName, jumpToTableOnClick, reverseConnectionFlow, isEditorCollapsed]);
 
   const [shareCopied, setShareCopied] = useState(false);
   const copyShareLink = useCallback(() => {
-    const encoded = encodeShareState({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], lineMidXOverrides, groupsVisible, fileName, reverseConnectionFlow, isEditorCollapsed });
+    const encoded = encodeShareState({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, fileName, reverseConnectionFlow, isEditorCollapsed });
     const url = `${window.location.origin}${window.location.pathname}#share=${encoded}`;
     navigator.clipboard.writeText(url).then(() => {
       setShareCopied(true);
       setTimeout(() => setShareCopied(false), 2000);
     });
-  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, lineMidXOverrides, groupsVisible, fileName, reverseConnectionFlow, isEditorCollapsed]);
+  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, fileName, reverseConnectionFlow, isEditorCollapsed]);
 
   // Save diagram to a .sker file
   const saveToFile = useCallback(() => {
     const blob = new Blob(
-      [JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, reverseConnectionFlow, isEditorCollapsed }, null, 2)],
+      [JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, reverseConnectionFlow, isEditorCollapsed }, null, 2)],
       { type: "application/json" }
     );
     const url = URL.createObjectURL(blob);
@@ -1936,7 +2109,7 @@ export default function SketchER() {
     link.click();
     URL.revokeObjectURL(url);
     if (fileName === "Untitled") setFileName("diagram");
-  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, fileName, reverseConnectionFlow, isEditorCollapsed]);
+  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, fileName, reverseConnectionFlow, isEditorCollapsed]);
 
   // Load diagram from a .sker / .json file
   const loadInputRef = useRef(null);
@@ -1956,6 +2129,12 @@ export default function SketchER() {
         if (state.isDark !== undefined)            setIsDark(state.isDark);
         if (state.lineMidXOverrides !== undefined) setLineMidXOverrides(state.lineMidXOverrides);
         if (state.groupsVisible !== undefined)     setGroupsVisible(state.groupsVisible);
+        setColorLegendVisible(state.colorLegendVisible ?? false);
+        setColorLegendDescriptions(
+          state.colorLegendDescriptions && typeof state.colorLegendDescriptions === "object"
+            ? state.colorLegendDescriptions
+            : {}
+        );
         if (state.reverseConnectionFlow !== undefined) setReverseConnectionFlow(state.reverseConnectionFlow);
         if (state.isEditorCollapsed !== undefined) setIsEditorCollapsed(state.isEditorCollapsed);
         setFileName(file.name.replace(/\.(sker|json)$/i, ""));
@@ -1974,13 +2153,13 @@ export default function SketchER() {
       [...sourceScene.querySelectorAll("[data-diagram-table]")]
         .map((node) => [node.getAttribute("data-diagram-table"), node]),
     );
-    const tableNodes = [];
+    const htmlNodes = [];
     const rectangles = [];
     for (const name of Object.keys(tablePositions)) {
       const pos = tablePositions[name];
       const node = tableElementMap.get(name);
       if (!pos || !node) continue;
-      tableNodes.push({ node, x: pos.x, y: pos.y });
+      htmlNodes.push({ node, x: pos.x, y: pos.y });
       rectangles.push({
         x: pos.x,
         y: pos.y,
@@ -1996,17 +2175,40 @@ export default function SketchER() {
         if (bounds.width > 0 || bounds.height > 0) rectangles.push(bounds);
       } catch {}
     });
-    const bounds = calculateExportBounds(rectangles);
-    if (!bounds || !sourceDiagramSvg || tableNodes.length === 0) return;
+    let bounds = calculateExportBounds(rectangles);
+    if (!bounds || !sourceDiagramSvg || htmlNodes.length === 0) return;
+
+    if (colorLegendVisible && colorLegendRef.current) {
+      const legendNode = colorLegendRef.current;
+      const legendItems = legendNode.querySelector("[data-color-legend-items]");
+      const hiddenItemsHeight = legendItems
+        ? Math.max(0, legendItems.scrollHeight - legendItems.clientHeight)
+        : 0;
+      const legendWidth = legendNode.offsetWidth;
+      const legendHeight = legendNode.offsetHeight + hiddenItemsHeight;
+      const legendPlacement = placeRightSideExportNode(bounds, {
+        width: legendWidth,
+        height: legendHeight,
+      });
+      htmlNodes.push({
+        node: legendNode,
+        x: legendPlacement.x,
+        y: legendPlacement.y,
+        width: legendWidth,
+        height: legendHeight,
+        expandForExport: true,
+      });
+      bounds = legendPlacement.bounds;
+    }
 
     const png = await renderDiagramPng({
       diagramSvg: sourceDiagramSvg,
-      tableNodes,
+      htmlNodes,
       bounds,
       backgroundColor: isDark ? "#1e1e1e" : "#f5f5f5",
     });
     downloadPng(png, fileName);
-  }, [tablePositions, isDark, fileName]);
+  }, [tablePositions, isDark, fileName, colorLegendVisible]);
 
   useLayoutEffect(() => {
     const tableRenames = detectTableRenames(previousTablesRef.current, tables);
@@ -2220,6 +2422,7 @@ export default function SketchER() {
   }, [dragging, draggingGroup, draggingLine, isPanning, isResizing]);
 
   const handleWheel = useCallback((e) => {
+    if (e.target instanceof Element && e.target.closest("[data-canvas-wheel-ignore]")) return;
     e.preventDefault();
     const modeScale = e.deltaMode === 1
       ? 16
@@ -3279,6 +3482,17 @@ export default function SketchER() {
           tableWidths={tableWidths}
         />
 
+        {colorLegendVisible && (
+          <ColorLegend
+            entries={colorLegendEntries}
+            descriptions={colorLegendDescriptions}
+            onDescriptionChange={handleLegendDescriptionChange}
+            onClose={() => setColorLegendVisible(false)}
+            theme={theme}
+            legendRef={colorLegendRef}
+          />
+        )}
+
         {/* Empty state */}
         {tables.length === 0 && (
           <div
@@ -3310,6 +3524,8 @@ export default function SketchER() {
           onToggle={() => setGroupsVisible((v) => !v)}
           showAllConnections={showAllConnections}
           onToggleConnections={() => setShowAllConnections((v) => !v)}
+          legendVisible={colorLegendVisible}
+          onToggleLegend={() => setColorLegendVisible((visible) => !visible)}
           theme={theme}
         />
 

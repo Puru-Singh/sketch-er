@@ -39,6 +39,27 @@ export function calculateExportScale(width, height, preferredScale = DEFAULT_EXP
   return Math.min(preferredScale, dimensionLimit, pixelLimit);
 }
 
+export function placeRightSideExportNode(bounds, nodeSize, options = {}) {
+  const gap = options.gap ?? 0;
+  const topInset = options.topInset ?? 20;
+  const padding = options.padding ?? 40;
+  const x = bounds.maxX + gap;
+  const y = bounds.minY + topInset;
+  const maxX = Math.ceil(x + nodeSize.width + padding);
+  const maxY = Math.max(bounds.maxY, Math.ceil(y + nodeSize.height + padding));
+  return {
+    x,
+    y,
+    bounds: {
+      ...bounds,
+      maxX,
+      maxY,
+      width: maxX - bounds.minX,
+      height: maxY - bounds.minY,
+    },
+  };
+}
+
 function nextPaint() {
   return new Promise((resolve) => {
     requestAnimationFrame(() => requestAnimationFrame(resolve));
@@ -83,7 +104,7 @@ async function drawVectorLayer(context, diagramSvg, bounds, pixelWidth, pixelHei
   }
 }
 
-async function captureTableLayer({ tableNodes, bounds, scale, html2canvas }) {
+async function captureHtmlLayer({ htmlNodes, bounds, scale, html2canvas }) {
   const stage = document.createElement("div");
   const stageId = `sketcher-export-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   stage.dataset.exportTableStage = stageId;
@@ -99,16 +120,34 @@ async function captureTableLayer({ tableNodes, bounds, scale, html2canvas }) {
     "background:transparent",
   ].join(";");
 
-  tableNodes.forEach(({ node, x, y }) => {
+  htmlNodes.forEach(({ node, x, y, width, height, expandForExport = false }) => {
     const clone = node.cloneNode(true);
+    const sourceControls = node.querySelectorAll("input, textarea, select");
+    const clonedControls = clone.querySelectorAll("input, textarea, select");
+    sourceControls.forEach((control, index) => {
+      const clonedControl = clonedControls[index];
+      if (!clonedControl) return;
+      clonedControl.value = control.value;
+      if ("checked" in control) clonedControl.checked = control.checked;
+    });
     clone.querySelectorAll("[data-export-hide]").forEach((element) => element.remove());
     clone.style.position = "absolute";
     clone.style.left = `${x - bounds.minX}px`;
     clone.style.top = `${y - bounds.minY}px`;
+    clone.style.right = "auto";
+    clone.style.bottom = "auto";
     clone.style.margin = "0";
     clone.style.transform = "none";
     clone.style.transition = "none";
     clone.style.opacity = "1";
+    if (width) clone.style.width = `${width}px`;
+    if (height) clone.style.height = `${height}px`;
+    if (expandForExport) {
+      clone.style.maxHeight = "none";
+      clone.style.overflow = "visible";
+      const scrollable = clone.querySelector("[data-color-legend-items]");
+      if (scrollable) scrollable.style.overflow = "visible";
+    }
     stage.appendChild(clone);
   });
 
@@ -157,11 +196,11 @@ function canvasToPngBlob(canvas) {
 
 export async function renderDiagramPng({
   diagramSvg,
-  tableNodes,
+  htmlNodes,
   bounds,
   backgroundColor,
 }) {
-  if (!diagramSvg || !bounds || tableNodes.length === 0) {
+  if (!diagramSvg || !bounds || htmlNodes.length === 0) {
     throw new Error("The diagram has no renderable content.");
   }
 
@@ -182,14 +221,14 @@ export async function renderDiagramPng({
   context.imageSmoothingEnabled = true;
   context.imageSmoothingQuality = "high";
 
-  // Groups and connections are rasterized as native SVG. Tables are captured
-  // independently without the canvas pan/zoom transform, then composited using
-  // the exact same world bounds. This keeps both layers in one coordinate space.
+  // Groups and connections are rasterized as native SVG. Tables and optional
+  // diagram annotations are captured without the canvas pan/zoom transform,
+  // then composited using the exact same world bounds.
   await drawVectorLayer(context, diagramSvg, bounds, pixelWidth, pixelHeight);
-  const tableLayer = await captureTableLayer({ tableNodes, bounds, scale, html2canvas });
-  context.drawImage(tableLayer, 0, 0);
-  tableLayer.width = 1;
-  tableLayer.height = 1;
+  const htmlLayer = await captureHtmlLayer({ htmlNodes, bounds, scale, html2canvas });
+  context.drawImage(htmlLayer, 0, 0);
+  htmlLayer.width = 1;
+  htmlLayer.height = 1;
 
   return canvasToPngBlob(canvas);
 }
