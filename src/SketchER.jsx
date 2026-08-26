@@ -2073,7 +2073,78 @@ function GroupOverlay({ groups, groupColors, selectedGroupName, tablePositions, 
   );
 }
 
-function ColorLegend({ entries, descriptions, onDescriptionChange, onClose, theme, legendRef }) {
+function LegendColorSwatch({ color, theme }) {
+  const [hovered, setHovered] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("idle");
+  const resetTimerRef = useRef(null);
+
+  useEffect(() => () => window.clearTimeout(resetTimerRef.current), []);
+
+  const handleCopy = async () => {
+    try {
+      await copyTextToClipboard(color);
+      setCopyStatus("copied");
+    } catch {
+      setCopyStatus("error");
+    }
+    window.clearTimeout(resetTimerRef.current);
+    resetTimerRef.current = window.setTimeout(() => setCopyStatus("idle"), 1200);
+  };
+
+  const overlayText = copyStatus === "copied"
+    ? "Copied"
+    : copyStatus === "error"
+    ? "Error"
+    : color.toUpperCase();
+
+  return (
+    <button
+      type="button"
+      onClick={handleCopy}
+      onMouseEnter={() => setHovered(true)}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={() => setHovered(true)}
+      onBlur={() => setHovered(false)}
+      title={`${color.toUpperCase()} — click to copy`}
+      aria-label={`Copy colour ${color.toUpperCase()}`}
+      style={{
+        position: "relative",
+        width: 42,
+        height: 36,
+        padding: 0,
+        flexShrink: 0,
+        overflow: "hidden",
+        border: `1px solid ${theme.toolbarBorder}`,
+        borderRadius: 9,
+        background: color,
+        boxShadow: "0 2px 5px rgba(0,0,0,0.12)",
+        cursor: "copy",
+      }}
+    >
+      {(hovered || copyStatus !== "idle") && (
+        <span style={{
+          position: "absolute",
+          inset: 4,
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          borderRadius: 5,
+          background: "rgba(0,0,0,0.68)",
+          color: "#fff",
+          fontFamily: "'JetBrains Mono', monospace",
+          fontSize: copyStatus === "idle" ? 6.5 : 7.5,
+          fontWeight: 600,
+          letterSpacing: 0,
+          pointerEvents: "none",
+        }}>
+          {overlayText}
+        </span>
+      )}
+    </button>
+  );
+}
+
+function ColorLegend({ entries, descriptions, onDescriptionChange, theme, legendRef }) {
   return (
     <div
       ref={legendRef}
@@ -2085,7 +2156,7 @@ function ColorLegend({ entries, descriptions, onDescriptionChange, onClose, them
         position: "absolute",
         top: 64,
         right: 12,
-        width: 240,
+        width: 250,
         maxHeight: "calc(100% - 188px)",
         display: "flex",
         flexDirection: "column",
@@ -2100,30 +2171,6 @@ function ColorLegend({ entries, descriptions, onDescriptionChange, onClose, them
         zIndex: 19,
       }}
     >
-      <button
-        type="button"
-        data-export-hide="1"
-        onClick={onClose}
-        title="Hide colour legend"
-        aria-label="Hide colour legend"
-        style={{
-          position: "absolute",
-          top: 14,
-          right: 14,
-          zIndex: 1,
-          width: 24,
-          height: 24,
-          padding: 0,
-          border: "none",
-          borderRadius: 6,
-          background: theme.minimapBg,
-          color: theme.textMuted,
-          cursor: "pointer",
-          fontSize: 18,
-          lineHeight: 1,
-        }}
-      >×</button>
-
       <div
         data-color-legend-items="1"
         style={{
@@ -2133,7 +2180,7 @@ function ColorLegend({ entries, descriptions, onDescriptionChange, onClose, them
           padding: 10,
           display: "flex",
           flexDirection: "column",
-          gap: 8,
+          gap: 7,
         }}
       >
         {entries.length === 0 ? (
@@ -2141,31 +2188,8 @@ function ColorLegend({ entries, descriptions, onDescriptionChange, onClose, them
             Table colours will appear here once the diagram contains tables.
           </div>
         ) : entries.map((entry) => (
-          <div key={entry.color} style={{
-            padding: 10,
-            border: `1px solid ${theme.border}`,
-            borderRadius: 9,
-            background: theme.toolbarBg,
-          }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8, paddingRight: 24 }}>
-              <span style={{
-                width: 18,
-                height: 18,
-                flexShrink: 0,
-                borderRadius: 5,
-                background: entry.color,
-                boxShadow: `0 0 0 1px ${theme.toolbarBorder}`,
-              }} />
-              <span style={{
-                flexShrink: 0,
-                color: theme.textSecondary,
-                fontFamily: "'JetBrains Mono', monospace",
-                fontSize: 9,
-                textTransform: "uppercase",
-              }}>
-                {entry.color}
-              </span>
-            </div>
+          <div key={entry.color} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <LegendColorSwatch color={entry.color} theme={theme} />
             <input
               type="text"
               value={descriptions[entry.color] || ""}
@@ -2173,18 +2197,18 @@ function ColorLegend({ entries, descriptions, onDescriptionChange, onClose, them
               placeholder="Add description…"
               aria-label={`Description for ${entry.color}`}
               style={{
-                width: "100%",
-                height: 30,
-                marginTop: 8,
+                minWidth: 0,
+                flex: 1,
+                height: 36,
                 boxSizing: "border-box",
                 border: `1px solid ${theme.toolbarBorder}`,
-                borderRadius: 6,
+                borderRadius: 9,
                 outline: "none",
-                padding: "0 8px",
+                padding: "0 10px",
                 background: theme.editorPanelBg,
                 color: theme.textPrimary,
                 fontFamily: "'DM Sans', sans-serif",
-                fontSize: 11,
+                fontSize: 12,
               }}
             />
           </div>
@@ -3924,7 +3948,6 @@ export default function SketchER() {
             entries={colorLegendEntries}
             descriptions={colorLegendDescriptions}
             onDescriptionChange={handleLegendDescriptionChange}
-            onClose={() => setColorLegendVisible(false)}
             theme={theme}
             legendRef={colorLegendRef}
           />
