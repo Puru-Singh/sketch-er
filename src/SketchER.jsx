@@ -2,6 +2,7 @@
 // Licensed under the MIT License — see LICENSE for details.
 
 import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, useDeferredValue } from "react";
+import { createPortal } from "react-dom";
 import MonacoEditor from "@monaco-editor/react";
 import { dbmlLanguageConfig, dbmlMonarchTokensProvider, EMPTY_DBML_MODEL, parseDBMLDocument } from "./dbmlParser.js";
 import {
@@ -178,6 +179,7 @@ const LIGHT_THEME = {
   canvasBg: "radial-gradient(ellipse at 50% 40%, #f5f5f5 0%, #ebebeb 100%)",
   dotColor: "#d4d4d4",
   minimapBg: "rgba(255,255,255,0.92)",
+  legendBg: "rgba(255,255,255,0.7)",
   colorPaletteRowBg: "#eaeaea",
   statText: "#6e6e6e",
   resizeHandleHover: "#10b98180",
@@ -209,6 +211,7 @@ const DARK_THEME = {
   canvasBg: "radial-gradient(ellipse at 50% 40%, #252526 0%, #1e1e1e 100%)",
   dotColor: "#2d2d2d",
   minimapBg: "rgba(30,30,30,0.92)",
+  legendBg: "rgba(30,30,30,0.7)",
   colorPaletteRowBg: "#2a2a2b",
   statText: "#6b7280",
   resizeHandleHover: "#10b98180",
@@ -2077,8 +2080,21 @@ function LegendColorSwatch({ color, theme }) {
   const [hovered, setHovered] = useState(false);
   const [copyStatus, setCopyStatus] = useState("idle");
   const resetTimerRef = useRef(null);
+  const swatchRef = useRef(null);
+  const [tooltipPosition, setTooltipPosition] = useState(null);
 
   useEffect(() => () => window.clearTimeout(resetTimerRef.current), []);
+
+  const showTooltip = () => {
+    const bounds = swatchRef.current?.getBoundingClientRect();
+    if (bounds) {
+      setTooltipPosition({
+        left: bounds.left + bounds.width / 2,
+        top: bounds.top - 7,
+      });
+    }
+    setHovered(true);
+  };
 
   const handleCopy = async () => {
     try {
@@ -2099,46 +2115,64 @@ function LegendColorSwatch({ color, theme }) {
 
   return (
     <button
+      ref={swatchRef}
       type="button"
       onClick={handleCopy}
-      onMouseEnter={() => setHovered(true)}
+      onMouseEnter={showTooltip}
       onMouseLeave={() => setHovered(false)}
-      onFocus={() => setHovered(true)}
+      onFocus={showTooltip}
       onBlur={() => setHovered(false)}
-      title={`${color.toUpperCase()} — click to copy`}
       aria-label={`Copy colour ${color.toUpperCase()}`}
       style={{
-        position: "relative",
-        width: 42,
-        height: 36,
+        width: 36,
+        height: 32,
         padding: 0,
         flexShrink: 0,
-        overflow: "hidden",
         border: `1px solid ${theme.toolbarBorder}`,
-        borderRadius: 9,
+        borderRadius: 8,
         background: color,
-        boxShadow: "0 2px 5px rgba(0,0,0,0.12)",
+        boxShadow: "0 1px 4px rgba(0,0,0,0.12)",
         cursor: "copy",
       }}
     >
-      {(hovered || copyStatus !== "idle") && (
-        <span style={{
-          position: "absolute",
-          inset: 4,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          borderRadius: 5,
-          background: "rgba(0,0,0,0.68)",
-          color: "#fff",
-          fontFamily: "'JetBrains Mono', monospace",
-          fontSize: copyStatus === "idle" ? 6.5 : 7.5,
-          fontWeight: 600,
-          letterSpacing: 0,
-          pointerEvents: "none",
-        }}>
+      {(hovered || copyStatus !== "idle") && tooltipPosition && createPortal(
+        <span
+          data-export-hide="1"
+          role="status"
+          style={{
+            position: "fixed",
+            left: tooltipPosition.left,
+            top: tooltipPosition.top,
+            transform: "translate(-50%, -100%)",
+            padding: "5px 8px",
+            border: `1px solid ${theme.toolbarBorder}`,
+            borderRadius: 6,
+            background: theme.toolbarBg,
+            color: theme.textPrimary,
+            boxShadow: "0 4px 12px rgba(0,0,0,0.16)",
+            fontFamily: "'JetBrains Mono', monospace",
+            fontSize: 9,
+            fontWeight: 600,
+            lineHeight: 1,
+            whiteSpace: "nowrap",
+            pointerEvents: "none",
+            zIndex: 1000,
+          }}
+        >
           {overlayText}
-        </span>
+          <span aria-hidden="true" style={{
+            position: "absolute",
+            left: "50%",
+            bottom: -4,
+            width: 7,
+            height: 7,
+            transform: "translateX(-50%) rotate(45deg)",
+            borderRight: `1px solid ${theme.toolbarBorder}`,
+            borderBottom: `1px solid ${theme.toolbarBorder}`,
+            background: theme.toolbarBg,
+          }} />
+        </span>,
+        document.body,
       )}
     </button>
   );
@@ -2156,16 +2190,17 @@ function ColorLegend({ entries, descriptions, onDescriptionChange, theme, legend
         position: "absolute",
         top: 64,
         right: 12,
-        width: 250,
+        width: 226,
         maxHeight: "calc(100% - 188px)",
         display: "flex",
         flexDirection: "column",
         overflow: "hidden",
         border: `1px solid ${theme.toolbarBorder}`,
-        borderRadius: 12,
-        background: theme.minimapBg,
-        boxShadow: "0 10px 28px rgba(0,0,0,0.14)",
-        backdropFilter: "blur(10px)",
+        borderRadius: 10,
+        background: theme.legendBg,
+        boxShadow: "0 8px 22px rgba(0,0,0,0.12)",
+        backdropFilter: "blur(14px)",
+        WebkitBackdropFilter: "blur(14px)",
         color: theme.textPrimary,
         fontFamily: "'DM Sans', sans-serif",
         zIndex: 19,
@@ -2177,10 +2212,10 @@ function ColorLegend({ entries, descriptions, onDescriptionChange, theme, legend
           flex: 1,
           minHeight: 0,
           overflowY: "auto",
-          padding: 10,
+          padding: 8,
           display: "flex",
           flexDirection: "column",
-          gap: 7,
+          gap: 6,
         }}
       >
         {entries.length === 0 ? (
@@ -2188,7 +2223,7 @@ function ColorLegend({ entries, descriptions, onDescriptionChange, theme, legend
             Table colours will appear here once the diagram contains tables.
           </div>
         ) : entries.map((entry) => (
-          <div key={entry.color} style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <div key={entry.color} style={{ display: "flex", alignItems: "center", gap: 7 }}>
             <LegendColorSwatch color={entry.color} theme={theme} />
             <input
               type="text"
@@ -2199,16 +2234,16 @@ function ColorLegend({ entries, descriptions, onDescriptionChange, theme, legend
               style={{
                 minWidth: 0,
                 flex: 1,
-                height: 36,
+                height: 32,
                 boxSizing: "border-box",
                 border: `1px solid ${theme.toolbarBorder}`,
-                borderRadius: 9,
+                borderRadius: 8,
                 outline: "none",
-                padding: "0 10px",
+                padding: "0 9px",
                 background: theme.editorPanelBg,
                 color: theme.textPrimary,
                 fontFamily: "'DM Sans', sans-serif",
-                fontSize: 12,
+                fontSize: 11.5,
               }}
             />
           </div>
