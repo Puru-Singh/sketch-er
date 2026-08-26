@@ -2,7 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import { buildColorLegendEntries, normalizeLegendColor } from "../src/colorLegend.js";
 
-test("legend groups tables that use the same normalized color", () => {
+test("legend returns each normalized table color once", () => {
   const entries = buildColorLegendEntries([
     { name: "users", headerColor: "#EF4444" },
     { name: "roles", headerColor: null },
@@ -14,8 +14,8 @@ test("legend groups tables that use the same normalized color", () => {
   });
 
   assert.deepEqual(entries, [
-    { color: "#ef4444", tables: ["users"] },
-    { color: "#3b82f6", tables: ["roles", "posts"] },
+    { color: "#ef4444" },
+    { color: "#3b82f6" },
   ]);
 });
 

@@ -2085,8 +2085,7 @@ function ColorLegend({ entries, descriptions, onDescriptionChange, onClose, them
         position: "absolute",
         top: 64,
         right: 12,
-        width: 280,
-        minHeight: 120,
+        width: 240,
         maxHeight: "calc(100% - 188px)",
         display: "flex",
         flexDirection: "column",
@@ -2101,40 +2100,29 @@ function ColorLegend({ entries, descriptions, onDescriptionChange, onClose, them
         zIndex: 19,
       }}
     >
-      <div style={{
-        padding: "13px 14px 10px",
-        borderBottom: `1px solid ${theme.toolbarBorder}`,
-        display: "flex",
-        alignItems: "flex-start",
-        gap: 10,
-        flexShrink: 0,
-      }}>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontSize: 12.5, fontWeight: 700 }}>Table colour legend</div>
-          <div style={{ marginTop: 3, fontSize: 10, lineHeight: 1.35, color: theme.textMuted }}>
-            Describe what each header colour represents.
-          </div>
-        </div>
-        <button
-          type="button"
-          data-export-hide="1"
-          onClick={onClose}
-          title="Hide colour legend"
-          aria-label="Hide colour legend"
-          style={{
-            width: 24,
-            height: 24,
-            padding: 0,
-            border: "none",
-            borderRadius: 6,
-            background: "transparent",
-            color: theme.textMuted,
-            cursor: "pointer",
-            fontSize: 18,
-            lineHeight: 1,
-          }}
-        >×</button>
-      </div>
+      <button
+        type="button"
+        data-export-hide="1"
+        onClick={onClose}
+        title="Hide colour legend"
+        aria-label="Hide colour legend"
+        style={{
+          position: "absolute",
+          top: 14,
+          right: 14,
+          zIndex: 1,
+          width: 24,
+          height: 24,
+          padding: 0,
+          border: "none",
+          borderRadius: 6,
+          background: theme.minimapBg,
+          color: theme.textMuted,
+          cursor: "pointer",
+          fontSize: 18,
+          lineHeight: 1,
+        }}
+      >×</button>
 
       <div
         data-color-legend-items="1"
@@ -2159,7 +2147,7 @@ function ColorLegend({ entries, descriptions, onDescriptionChange, onClose, them
             borderRadius: 9,
             background: theme.toolbarBg,
           }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, paddingRight: 24 }}>
               <span style={{
                 width: 18,
                 height: 18,
@@ -2176,17 +2164,6 @@ function ColorLegend({ entries, descriptions, onDescriptionChange, onClose, them
                 textTransform: "uppercase",
               }}>
                 {entry.color}
-              </span>
-              <span style={{
-                minWidth: 0,
-                flex: 1,
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                whiteSpace: "nowrap",
-                color: theme.textSecondary,
-                fontSize: 10,
-              }} title={entry.tables.join(", ")}>
-                {entry.tables.join(", ")}
               </span>
             </div>
             <input

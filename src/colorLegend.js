@@ -5,12 +5,10 @@ export function normalizeLegendColor(color) {
 }
 
 export function buildColorLegendEntries(tables, tableColors) {
-  const byColor = new Map();
+  const colors = new Set();
   tables.forEach((table) => {
     const color = normalizeLegendColor(tableColors[table.name] || table.headerColor);
-    const existing = byColor.get(color);
-    if (existing) existing.tables.push(table.name);
-    else byColor.set(color, { color, tables: [table.name] });
+    colors.add(color);
   });
-  return [...byColor.values()];
+  return [...colors].map((color) => ({ color }));
 }
