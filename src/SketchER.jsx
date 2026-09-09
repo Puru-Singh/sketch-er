@@ -176,7 +176,7 @@ const LIGHT_THEME = {
   dot: "#cccccc",
   line: "#8995a5",
   activeColumn: "rgba(59,130,246,0.09)",
-  legendBg: "rgba(255,255,255,0.93)",
+  legendBg: "rgba(255,255,255,0.7)",
 };
 
 const DARK_THEME = {
@@ -198,7 +198,7 @@ const DARK_THEME = {
   dot: "#414148",
   line: "#8994a5",
   activeColumn: "rgba(59,130,246,0.2)",
-  legendBg: "rgba(30,30,30,0.93)",
+  legendBg: "rgba(30,30,30,0.7)",
 };
 
 /* -------------------------------------------------------------------------- */
@@ -2559,7 +2559,12 @@ function MiniMap({ tables, positions, widths, colors, viewport, canvasSize, them
   );
 }
 
-function LegendColorSwatch({ color, onNotify }) {
+function LegendColorSwatch({ color, theme }) {
+  const [hovered, setHovered] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("idle");
+  const [tooltipPosition, setTooltipPosition] = useState(null);
+  const swatchRef = useRef(null);
+  const resetTimerRef = useRef(null);
   const operationRef = useRef(0);
   const mountedRef = useRef(true);
 
@@ -2569,34 +2574,89 @@ function LegendColorSwatch({ color, onNotify }) {
     return () => {
       mountedRef.current = false;
       operationRef.current += 1;
+      clearTimeout(resetTimerRef.current);
     };
   }, []);
 
+  const showTooltip = () => {
+    const bounds = swatchRef.current?.getBoundingClientRect();
+
+    if (bounds) {
+      setTooltipPosition({
+        left: bounds.left + bounds.width / 2,
+        top: bounds.top - 7,
+      });
+    }
+
+    setHovered(true);
+  };
+
   const copy = async () => {
     const operation = ++operationRef.current;
+    let status;
 
     try {
       await copyTextToClipboard(color);
-
-      if (mountedRef.current && operation === operationRef.current) {
-        onNotify(`Copied ${color.toUpperCase()}.`);
-      }
+      status = "copied";
     } catch {
-      if (mountedRef.current && operation === operationRef.current) {
-        onNotify("Unable to copy the color.", "error");
-      }
+      status = "error";
     }
+
+    if (!mountedRef.current || operation !== operationRef.current) return;
+
+    setCopyStatus(status);
+    clearTimeout(resetTimerRef.current);
+    resetTimerRef.current = setTimeout(() => {
+      if (mountedRef.current && operation === operationRef.current) {
+        setCopyStatus("idle");
+      }
+    }, 1200);
   };
+
+  const tooltipText = copyStatus === "copied"
+    ? "Copied"
+    : copyStatus === "error"
+      ? "Copy failed"
+      : color.toUpperCase();
 
   return (
     <button
+      ref={swatchRef}
       type="button"
       className="sker-legend-swatch"
       style={{ background: color }}
       aria-label={`Copy color ${color.toUpperCase()}`}
-      title={`Copy ${color.toUpperCase()}`}
       onClick={copy}
-    />
+      onMouseEnter={showTooltip}
+      onMouseLeave={() => setHovered(false)}
+      onFocus={showTooltip}
+      onBlur={() => setHovered(false)}
+    >
+      {(hovered || copyStatus !== "idle") && tooltipPosition && createPortal(
+        <span
+          className="sker-legend-tooltip"
+          data-export-hide="1"
+          role="status"
+          style={{
+            left: tooltipPosition.left,
+            top: tooltipPosition.top,
+            color: theme.text,
+            background: theme.panelBg,
+            borderColor: theme.border,
+          }}
+        >
+          {tooltipText}
+          <span
+            aria-hidden="true"
+            style={{
+              borderColor: theme.border,
+              background: theme.panelBg,
+            }}
+          />
+        </span>,
+        document.body,
+      )}
+    </button>
   );
 }
 
@@ -2606,7 +2666,6 @@ function ColorLegend({
   onChange,
   legendRef,
   theme,
-  onNotify,
 }) {
   return (
     <section
@@ -2619,8 +2678,6 @@ function ColorLegend({
       onPointerDown={(event) => event.stopPropagation()}
       onContextMenu={(event) => event.stopPropagation()}
     >
-      <h2 className="sker-small-heading">Color legend</h2>
-
       <div data-color-legend-items="1" className="sker-legend-items">
         {!entries.length && (
           <p className="sker-muted">Table colors will appear here.</p>
@@ -2628,7 +2685,7 @@ function ColorLegend({
 
         {entries.map(({ color }) => (
           <div key={color} className="sker-inline">
-            <LegendColorSwatch color={color} onNotify={onNotify} />
+            <LegendColorSwatch color={color} theme={theme} />
             <input
               type="text"
               value={descriptions[color] || ""}
@@ -3256,10 +3313,36 @@ const STYLES = `
   border-radius: 10px;
   overflow: hidden;
   box-shadow: 0 8px 22px #0002;
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
 }
-.sker-small-heading { font-size: 12px; padding: 10px; margin: 0; }
 .sker-legend-items { display: flex; flex-direction: column; gap: 7px; padding: 8px; min-height: 0; overflow: auto; }
 .sker-legend-swatch { width: 34px; height: 32px; border: 1px solid var(--sker-border); border-radius: 7px; flex-shrink: 0; cursor: copy; }
+.sker-legend-tooltip {
+  position: fixed;
+  z-index: 1000;
+  transform: translate(-50%, -100%);
+  padding: 5px 8px;
+  border: 1px solid;
+  border-radius: 6px;
+  box-shadow: 0 4px 12px #0003;
+  font-family: 'JetBrains Mono', monospace;
+  font-size: 9px;
+  font-weight: 600;
+  line-height: 1;
+  white-space: nowrap;
+  pointer-events: none;
+}
+.sker-legend-tooltip > span {
+  position: absolute;
+  left: 50%;
+  bottom: -4px;
+  width: 7px;
+  height: 7px;
+  transform: translateX(-50%) rotate(45deg);
+  border-right: 1px solid;
+  border-bottom: 1px solid;
+}
 
 .sker-empty {
   position: absolute;
@@ -3342,6 +3425,18 @@ const STYLES = `
 .sker-warning { padding: 10px; border: 1px solid #f59e0b88; border-radius: 7px; background: #f59e0b15; }
 
 .sker-editor-glow-line { background: #10b98128; }
+
+.monaco-editor .find-widget {
+  top: 30px !important;
+}
+body:has(.find-widget .codicon-find-selection:hover) .workbench-hover.compact .hover-contents,
+body:has(.find-widget .codicon-widget-close:hover) .workbench-hover.compact .hover-contents {
+  white-space: nowrap !important;
+}
+body:has(.find-widget .codicon-find-selection:hover) .workbench-hover-container:has(> .workbench-hover.compact),
+body:has(.find-widget .codicon-widget-close:hover) .workbench-hover-container:has(> .workbench-hover.compact) {
+  pointer-events: none !important;
+}
 
 .sker-sr-only {
   position: absolute;
@@ -5400,7 +5495,6 @@ export default function SketchER() {
               entries={legendEntries}
               descriptions={data.colorLegendDescriptions}
               theme={theme}
-              onNotify={notify}
               onChange={(color, description) => {
                 dispatch({ type: "legend-description", color, description });
               }}
