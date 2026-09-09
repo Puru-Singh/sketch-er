@@ -46,6 +46,8 @@ import {
   renderDiagramPng,
 } from "./diagramExport.js";
 
+import { editTableColumns } from "./columnEditing.js";
+
 import { copyTextToClipboard } from "./clipboard.js";
 import { buildShareUrl, decodeShareHash } from "./shareLink.js";
 
@@ -1593,6 +1595,51 @@ function Dialog({ title, onClose, restoreFocusRef, children, wide = false }) {
   );
 }
 
+function ColumnEditor({ table, source, onApply, disabled }) {
+  const [originalSource] = useState(source);
+  const [columns, setColumns] = useState(() => table.columns.map((column) => ({
+    originalName: column.name, name: column.name, type: column.type,
+  })));
+  const [error, setError] = useState("");
+  const update = (index, key, value) => {
+    setError("");
+    setColumns((items) => items.map((item, i) => i === index ? { ...item, [key]: value } : item));
+  };
+  const move = (index, direction) => setColumns((items) => {
+    const next = [...items];
+    [next[index], next[index + direction]] = [next[index + direction], next[index]];
+    return next;
+  });
+  return (
+    <section className="sker-stack" aria-label="Edit table columns">
+      <strong>Columns <span className="sker-muted">({columns.length})</span></strong>
+      {table.partials?.length > 0 && <span className="sker-muted">This table uses TablePartial. Edit its columns in the DBML editor.</span>}
+      <div className="sker-column-list">
+        {columns.map((column, index) => (
+          <div className="sker-column-editor" key={column.originalName}>
+            <label>Name<input aria-label={`Column ${index + 1} name`} value={column.name}
+              onChange={(event) => update(index, "name", event.target.value)} /></label>
+            <label>Type<input aria-label={`Column ${index + 1} type`} value={column.type}
+              onChange={(event) => update(index, "type", event.target.value)} /></label>
+            <div className="sker-inline">
+              <ToolButton label={`Move ${column.name} up`} disabled={index === 0} onClick={() => move(index, -1)}>↑</ToolButton>
+              <ToolButton label={`Move ${column.name} down`} disabled={index === columns.length - 1} onClick={() => move(index, 1)}>↓</ToolButton>
+            </div>
+          </div>
+        ))}
+      </div>
+      {error && <span role="alert" style={{ color: "#dc2626" }}>{error}</span>}
+      <ToolButton label="Apply column changes" className="sker-primary" disabled={disabled || table.partials?.length > 0} onClick={() => {
+        try {
+          if (source !== originalSource) throw new Error("The DBML changed. Reopen the column editor.");
+          onApply(editTableColumns(source, table.name, columns), source);
+        }
+        catch (cause) { setError(cause.message); }
+      }}>Apply changes</ToolButton>
+    </section>
+  );
+}
+
 function ColorPicker({ value, onChange, label = "Choose a custom color" }) {
   return (
     <label className="sker-color-picker" title={label}>
@@ -2266,7 +2313,8 @@ function TableNode({
         background: theme.tableBg,
         color: theme.columnText,
         opacity: dimmed ? 0.35 : 1,
-        boxShadow: selected
+        "--sker-table-color": color,
+        "--sker-table-shadow": selected
           ? `0 0 0 2px ${color}, 0 8px 24px rgba(0,0,0,0.12)`
           : "0 2px 8px rgba(0,0,0,0.09)",
         cursor: "grab",
@@ -3444,6 +3492,22 @@ const STYLES = `
 }
 .sker-notice-error { border-color: #ef4444; }
 
+.sker-table {
+  box-shadow: var(--sker-table-shadow);
+  transition: box-shadow 160ms ease, border-color 160ms ease;
+}
+@media (hover: hover) {
+  .sker-table:hover {
+    border-color: var(--sker-table-color) !important;
+    box-shadow: var(--sker-table-shadow), 0 0 14px color-mix(in srgb, var(--sker-table-color) 25%, transparent);
+  }
+}
+.sker-column-list { display: flex; flex-direction: column; gap: 10px; }
+.sker-column-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--sker-border); }
+.sker-column-editor label { min-width: 0; color: var(--sker-muted); font-size: 10px; }
+.sker-column-editor input { margin-top: 4px; }
+.sker-column-editor .sker-inline { grid-column: 1 / -1; justify-content: flex-end; }
+.sker-column-editor .sker-button { min-height: 24px; padding: 2px 8px; }
 .sker-context {
   position: fixed;
   z-index: 100;
@@ -4522,7 +4586,7 @@ export default function SketchER() {
       .map((tableName) => tableMap.get(tableName))
       .filter(Boolean);
 
-    if (!members.length) return;
+    if (members.length < 2) return;
 
     const block = [
       `TableGroup ${formatDbmlIdentifier(name)} {`,
@@ -5664,8 +5728,11 @@ export default function SketchER() {
               className="sker-context sker-stack"
               data-canvas-wheel-ignore="1"
               aria-label="Table options"
-              style={{ left: contextMenu.x, top: contextMenu.y }}
-              onSubmit={createGroup}
+              style={{ left: contextMenu.x, top: contextMenu.y, maxHeight: `calc(100dvh - ${contextMenu.y + 8}px)` }}
+              onSubmit={(event) => {
+                if (contextMenu.names.length > 1) createGroup(event);
+                else event.preventDefault();
+              }}
               onPointerDown={(event) => event.stopPropagation()}
               onContextMenu={(event) => event.preventDefault()}
             >
@@ -5699,6 +5766,19 @@ export default function SketchER() {
 
               <hr style={{ width: "100%", border: 0, borderTop: `1px solid ${theme.border}` }} />
 
+              {contextMenu.names.length === 1 ? (
+                <ColumnEditor
+                  key={`${contextMenu.epoch}:${contextMenu.target}`}
+                  table={tables.find((table) => table.name === contextMenu.target)}
+                  source={data.dbml}
+                  disabled={parsingPending || state.errors.length > 0}
+                  onApply={(dbml, source) => {
+                    if (stateRef.current.data.dbml !== source) throw new Error("The DBML changed. Reopen the column editor.");
+                    dispatch({ type: "edit", dbml });
+                    setContextMenu(null);
+                  }}
+                />
+              ) : (<>
               <strong>Create table group</strong>
               <span className="sker-muted">
                 {contextMenu.names.length} table(s) selected
@@ -5731,6 +5811,7 @@ export default function SketchER() {
               >
                 Create group
               </button>
+              </>)}
 
               <ToolButton
                 label="Close table options"
