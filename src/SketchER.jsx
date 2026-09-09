@@ -1,29 +1,112 @@
 // Copyright (c) 2025 Puru Singh — https://github.com/Puru-Singh
 // Licensed under the MIT License — see LICENSE for details.
 
-import { useState, useRef, useCallback, useEffect, useLayoutEffect, useMemo, useDeferredValue } from "react";
+import {
+  useCallback,
+  useDeferredValue,
+  useEffect,
+  useId,
+  useLayoutEffect,
+  useMemo,
+  useReducer,
+  useRef,
+  useState,
+} from "react";
 import { createPortal } from "react-dom";
 import MonacoEditor from "@monaco-editor/react";
-import { dbmlLanguageConfig, dbmlMonarchTokensProvider, EMPTY_DBML_MODEL, parseDBMLDocument } from "./dbmlParser.js";
+
+import {
+  dbmlLanguageConfig,
+  dbmlMonarchTokensProvider,
+  EMPTY_DBML_MODEL,
+  parseDBMLDocument,
+} from "./dbmlParser.js";
+
 import {
   buildHierarchicalLayout,
   buildSmartLayout,
   HIERARCHY_LEAVES_LEFT,
   HIERARCHY_ROOTS_LEFT,
 } from "./autoLayout.js";
+
 import {
   longestVerticalSegment,
   orderSharedColumnArrivals,
   orthogonalPointsToPath,
   routeOrthogonalConnection,
 } from "./relationshipRouting.js";
+
 import { detectTableRenames } from "./tableIdentity.js";
-import { calculateExportBounds, downloadPng, placeRightSideExportNode, renderDiagramPng } from "./diagramExport.js";
-import { buildColorLegendEntries } from "./colorLegend.js";
+
+import {
+  calculateExportBounds,
+  downloadPng,
+  placeRightSideExportNode,
+  renderDiagramPng,
+} from "./diagramExport.js";
+
 import { copyTextToClipboard } from "./clipboard.js";
-import { clampCanvasZoom, zoomCanvasAroundPoint } from "./canvasViewport.js";
 import { buildShareUrl, decodeShareHash } from "./shareLink.js";
-import { generateShareQrDataUrl, SHARE_QR_TOO_LARGE } from "./shareQr.js";
+
+import {
+  generateShareQrDataUrl,
+  SHARE_QR_TOO_LARGE,
+} from "./shareQr.js";
+
+/* -------------------------------------------------------------------------- */
+/* Constants                                                                  */
+/* -------------------------------------------------------------------------- */
+
+const STORAGE_KEY = "sketcher-state";
+const DOCUMENT_VERSION = 2;
+
+const MAX_FILE_BYTES = 10 * 1024 * 1024;
+const MAX_DBML_LENGTH = 5 * 1024 * 1024;
+const MAX_DICTIONARY_ENTRIES = 100_000;
+const MAX_COORDINATE = 10_000_000;
+
+const MIN_ZOOM = 0.05;
+const MAX_ZOOM = 2;
+
+const HEADER_HEIGHT = 42;
+const COL_HEIGHT = 32;
+const TABLE_META_HEIGHT = 24;
+const TABLE_BORDER = 1;
+const TABLE_MIN_WIDTH = 200;
+const TABLE_WIDTH = 230;
+
+const GROUP_PAD = 22;
+const GROUP_LABEL_HEIGHT = 26;
+
+const LANE_SPACING = 24;
+const ARRIVAL_SPACING = 8;
+const ROUTING_CLEARANCE = 12;
+
+const TABLE_COLORS = [
+  "#ef4444",
+  "#f97316",
+  "#eab308",
+  "#84cc16",
+  "#22c55e",
+  "#14b8a6",
+  "#06b6d4",
+  "#3b82f6",
+  "#8b5cf6",
+  "#c026d3",
+  "#ec4899",
+  "#f43f5e",
+];
+
+const GROUP_COLORS = [
+  "#8b5cf6",
+  "#3b82f6",
+  "#10b981",
+  "#f59e0b",
+  "#ec4899",
+  "#06b6d4",
+  "#f97316",
+  "#84cc16",
+];
 
 const DEFAULT_DBML = `Table users {
   id int [pk]
@@ -35,7 +118,7 @@ const DEFAULT_DBML = `Table users {
 
 Table roles {
   id int [pk]
-  name varcharff
+  name varchar
   description text
 }
 
@@ -74,1269 +157,1339 @@ TableGroup Content {
   comments
 }`;
 
-const TABLE_COLORS = [
-  "#ef4444", // 0°   red
-  "#f97316", // 25°  orange
-  "#eab308", // 54°  yellow
-  "#84cc16", // 82°  lime
-  "#22c55e", // 142° green
-  "#14b8a6", // 173° teal
-  "#06b6d4", // 192° cyan
-  "#3b82f6", // 217° blue
-  "#8b5cf6", // 258° violet
-  "#c026d3", // 295° fuchsia
-  "#ec4899", // 322° pink
-  "#f43f5e", // 351° rose
-];
-
-const GROUP_ACCENT_COLORS = [
-  "#8b5cf6", "#3b82f6", "#10b981", "#f59e0b",
-  "#ec4899", "#06b6d4", "#f97316", "#84cc16",
-];
-
-const SIMPLE_DBML_IDENTIFIER = /^[A-Za-z_][A-Za-z0-9_$]*$/;
-
-function formatDbmlIdentifier(identifier) {
-  if (SIMPLE_DBML_IDENTIFIER.test(identifier)) return identifier;
-  return `"${identifier.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
-}
-
-function formatDbmlPath(path) {
-  return path.split(".").map(formatDbmlIdentifier).join(".");
-}
-
-function nextTableGroupName(groups) {
-  const names = new Set(groups.map((group) => group.name));
-  if (!names.has("NewGroup")) return "NewGroup";
-  let suffix = 2;
-  while (names.has(`NewGroup${suffix}`)) suffix += 1;
-  return `NewGroup${suffix}`;
-}
-
-// ── Color utilities for hue-family generation ────────────────────────────────
-function hexToHsl(hex) {
-  let r = parseInt(hex.slice(1, 3), 16) / 255;
-  let g = parseInt(hex.slice(3, 5), 16) / 255;
-  let b = parseInt(hex.slice(5, 7), 16) / 255;
-  const max = Math.max(r, g, b), min = Math.min(r, g, b);
-  let h = 0, s = 0;
-  const l = (max + min) / 2;
-  if (max !== min) {
-    const d = max - min;
-    s = l > 0.5 ? d / (2 - max - min) : d / (max + min);
-    switch (max) {
-      case r: h = ((g - b) / d + (g < b ? 6 : 0)) / 6; break;
-      case g: h = ((b - r) / d + 2) / 6; break;
-      case b: h = ((r - g) / d + 4) / 6; break;
-    }
-  }
-  return [h * 360, s * 100, l * 100];
-}
-
-function hslToHex(h, s, l) {
-  s /= 100; l /= 100;
-  const a = s * Math.min(l, 1 - l);
-  const f = (n) => {
-    const k = (n + h / 30) % 12;
-    const c = l - a * Math.max(Math.min(k - 3, 9 - k, 1), -1);
-    return Math.round(255 * c).toString(16).padStart(2, "0");
-  };
-  return `#${f(0)}${f(8)}${f(4)}`;
-}
-
-// Generate `count` visually related but distinct colors from a base hex color.
-// Spreads ±10° hue, varies lightness ±12%, keeps saturation close to base.
-function generateHueFamily(baseHex, count) {
-  if (count <= 1) return [baseHex];
-  const [h, s, l] = hexToHsl(baseHex);
-  return Array.from({ length: count }, (_, i) => {
-    const t = i / (count - 1);
-    const hNew = (h + (t - 0.5) * 20 + 360) % 360;
-    const lNew = Math.max(32, Math.min(68, l + (t - 0.5) * 24));
-    const sNew = Math.max(55, Math.min(92, s + (t - 0.5) * 10));
-    return hslToHex(hNew, sNew, lNew);
-  });
-}
-
 const LIGHT_THEME = {
   appBg: "#ffffff",
-  editorPanelBg: "#f3f3f3",
-  editorHeaderBg: "linear-gradient(180deg, #ebebeb 0%, #f3f3f3 100%)",
-  border: "#e4e4e4",
-  textPrimary: "#1e1e1e",
-  textSecondary: "#6e6e6e",
-  textMuted: "#a0a0a0",
-  editorText: "#1e1e1e",
-  lineNumberColor: "#c0c0c0",
-  lineNumberBorder: "#e4e4e4",
+  editorBg: "#f3f3f3",
+  panelBg: "#ffffff",
+  panelSoft: "#ebebeb",
+  border: "#d4d4d4",
+  text: "#1e1e1e",
+  secondary: "#595959",
+  muted: "#727272",
   tableBg: "#ffffff",
   tableBorder: "#d8d8d8",
-  colDivider: "#eeeeee",
-  colText: "#3b3b3b",
-  colType: "#8a92a0",
-  footerBg: "#ebebeb",
-  toolbarBg: "#ffffff",
-  toolbarBorder: "#d4d4d4",
-  toolbarText: "#5a5a5a",
-  canvasBg: "radial-gradient(ellipse at 50% 40%, #f5f5f5 0%, #ebebeb 100%)",
-  dotColor: "#d4d4d4",
-  minimapBg: "rgba(255,255,255,0.92)",
-  legendBg: "rgba(255,255,255,0.7)",
-  colorPaletteRowBg: "#eaeaea",
-  statText: "#6e6e6e",
-  resizeHandleHover: "#10b98180",
-  emptyStateColor: "#c8c8c8",
-  lineColor: "#b0bac8",
-  activeColBg: "rgba(59,130,246,0.07)",
+  divider: "#eeeeee",
+  columnText: "#3b3b3b",
+  columnType: "#626b78",
+  canvasBg:
+    "radial-gradient(ellipse at 50% 40%, #f5f5f5 0%, #ebebeb 100%)",
+  dot: "#cccccc",
+  line: "#8995a5",
+  activeColumn: "rgba(59,130,246,0.09)",
+  legendBg: "rgba(255,255,255,0.93)",
 };
 
 const DARK_THEME = {
   appBg: "#1e1e1e",
-  editorPanelBg: "#252526",
-  editorHeaderBg: "linear-gradient(180deg, #2a2a2b 0%, #252526 100%)",
-  border: "#3e3e42",
-  textPrimary: "#d4d4d4",
-  textSecondary: "#9d9d9d",
-  textMuted: "#6e6e6e",
-  editorText: "#d4d4d4",
-  lineNumberColor: "#555555",
-  lineNumberBorder: "#3e3e42",
+  editorBg: "#252526",
+  panelBg: "#2d2d2d",
+  panelSoft: "#252526",
+  border: "#505056",
+  text: "#eeeeee",
+  secondary: "#b6b6bc",
+  muted: "#a0a0aa",
   tableBg: "#252526",
-  tableBorder: "#3e3e42",
-  colDivider: "#3e3e42",
-  colText: "#d1d5db",
-  colType: "#6b7280",
-  footerBg: "#1e1e1e",
-  toolbarBg: "#2d2d2d",
-  toolbarBorder: "#3e3e42",
-  toolbarText: "#9d9d9d",
-  canvasBg: "radial-gradient(ellipse at 50% 40%, #252526 0%, #1e1e1e 100%)",
-  dotColor: "#2d2d2d",
-  minimapBg: "rgba(30,30,30,0.92)",
-  legendBg: "rgba(30,30,30,0.7)",
-  colorPaletteRowBg: "#2a2a2b",
-  statText: "#6b7280",
-  resizeHandleHover: "#10b98180",
-  emptyStateColor: "#444466",
-  lineColor: "#5c6472",
-  activeColBg: "rgba(59,130,246,0.14)",
+  tableBorder: "#505056",
+  divider: "#3e3e42",
+  columnText: "#d1d5db",
+  columnType: "#a1a9b5",
+  canvasBg:
+    "radial-gradient(ellipse at 50% 40%, #252526 0%, #1e1e1e 100%)",
+  dot: "#414148",
+  line: "#8994a5",
+  activeColumn: "rgba(59,130,246,0.2)",
+  legendBg: "rgba(30,30,30,0.93)",
 };
 
-const COL_HEIGHT = 32;
-const HEADER_HEIGHT = 42;
-const TABLE_WIDTH = 230;
-const TABLE_CORNER_RADIUS = 6;
-const TABLE_META_HEIGHT = 24;
-const TABLE_HEADER_GAP = 12;
-const TABLE_COLLAPSE_SIZE = 20;
+/* -------------------------------------------------------------------------- */
+/* General utilities                                                          */
+/* -------------------------------------------------------------------------- */
 
-// 0 = fully transparent, 1 = fully black. Tweak to taste.
-const TABLE_NAME_DARKNESS = 0.5;
+function dictionary(source) {
+  return Object.assign(Object.create(null), source || {});
+}
 
-// Resting opacity of color-wheel controls (0–1).
-const COLOR_WHEEL_RESTING_OPACITY = 0.5;
+function hasOwn(object, key) {
+  return Object.prototype.hasOwnProperty.call(object, key);
+}
 
-function getColumnY(table, colIndex) {
-  return table.y + HEADER_HEIGHT + colIndex * COL_HEIGHT + COL_HEIGHT / 2;
+function isRecord(value) {
+  return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function clamp(value, min, max) {
+  return Math.max(min, Math.min(max, value));
+}
+
+function clampZoom(value) {
+  return clamp(value, MIN_ZOOM, MAX_ZOOM);
+}
+
+function safeNumber(value, fallback = 0) {
+  return Number.isFinite(value) ? value : fallback;
+}
+
+function normalizeColor(value) {
+  if (typeof value !== "string") return null;
+
+  const color = value.trim().toLowerCase();
+
+  if (/^#[0-9a-f]{6}$/.test(color)) return color;
+
+  if (/^#[0-9a-f]{3}$/.test(color)) {
+    return `#${[...color.slice(1)].map((character) => character.repeat(2)).join("")}`;
+  }
+
+  return null;
+}
+
+function errorMessage(error, fallback) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+function stableHash(value) {
+  let hash = 2166136261;
+
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 16777619);
+  }
+
+  return hash >>> 0;
+}
+
+function arraysEqual(a, b) {
+  return a.length === b.length && a.every((value, index) => value === b[index]);
+}
+
+function nextGroupName(groups) {
+  const names = new Set(groups.map((group) => group.name));
+
+  if (!names.has("NewGroup")) return "NewGroup";
+
+  let suffix = 2;
+  while (names.has(`NewGroup${suffix}`)) suffix += 1;
+
+  return `NewGroup${suffix}`;
+}
+
+function formatDbmlIdentifier(identifier) {
+  if (/^[A-Za-z_][A-Za-z0-9_$]*$/.test(identifier)) return identifier;
+
+  return `"${identifier.replace(/\\/g, "\\\\").replace(/"/g, '\\"')}"`;
+}
+
+/**
+ * Prefer the original table declaration over splitting table.name on ".".
+ * A dot inside a quoted identifier is not a schema separator.
+ */
+function getTableDbmlPath(table, dbml) {
+  const lines = dbml.split("\n");
+  const sourceLine = Number.isInteger(table.sourceStartLine)
+    ? lines[table.sourceStartLine - 1]
+    : null;
+
+  const identifier = String.raw`(?:"(?:\\.|[^"\\])*"|[A-Za-z_][A-Za-z0-9_$]*)`;
+  const declaration = new RegExp(
+    String.raw`^\s*Table\s+(${identifier}(?:\s*\.\s*${identifier})*)`,
+    "i",
+  );
+
+  const match = sourceLine?.match(declaration);
+  if (match) return match[1];
+
+  if (Array.isArray(table.nameParts) && table.nameParts.length) {
+    return table.nameParts.map(formatDbmlIdentifier).join(".");
+  }
+
+  // Compatibility fallback for parser models without source information.
+  return table.name.split(".").map(formatDbmlIdentifier).join(".");
+}
+
+function hexToHsl(hex) {
+  const r = parseInt(hex.slice(1, 3), 16) / 255;
+  const g = parseInt(hex.slice(3, 5), 16) / 255;
+  const b = parseInt(hex.slice(5, 7), 16) / 255;
+
+  const max = Math.max(r, g, b);
+  const min = Math.min(r, g, b);
+  const lightness = (max + min) / 2;
+
+  let hue = 0;
+  let saturation = 0;
+
+  if (max !== min) {
+    const delta = max - min;
+
+    saturation =
+      lightness > 0.5
+        ? delta / (2 - max - min)
+        : delta / (max + min);
+
+    if (max === r) hue = (g - b) / delta + (g < b ? 6 : 0);
+    else if (max === g) hue = (b - r) / delta + 2;
+    else hue = (r - g) / delta + 4;
+
+    hue /= 6;
+  }
+
+  return [hue * 360, saturation * 100, lightness * 100];
+}
+
+function hslToHex(hue, saturation, lightness) {
+  const s = saturation / 100;
+  const l = lightness / 100;
+  const amplitude = s * Math.min(l, 1 - l);
+
+  const component = (n) => {
+    const k = (n + hue / 30) % 12;
+    const value =
+      l -
+      amplitude * Math.max(Math.min(k - 3, 9 - k, 1), -1);
+
+    return Math.round(255 * value).toString(16).padStart(2, "0");
+  };
+
+  return `#${component(0)}${component(8)}${component(4)}`;
+}
+
+function generateHueFamily(baseColor, count) {
+  if (count <= 0) return [];
+  if (count === 1) return [baseColor];
+
+  const [h, s, l] = hexToHsl(baseColor);
+
+  return Array.from({ length: count }, (_, index) => {
+    const t = index / (count - 1) - 0.5;
+
+    return hslToHex(
+      (h + t * 20 + 360) % 360,
+      clamp(s + t * 10, 55, 92),
+      clamp(l + t * 24, 32, 68),
+    );
+  });
 }
 
 function hasTableMeta(table) {
-  return Boolean(table.note || table.indexes?.length || table.checks?.length || table.records?.length);
+  return Boolean(
+    table.note ||
+      table.indexes?.length ||
+      table.checks?.length ||
+      table.records?.length,
+  );
 }
 
+/**
+ * Widths are outer border-box widths.
+ * Heights include the outer border; row/header constants are border-box heights.
+ */
 function getTableHeight(table) {
-  return HEADER_HEIGHT + table.columns.length * COL_HEIGHT + (hasTableMeta(table) ? TABLE_META_HEIGHT : 0);
-}
-
-// Draw non-directional endpoint markers. Many cardinality stays visible in the
-// adjacent text label, avoiding a crow's-foot that can be mistaken for flow.
-function CardinalityEnd({ x, y, dir, cardinality, color }) {
-  const sign = dir === "right" ? 1 : -1;
-  const relation = cardinality || "1";
-  const isMany = relation.includes("*");
-  const isOptional = relation.startsWith("0") || relation === "?";
-  const hasOne = relation.includes("1") || !isMany;
-  const outerX = x + sign * 10;
   return (
-    <>
-      {isOptional && <circle cx={x + sign * 4} cy={y} r="3.2" fill="none" stroke={color} strokeWidth="1.3" />}
-      {hasOne && (
-        <line x1={outerX} y1={y - 5} x2={outerX} y2={y + 5}
-          stroke={color} strokeWidth="1.3" strokeLinecap="round" />
-      )}
-    </>
+    TABLE_BORDER * 2 +
+    HEADER_HEIGHT +
+    table.columns.length * COL_HEIGHT +
+    (hasTableMeta(table) ? TABLE_META_HEIGHT : 0)
   );
 }
 
-function FlowArrow({ x, y, direction, color }) {
-  const baseX = x - direction * 6;
+function getColumnY(position, index) {
   return (
-    <polyline
-      points={`${baseX},${y - 4} ${x},${y} ${baseX},${y + 4}`}
-      fill="none"
-      stroke={color}
-      strokeWidth="1.5"
-      strokeLinecap="round"
-      strokeLinejoin="round"
-      opacity="0.85"
-      style={{ pointerEvents: "none" }}
-    />
+    position.y +
+    TABLE_BORDER +
+    HEADER_HEIGHT +
+    index * COL_HEIGHT +
+    COL_HEIGHT / 2
   );
 }
 
-// How far apart to spread parallel connections that exit the same table side
-const LANE_SPACING = 24;
-// How far apart to spread multiple connections arriving at the same PK column
-const ARRIVE_SPREAD = 8;
+function unionBounds(rectangles, padding = 0) {
+  const valid = rectangles.filter(
+    (rectangle) =>
+      rectangle &&
+      [rectangle.x, rectangle.y, rectangle.width, rectangle.height].every(
+        Number.isFinite,
+      ) &&
+      rectangle.width >= 0 &&
+      rectangle.height >= 0,
+  );
 
-function getRelationshipPathKey(ref) {
-  const legacyPathKey = `rline-${ref.from.table}-${ref.from.column}-${ref.to.table}-${ref.to.column}`;
-  return ref.composite ? `${legacyPathKey}-${ref.id}` : legacyPathKey;
+  if (!valid.length) return null;
+
+  let left = Infinity;
+  let top = Infinity;
+  let right = -Infinity;
+  let bottom = -Infinity;
+
+  for (const rectangle of valid) {
+    left = Math.min(left, rectangle.x);
+    top = Math.min(top, rectangle.y);
+    right = Math.max(right, rectangle.x + rectangle.width);
+    bottom = Math.max(bottom, rectangle.y + rectangle.height);
+  }
+
+  return {
+    x: left - padding,
+    y: top - padding,
+    width: Math.max(1, right - left + padding * 2),
+    height: Math.max(1, bottom - top + padding * 2),
+  };
 }
 
-function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTable, selectedTables, showAllConnections, tableColors, tableWidths, lineMidXOverrides, onLineDragStart, reverseConnectionFlow }) {
-  const routingObstacles = useMemo(() => tableData.flatMap((table) => {
-    const position = tablePositions[table.name];
-    if (!position) return [];
-    const clearance = 12;
-    return [{
-      table: table.name,
-      left: position.x - clearance,
-      top: position.y - clearance,
-      right: position.x + (tableWidths[table.name] || TABLE_WIDTH) + clearance,
-      bottom: position.y + getTableHeight(table) + clearance,
-    }];
-  }), [tableData, tablePositions, tableWidths]);
+function getGroupBounds(group, positions, tablesByName, widths) {
+  const rectangles = [];
 
-  // ── Phase 1: resolve direction + column indices for every valid ref ──────
-  const items = useMemo(() => {
-    const result = [];
-    for (const ref of refs) {
-      const fromPos = tablePositions[ref.from.table];
-      const toPos   = tablePositions[ref.to.table];
-      const fromData = tableData.find((t) => t.name === ref.from.table);
-      const toData   = tableData.find((t) => t.name === ref.to.table);
-      if (!fromPos || !toPos || !fromData || !toData) continue;
+  for (const name of group.tables) {
+    const position = positions[name];
+    const table = tablesByName.get(name);
 
-      const fromColIdx = fromData.columns.findIndex((c) => c.name === ref.from.column);
-      const toColIdx   = toData.columns.findIndex((c) => c.name === ref.to.column);
-      if (fromColIdx === -1 || toColIdx === -1) continue;
+    if (!position || !table) continue;
 
-      const fromW     = tableWidths[ref.from.table] || TABLE_WIDTH;
-      const toW       = tableWidths[ref.to.table]   || TABLE_WIDTH;
-      const fromRight = fromPos.x + fromW;
-      const toRight   = toPos.x  + toW;
+    rectangles.push({
+      x: position.x,
+      y: position.y,
+      width: widths[name] || TABLE_WIDTH,
+      height: getTableHeight(table),
+    });
+  }
 
-      // Detect vertical stacking: tables heavily overlap in X → C-shape routing
-      const xOverlap = Math.max(0, Math.min(fromRight, toRight) - Math.max(fromPos.x, toPos.x));
-      const isVerticalStack = xOverlap / Math.min(fromW, toW) > 0.5;
+  const bounds = unionBounds(rectangles);
+  if (!bounds) return null;
 
-      let crowDir;
-      if (isVerticalStack) {
-        crowDir = "vert-left";                   // both tables use left edge, C-shape going left
-      } else if (fromPos.x >= toRight) {
-        crowDir = "left";                        // from is clearly right of to
-      } else if (toPos.x >= fromRight) {
-        crowDir = "right";                       // to is clearly right of from
-      } else {
-        crowDir = (fromPos.x + fromW / 2) <= (toPos.x + toW / 2) ? "right" : "left";
+  return {
+    x: bounds.x - GROUP_PAD,
+    y: bounds.y - GROUP_PAD - GROUP_LABEL_HEIGHT,
+    width: bounds.width + GROUP_PAD * 2,
+    height: bounds.height + GROUP_PAD * 2 + GROUP_LABEL_HEIGHT,
+  };
+}
+
+/* -------------------------------------------------------------------------- */
+/* Validation and serialization                                               */
+/* -------------------------------------------------------------------------- */
+
+function readString(value, name, fallback, maxLength = MAX_DBML_LENGTH) {
+  if (value === undefined) return fallback;
+
+  if (typeof value !== "string" || value.length > maxLength) {
+    throw new Error(`${name} must be a string of at most ${maxLength} characters.`);
+  }
+
+  return value;
+}
+
+function readBoolean(value, name, fallback) {
+  if (value === undefined) return fallback;
+  if (typeof value !== "boolean") throw new Error(`${name} must be a boolean.`);
+  return value;
+}
+
+function readRecord(value, name, validateValue) {
+  if (value === undefined) return dictionary();
+
+  if (!isRecord(value)) throw new Error(`${name} must be an object.`);
+
+  const entries = Object.entries(value);
+
+  if (entries.length > MAX_DICTIONARY_ENTRIES) {
+    throw new Error(`${name} contains too many entries.`);
+  }
+
+  const result = dictionary();
+
+  for (const [key, item] of entries) {
+    if (key.length > 10_000) throw new Error(`${name} contains an oversized key.`);
+    result[key] = validateValue(item, `${name}.${key}`);
+  }
+
+  return result;
+}
+
+function readCoordinate(value, name) {
+  if (!Number.isFinite(value) || Math.abs(value) > MAX_COORDINATE) {
+    throw new Error(`${name} must be a finite coordinate.`);
+  }
+
+  return value;
+}
+
+function readPosition(value, name) {
+  if (!isRecord(value)) throw new Error(`${name} must contain x and y.`);
+
+  return {
+    x: readCoordinate(value.x, `${name}.x`),
+    y: readCoordinate(value.y, `${name}.y`),
+  };
+}
+
+function readColor(value, name) {
+  const color = normalizeColor(value);
+  if (!color) throw new Error(`${name} must be a hexadecimal color.`);
+  return color;
+}
+
+function readStringArray(value, name, fallback = []) {
+  if (value === undefined) return fallback;
+
+  if (
+    !Array.isArray(value) ||
+    value.length > MAX_DICTIONARY_ENTRIES ||
+    value.some((entry) => typeof entry !== "string" || entry.length > 10_000)
+  ) {
+    throw new Error(`${name} must be an array of strings.`);
+  }
+
+  return [...new Set(value)];
+}
+
+function normalizeDocument(raw, { requireDbml = false } = {}) {
+  if (!isRecord(raw)) throw new Error("The diagram must be a JSON object.");
+
+  if (
+    raw.version !== undefined &&
+    (!Number.isInteger(raw.version) ||
+      raw.version < 1 ||
+      raw.version > DOCUMENT_VERSION)
+  ) {
+    throw new Error("This diagram uses an unsupported file version.");
+  }
+
+  if (requireDbml && typeof raw.dbml !== "string") {
+    throw new Error("The diagram does not contain a DBML document.");
+  }
+
+  let viewport = null;
+
+  if (raw.viewport !== undefined && raw.viewport !== null) {
+    if (!isRecord(raw.viewport)) {
+      throw new Error("viewport must be an object.");
+    }
+
+    if (!Number.isFinite(raw.viewport.zoom)) {
+      throw new Error("viewport.zoom must be a finite number.");
+    }
+
+    viewport = {
+      zoom: clampZoom(raw.viewport.zoom),
+      offset: readPosition(raw.viewport.offset, "viewport.offset"),
+    };
+  }
+
+  const recentColors =
+    raw.recentColors === undefined
+      ? []
+      : readStringArray(raw.recentColors, "recentColors")
+          .map((color) => readColor(color, "recentColors"))
+          .slice(0, 12);
+
+  const editorWidth =
+    raw.editorWidth === undefined
+      ? 470
+      : readCoordinate(raw.editorWidth, "editorWidth");
+
+  return {
+    version: DOCUMENT_VERSION,
+    dbml: readString(raw.dbml, "dbml", DEFAULT_DBML),
+    fileName: readString(raw.fileName, "fileName", "Untitled", 500),
+    tablePositions: readRecord(raw.tablePositions, "tablePositions", readPosition),
+    tableColors: readRecord(raw.tableColors, "tableColors", readColor),
+    groupColors: readRecord(raw.groupColors, "groupColors", readColor),
+    tableIds: readRecord(raw.tableIds, "tableIds", (value, name) =>
+      readString(value, name, "", 200),
+    ),
+    lineMidXOverrides: readRecord(
+      raw.lineMidXOverrides,
+      "lineMidXOverrides",
+      readCoordinate,
+    ),
+    colorLegendDescriptions: readRecord(
+      raw.colorLegendDescriptions,
+      "colorLegendDescriptions",
+      (value, name) => readString(value, name, "", 20_000),
+    ),
+    recentColors: [...new Set(recentColors)],
+    collapsedTables: readStringArray(raw.collapsedTables, "collapsedTables"),
+    isDark: readBoolean(raw.isDark, "isDark", false),
+    groupsVisible: readBoolean(raw.groupsVisible, "groupsVisible", false),
+    colorLegendVisible: readBoolean(
+      raw.colorLegendVisible,
+      "colorLegendVisible",
+      false,
+    ),
+    showAllConnections: readBoolean(
+      raw.showAllConnections,
+      "showAllConnections",
+      false,
+    ),
+    jumpToTableOnClick: readBoolean(
+      raw.jumpToTableOnClick,
+      "jumpToTableOnClick",
+      false,
+    ),
+    reverseConnectionFlow: readBoolean(
+      raw.reverseConnectionFlow,
+      "reverseConnectionFlow",
+      false,
+    ),
+    isEditorCollapsed: readBoolean(
+      raw.isEditorCollapsed,
+      "isEditorCollapsed",
+      false,
+    ),
+    editorWidth: clamp(editorWidth, 280, 700),
+    viewport,
+  };
+}
+
+function parseDocument(dbml) {
+  try {
+    const result = parseDBMLDocument(dbml);
+
+    return {
+      model: result.model || null,
+      errors: result.errors || [],
+      warnings: result.warnings || [],
+    };
+  } catch (error) {
+    return {
+      model: null,
+      errors: [
+        {
+          message: errorMessage(error, "Unable to parse DBML."),
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: 1,
+          endColumn: 2,
+        },
+      ],
+      warnings: [],
+    };
+  }
+}
+
+function modelTables(model) {
+  return model?.tables || [];
+}
+
+function modelGroups(model) {
+  return model?.groups || [];
+}
+
+function legacyRelationshipKey(ref) {
+  const base =
+    `rline-${ref.from.table}-${ref.from.column}` +
+    `-${ref.to.table}-${ref.to.column}`;
+
+  return ref.composite ? `${base}-${ref.id}` : base;
+}
+
+/**
+ * Persistent route keys use stable table IDs, not DOM IDs or raw table names.
+ * An ordinal distinguishes otherwise-identical repeated references.
+ */
+function identifyRelationships(model, tableIds) {
+  const occurrences = new Map();
+
+  return (model?.refs || []).map((ref) => {
+    const signature = JSON.stringify([
+      tableIds[ref.from.table] || ref.from.table,
+      ref.from.columns || [ref.from.column],
+      tableIds[ref.to.table] || ref.to.table,
+      ref.to.columns || [ref.to.column],
+      ref.name || "",
+      ref.composite ? ref.from.column : "",
+      ref.composite ? ref.to.column : "",
+    ]);
+
+    const ordinal = occurrences.get(signature) || 0;
+    occurrences.set(signature, ordinal + 1);
+
+    return {
+      ...ref,
+      routeKey: `v2:${signature}:${ordinal}`,
+    };
+  });
+}
+
+function reconcileDocument(data, model, previousModel, allowRenames) {
+  const tables = modelTables(model);
+  const validNames = new Set(tables.map((table) => table.name));
+  const renames = allowRenames
+    ? detectTableRenames(modelTables(previousModel), tables)
+    : new Map();
+
+  const positions = dictionary();
+  const colors = dictionary();
+  const tableIds = dictionary();
+
+  const reverseRenames = new Map(
+    [...renames].map(([oldName, newName]) => [newName, oldName]),
+  );
+
+  const reservedIds = new Set(
+    Object.values(data.tableIds).filter((id) => typeof id === "string" && id),
+  );
+  const usedIds = new Set();
+  let nextId = 1;
+
+  function allocateId() {
+    while (reservedIds.has(`t${nextId}`) || usedIds.has(`t${nextId}`)) {
+      nextId += 1;
+    }
+
+    const id = `t${nextId}`;
+    nextId += 1;
+    return id;
+  }
+
+  const columns = Math.max(1, Math.ceil(Math.sqrt(tables.length)));
+
+  tables.forEach((table, index) => {
+    const oldName = reverseRenames.get(table.name);
+    const sourceName = oldName || table.name;
+
+    positions[table.name] =
+      data.tablePositions[table.name] ||
+      data.tablePositions[sourceName] || {
+        x: 60 + (index % columns) * (TABLE_WIDTH + 90),
+        y: 60 + Math.floor(index / columns) * 320,
+      };
+
+    const override =
+      data.tableColors[table.name] || data.tableColors[sourceName];
+
+    if (override) colors[table.name] = override;
+
+    let id = data.tableIds[sourceName] || data.tableIds[table.name];
+
+    if (!id || usedIds.has(id)) id = allocateId();
+
+    usedIds.add(id);
+    tableIds[table.name] = id;
+  });
+
+  const collapsedTables = [
+    ...new Set(
+      data.collapsedTables
+        .map((name) => renames.get(name) || name)
+        .filter((name) => validNames.has(name)),
+    ),
+  ];
+
+  const groupColors = dictionary();
+  const validGroups = new Set(modelGroups(model).map((group) => group.name));
+
+  for (const [name, color] of Object.entries(data.groupColors)) {
+    if (validGroups.has(name)) groupColors[name] = color;
+  }
+
+  const identifiedRefs = identifyRelationships(model, tableIds);
+  const overrides = dictionary();
+
+  for (const ref of identifiedRefs) {
+    if (hasOwn(data.lineMidXOverrides, ref.routeKey)) {
+      overrides[ref.routeKey] = data.lineMidXOverrides[ref.routeKey];
+      continue;
+    }
+
+    const oldKey = legacyRelationshipKey(ref);
+
+    if (hasOwn(data.lineMidXOverrides, oldKey)) {
+      overrides[ref.routeKey] = data.lineMidXOverrides[oldKey];
+    }
+  }
+
+  return {
+    data: {
+      ...data,
+      tablePositions: positions,
+      tableColors: colors,
+      tableIds,
+      groupColors,
+      collapsedTables,
+      lineMidXOverrides: overrides,
+    },
+    renames,
+    validNames,
+    validGroups,
+  };
+}
+
+function createDocumentState(data, parsed, epoch = 0) {
+  const model = parsed.model || EMPTY_DBML_MODEL;
+
+  const reconciled = parsed.model
+    ? reconcileDocument(data, model, null, false).data
+    : data;
+
+  return {
+    data: reconciled,
+    model,
+    parsedSource: data.dbml,
+    errors: parsed.errors,
+    warnings: parsed.warnings,
+    epoch,
+    geometryRevision: 0,
+    selectedTables: [],
+    selectedGroup: null,
+    hoveredTable: null,
+  };
+}
+
+function initializeApplication() {
+  const warnings = [];
+  let data = null;
+  let fromShare = false;
+
+  if (typeof window !== "undefined") {
+    try {
+      const shared = decodeShareHash(window.location.hash);
+
+      if (shared) {
+        data = normalizeDocument(shared, { requireDbml: true });
+        fromShare = true;
+      }
+    } catch (error) {
+      warnings.push(errorMessage(error, "The shared diagram could not be opened."));
+    }
+
+    if (!data) {
+      try {
+        const stored = window.localStorage.getItem(STORAGE_KEY);
+
+        if (stored) {
+          if (stored.length > MAX_FILE_BYTES) {
+            throw new Error("The saved diagram is too large.");
+          }
+
+          data = normalizeDocument(JSON.parse(stored), {
+            requireDbml: true,
+          });
+        }
+      } catch (error) {
+        warnings.push(
+          errorMessage(error, "The previously saved diagram could not be restored."),
+        );
+      }
+    }
+  }
+
+  data ||= normalizeDocument({ dbml: DEFAULT_DBML });
+
+  return {
+    ...createDocumentState(data, parseDocument(data.dbml)),
+    startupWarnings: warnings,
+    fromShare,
+  };
+}
+
+function documentReducer(state, action) {
+  switch (action.type) {
+    case "edit":
+      return {
+        ...state,
+        data: { ...state.data, dbml: action.dbml },
+        geometryRevision: state.geometryRevision + 1,
+      };
+
+    case "parsed": {
+      if (
+        action.epoch !== state.epoch ||
+        action.source !== state.data.dbml
+      ) {
+        return state;
       }
 
-      result.push({
-        ref,
-        fromColIdx,
-        toColIdx,
-        crowDir,
-        sourceEndpointY: getColumnY(fromPos, fromColIdx),
-      });
+      if (!action.result.model) {
+        return {
+          ...state,
+          parsedSource: action.source,
+          errors: action.result.errors,
+          warnings: action.result.warnings,
+        };
+      }
+
+      const result = reconcileDocument(
+        state.data,
+        action.result.model,
+        state.model,
+        true,
+      );
+
+      const rename = (name) => result.renames.get(name) || name;
+
+      const selectedTables = [
+        ...new Set(
+          state.selectedTables
+            .map(rename)
+            .filter((name) => result.validNames.has(name)),
+        ),
+      ];
+
+      const hover = state.hoveredTable ? rename(state.hoveredTable) : null;
+
+      return {
+        ...state,
+        data: result.data,
+        model: action.result.model,
+        parsedSource: action.source,
+        errors: action.result.errors,
+        warnings: action.result.warnings,
+        geometryRevision: state.geometryRevision + 1,
+        selectedTables,
+        selectedGroup: result.validGroups.has(state.selectedGroup)
+          ? state.selectedGroup
+          : null,
+        hoveredTable: result.validNames.has(hover) ? hover : null,
+      };
     }
-    return result;
-  }, [refs, tablePositions, tableData, tableWidths]);
 
-  // ── Phase 2: assign FROM-side lanes ──────────────────────────────────────
-  // Connections leaving the same table on the same side get staggered midpoints
-  // so their vertical corridor segments never overlap.
-  // Sort by column index (top → bottom) so the visual fan is predictable.
-  const itemsWithLanes = useMemo(() => {
-    const fromGroups = {};
-    items.forEach((item) => {
-      const key = `${item.ref.from.table}::${item.crowDir}`;
-      (fromGroups[key] ??= []).push(item);
-    });
-    Object.values(fromGroups).forEach((group) => {
-      group.sort((a, b) => a.fromColIdx - b.fromColIdx);
-      group.forEach((item, i) => {
-        item.fromLane      = i;
-        item.fromLaneCount = group.length;
-      });
-    });
+    case "open":
+      return {
+        ...createDocumentState(action.data, action.parsed, state.epoch + 1),
+        startupWarnings: [],
+        fromShare: false,
+      };
 
-    // ── Phase 3: assign TO-side lanes ────────────────────────────────────
-    // Multiple connections arriving at the exact same PK column get a small
-    // vertical spread so the circles don't stack on top of each other.
-    const toGroups = {};
-    items.forEach((item) => {
-      const key = `${item.ref.to.table}::${item.ref.to.column}`;
-      (toGroups[key] ??= []).push(item);
-    });
-    Object.values(toGroups).forEach((group) => {
-      // Match shared-column endpoints to the live vertical order of their
-      // source columns so connections re-fan automatically as tables move.
-      orderSharedColumnArrivals(group).forEach((item, i) => {
-        item.toLane      = i;
-        item.toLaneCount = group.length;
-      });
-    });
+    case "patch":
+      return {
+        ...state,
+        data: { ...state.data, ...action.patch },
+        geometryRevision:
+          state.geometryRevision + (action.geometry ? 1 : 0),
+      };
 
-    return items;
-  }, [items]);
+    case "positions": {
+      const positions = dictionary(state.data.tablePositions);
 
-  const routedPaths = useMemo(() => {
-    const routes = new Map();
-    for (const item of itemsWithLanes) {
-      const { ref, fromColIdx, toColIdx, crowDir,
-        fromLane, fromLaneCount, toLane, toLaneCount } = item;
-      const fromPos = tablePositions[ref.from.table];
-      const toPos = tablePositions[ref.to.table];
-      const fromRight = fromPos.x + (tableWidths[ref.from.table] || TABLE_WIDTH);
-      const toRight = toPos.x + (tableWidths[ref.to.table] || TABLE_WIDTH);
-      const fromY = getColumnY(fromPos, fromColIdx);
-      const toY = getColumnY(toPos, toColIdx);
-      const x1 = crowDir === "right" ? fromRight + 1 : fromPos.x - 1;
-      const x2 = (crowDir === "right" || crowDir === "vert-left") ? toPos.x - 1 : toRight + 1;
-      const pathX1 = crowDir === "right" ? x1 + 10 : x1 - 10;
-      const pathX2 = (crowDir === "right" || crowDir === "vert-left") ? x2 - 6 : x2 + 6;
-      const laneOffset = fromLaneCount > 1
-        ? (fromLane - (fromLaneCount - 1) / 2) * LANE_SPACING
-        : 0;
-      const preferredMidX = crowDir === "vert-left"
-        ? Math.min(fromPos.x, toPos.x) - 30 - Math.abs(laneOffset)
-        : (pathX1 + pathX2) / 2 + (crowDir === "right" ? laneOffset : -laneOffset);
-      const arriveOffset = toLaneCount > 1
-        ? (toLane - (toLaneCount - 1) / 2) * ARRIVE_SPREAD
-        : 0;
-      const toYAdjusted = toY + arriveOffset;
-      const pathKey = getRelationshipPathKey(ref);
-      const points = routeOrthogonalConnection({
-        start: { x: pathX1, y: fromY },
-        end: { x: pathX2, y: toYAdjusted },
-        preferredMidX,
-        startDirection: crowDir === "right" ? 1 : -1,
-        endDirection: (crowDir === "right" || crowDir === "vert-left") ? -1 : 1,
-        obstacles: routingObstacles.filter(({ table }) =>
-          table !== ref.from.table && table !== ref.to.table),
-        manualMidX: lineMidXOverrides[pathKey],
-        lane: fromLane,
-      });
-      routes.set(pathKey, {
-        path: orthogonalPointsToPath(points),
-        draggableSegment: longestVerticalSegment(points),
-      });
+      for (const [name, position] of Object.entries(action.positions)) {
+        if (!hasOwn(state.data.tablePositions, name)) continue;
+
+        positions[name] = {
+          x: clamp(position.x, -MAX_COORDINATE, MAX_COORDINATE),
+          y: clamp(position.y, -MAX_COORDINATE, MAX_COORDINATE),
+        };
+      }
+
+      const overrides = dictionary(state.data.lineMidXOverrides);
+
+      if (action.lineOverrides) {
+        for (const [key, x] of Object.entries(action.lineOverrides)) {
+          overrides[key] = clamp(x, -MAX_COORDINATE, MAX_COORDINATE);
+        }
+      }
+
+      return {
+        ...state,
+        data: {
+          ...state.data,
+          tablePositions: positions,
+          lineMidXOverrides: overrides,
+        },
+        geometryRevision: state.geometryRevision + 1,
+      };
     }
-    return routes;
-  }, [itemsWithLanes, lineMidXOverrides, routingObstacles, tablePositions, tableWidths]);
 
-  // ── Render ────────────────────────────────────────────────────────────────
-  const lines = [];
+    case "layout":
+      if (
+        action.epoch !== state.epoch ||
+        action.revision !== state.geometryRevision
+      ) {
+        return state;
+      }
 
-  for (const item of itemsWithLanes) {
-    const { ref, fromColIdx, toColIdx, crowDir,
-            toLane, toLaneCount } = item;
+      return {
+        ...state,
+        data: {
+          ...state.data,
+          tablePositions: dictionary(action.positions),
+          lineMidXOverrides: dictionary(),
+        },
+        geometryRevision: state.geometryRevision + 1,
+      };
 
-    const fromPos = tablePositions[ref.from.table];
-    const toPos   = tablePositions[ref.to.table];
-    const fromRight = fromPos.x + (tableWidths[ref.from.table] || TABLE_WIDTH);
-    const toRight   = toPos.x  + (tableWidths[ref.to.table]   || TABLE_WIDTH);
+    case "line":
+      return {
+        ...state,
+        data: {
+          ...state.data,
+          lineMidXOverrides: Object.assign(
+            dictionary(state.data.lineMidXOverrides),
+            {
+              [action.key]: clamp(
+                action.x,
+                -MAX_COORDINATE,
+                MAX_COORDINATE,
+              ),
+            },
+          ),
+        },
+        geometryRevision: state.geometryRevision + 1,
+      };
 
-    const fromY = getColumnY(fromPos, fromColIdx);
-    const toY   = getColumnY(toPos,   toColIdx);
+    case "select":
+      return {
+        ...state,
+        selectedTables: action.names,
+        selectedGroup: null,
+      };
 
-    // Exact entry/exit points on the table edges
-    // vert-left: FROM uses left edge, TO also uses left edge (C-shape around outside)
-    const x1 = crowDir === "right" ? fromRight + 1 : fromPos.x - 1;
-    const x2 = (crowDir === "right" || crowDir === "vert-left") ? toPos.x - 1 : toRight + 1;
-    // ── TO-side lane: spread circles that land on the same PK column ─────────
-    const arriveOffset = toLaneCount > 1
-      ? (toLane - (toLaneCount - 1) / 2) * ARRIVE_SPREAD
-      : 0;
-    const toYAdj = toY + arriveOffset;
-    const fromTableDirection = crowDir === "right" ? -1 : 1;
-    const toTableDirection = (crowDir === "right" || crowDir === "vert-left") ? 1 : -1;
-    const flowArrowX = reverseConnectionFlow
-      ? x2 - toTableDirection * 18
-      : x1 - fromTableDirection * 18;
-    const flowArrowY = reverseConnectionFlow ? toYAdj : fromY;
-    const flowArrowDirection = reverseConnectionFlow ? toTableDirection : fromTableDirection;
+    case "select-group":
+      return {
+        ...state,
+        selectedTables: [],
+        selectedGroup: action.name,
+      };
 
-    // ── Styling ──────────────────────────────────────────────────────────────
-    const isActive = showAllConnections
-      || hoveredTable === ref.from.table || hoveredTable === ref.to.table
-      || selectedTables.has(ref.from.table) || selectedTables.has(ref.to.table);
-    const lineColor = ref.color || (isActive
-      ? (tableColors[ref.from.table] || theme.lineColor)
-      : theme.lineColor);
-    const hasFilter = !showAllConnections && (hoveredTable || selectedTables.size > 0);
-    const opacity = hasFilter && !isActive ? 0.18 : 1;
+    case "hover":
+      return state.hoveredTable === action.name
+        ? state
+        : { ...state, hoveredTable: action.name };
 
-    // Label positions (just outside the decoration, above the line)
-    // vert-left FROM uses left edge (same as "left"), TO uses left edge (same as "right")
-    const starX      = crowDir === "right" ? x1 + 13 : x1 - 13;
-    const starAnchor = crowDir === "right" ? "start"  : "end";
-    const cardX      = (crowDir === "right" || crowDir === "vert-left") ? x2 - 13 : x2 + 13;
-    const cardAnchor = (crowDir === "right" || crowDir === "vert-left") ? "end"   : "start";
+    case "collapse": {
+      const collapsed = new Set(state.data.collapsedTables);
 
-    const pathKey = getRelationshipPathKey(ref);
-    const { path, draggableSegment } = routedPaths.get(pathKey);
+      if (collapsed.has(action.name)) collapsed.delete(action.name);
+      else collapsed.add(action.name);
 
-    lines.push(
-      <g key={pathKey} opacity={opacity}>
-        <title>{[
-          ref.name && `Relationship: ${ref.name}`,
-          `${ref.from.table}.${ref.from.column} (${ref.from.cardinality}) → ${ref.to.table}.${ref.to.column} (${ref.to.cardinality})`,
-          ref.onDelete && `ON DELETE ${ref.onDelete}`,
-          ref.onUpdate && `ON UPDATE ${ref.onUpdate}`,
-          ref.inactive && "Inactive relationship",
-        ].filter(Boolean).join("\n")}</title>
-        <path id={pathKey} data-export-bounds="1" d={path} fill="none" stroke={lineColor} strokeWidth="1.3"
-          strokeDasharray={ref.inactive ? "6 5" : undefined} />
+      return {
+        ...state,
+        data: { ...state.data, collapsedTables: [...collapsed] },
+        geometryRevision: state.geometryRevision + 1,
+      };
+    }
 
-        {/* Draggable hit area on the vertical corridor segment */}
-        {draggableSegment && (
-          <line
-            data-export-hide="1"
-            x1={draggableSegment.x} y1={draggableSegment.minY}
-            x2={draggableSegment.x} y2={draggableSegment.maxY}
-            stroke="transparent" strokeWidth="16"
-            style={{ cursor: "col-resize", pointerEvents: "stroke" }}
-            onMouseDown={(e) => { e.stopPropagation(); onLineDragStart(pathKey, e.clientX, draggableSegment.x); }}
-          />
-        )}
-        {/* Grip dot — subtle affordance on the vertical segment midpoint */}
-        {draggableSegment && (
-          <circle data-export-hide="1"
-            cx={draggableSegment.x} cy={(draggableSegment.minY + draggableSegment.maxY) / 2} r="2.5"
-            fill={lineColor} opacity={isActive ? 0.6 : 0.25}
-            style={{ pointerEvents: "none" }} />
-        )}
+    case "table-colors": {
+      const colors = dictionary(state.data.tableColors);
 
-        <CardinalityEnd x={x1} y={fromY}
-          dir={crowDir === "right" ? "right" : "left"}
-          cardinality={ref.from.cardinality} color={lineColor} />
-        <CardinalityEnd x={x2} y={toYAdj}
-          dir={(crowDir === "right" || crowDir === "vert-left") ? "left" : "right"}
-          cardinality={ref.to.cardinality} color={lineColor} />
-        <FlowArrow x={flowArrowX} y={flowArrowY} direction={flowArrowDirection} color={lineColor} />
+      for (const [name, color] of Object.entries(action.colors)) {
+        if (color === null) delete colors[name];
+        else colors[name] = color;
+      }
 
-        {/* Cardinality labels */}
-        <text x={starX} y={fromY - 7} fill={lineColor} fontSize="11"
-          fontFamily="'DM Sans', sans-serif" textAnchor={starAnchor} fontWeight="700">{ref.from.cardinality}</text>
-        <text x={cardX} y={toYAdj - 7} fill={lineColor} fontSize="9.5"
-          fontFamily="'DM Sans', sans-serif" textAnchor={cardAnchor} opacity="0.85">{ref.to.cardinality}</text>
+      return {
+        ...state,
+        data: { ...state.data, tableColors: colors },
+      };
+    }
 
-        {/* Animation follows the selected display flow without changing cardinality semantics. */}
-        {isActive && (
-          <circle data-export-hide="1" r="2.8" fill={lineColor} opacity="0.9">
-            <animateMotion dur="1.8s" repeatCount="indefinite"
-              keyPoints={reverseConnectionFlow ? "0;1" : "1;0"}
-              keyTimes="0;1" calcMode="linear">
-              <mpath href={`#${pathKey}`} />
-            </animateMotion>
-          </circle>
-        )}
-      </g>
-    );
+    case "group-color":
+      return {
+        ...state,
+        data: {
+          ...state.data,
+          groupColors: Object.assign(dictionary(state.data.groupColors), {
+            [action.name]: action.color,
+          }),
+        },
+      };
+
+    case "recent-colors": {
+      const recent = [
+        ...new Set([...action.colors, ...state.data.recentColors]),
+      ].slice(0, 12);
+
+      if (arraysEqual(recent, state.data.recentColors)) return state;
+
+      return {
+        ...state,
+        data: { ...state.data, recentColors: recent },
+      };
+    }
+
+    case "legend-description": {
+      const descriptions = dictionary(state.data.colorLegendDescriptions);
+
+      if (action.description) descriptions[action.color] = action.description;
+      else delete descriptions[action.color];
+
+      return {
+        ...state,
+        data: { ...state.data, colorLegendDescriptions: descriptions },
+      };
+    }
+
+    default:
+      return state;
   }
-  return <>{lines}</>;
 }
 
-// Pre-computed donut color wheel paths (6 × 60° segments, outer r=8.5, inner r=4, center 10 10)
-const COLOR_WHEEL_SEGS = (() => {
-  const R = 8.5, r = 4, cx = 10, cy = 10;
-  const colors = ["#f87171", "#fbbf24", "#34d399", "#22d3ee", "#818cf8", "#f472b6"];
-  return colors.map((color, i) => {
-    const a0 = -Math.PI / 2 + i * (Math.PI / 3);
-    const a1 = a0 + Math.PI / 3;
-    const f = (n) => n.toFixed(3);
-    const [ox0, oy0] = [cx + R * Math.cos(a0), cy + R * Math.sin(a0)];
-    const [ox1, oy1] = [cx + R * Math.cos(a1), cy + R * Math.sin(a1)];
-    const [ix0, iy0] = [cx + r * Math.cos(a0), cy + r * Math.sin(a0)];
-    const [ix1, iy1] = [cx + r * Math.cos(a1), cy + r * Math.sin(a1)];
-    const d = `M${f(ox0)} ${f(oy0)} A${R} ${R} 0 0 1 ${f(ox1)} ${f(oy1)} L${f(ix1)} ${f(iy1)} A${r} ${r} 0 0 0 ${f(ix0)} ${f(iy0)}Z`;
-    return { color, d };
-  });
-})();
+/* -------------------------------------------------------------------------- */
+/* Hooks                                                                      */
+/* -------------------------------------------------------------------------- */
 
-function ColorWheelIcon({ lit }) {
-  return (
-    <svg width="18" height="18" viewBox="0 0 20 20"
-      style={{ display: "block", opacity: lit ? 1 : COLOR_WHEEL_RESTING_OPACITY, transition: "opacity 0.15s", pointerEvents: "none" }}>
-      {COLOR_WHEEL_SEGS.map((s) => <path key={s.color} d={s.d} fill={s.color} />)}
-    </svg>
+function useLatest(value) {
+  const ref = useRef(value);
+
+  useLayoutEffect(() => {
+    ref.current = value;
+  }, [value]);
+
+  return ref;
+}
+
+function useReducedMotion() {
+  const [reduced, setReduced] = useState(() =>
+    typeof window !== "undefined"
+      ? window.matchMedia("(prefers-reduced-motion: reduce)").matches
+      : false,
   );
+
+  useEffect(() => {
+    const query = window.matchMedia("(prefers-reduced-motion: reduce)");
+    const update = () => setReduced(query.matches);
+
+    query.addEventListener("change", update);
+    return () => query.removeEventListener("change", update);
+  }, []);
+
+  return reduced;
 }
 
-function TableNode({ table, position, color, onDragStart, isSelected, onSelect, onTableContextMenu, theme, fkColumns, activeColumns, onHover, width, isDimmed, isCollapsed, onToggleCollapse }) {
-  const handleMouseDown = (e) => {
-    // Every mouse button originating on a table must stay out of the canvas
-    // handler. In particular, a right-click must not clear multi-selection
-    // before the subsequent contextmenu event reads it.
-    e.stopPropagation();
-    if (e.button !== 0) return;
-    if (e.target.closest(".table-collapse-toggle")) return;
-    // Prevent the browser's native text/image drag ghost while moving a table.
-    e.preventDefault();
-    if (e.ctrlKey || e.metaKey) {
-      // Ctrl/Cmd+click: toggle membership in multi-selection, no drag
-      onSelect(table.name, true);
-    } else {
-      onSelect(table.name, false);
-      onDragStart(table.name, e.clientX, e.clientY);
+function useElementSize(ref) {
+  const [size, setSize] = useState({ width: 0, height: 0 });
+
+  useLayoutEffect(() => {
+    const element = ref.current;
+    if (!element) return undefined;
+
+    const update = () => {
+      const bounds = element.getBoundingClientRect();
+
+      setSize((previous) => {
+        const next = { width: bounds.width, height: bounds.height };
+
+        return previous.width === next.width && previous.height === next.height
+          ? previous
+          : next;
+      });
+    };
+
+    update();
+
+    const observer = new ResizeObserver(update);
+    observer.observe(element);
+
+    return () => observer.disconnect();
+  }, [ref]);
+
+  return size;
+}
+
+function useAutosave(snapshot) {
+  const latest = useLatest(snapshot);
+  const dirtyRef = useRef(false);
+  const debounceRef = useRef(null);
+  const maxWaitRef = useRef(null);
+  const [status, setStatus] = useState("saved");
+
+  const flush = useCallback(() => {
+    if (!dirtyRef.current) return;
+
+    clearTimeout(debounceRef.current);
+    clearTimeout(maxWaitRef.current);
+    debounceRef.current = null;
+    maxWaitRef.current = null;
+
+    try {
+      const serialized = JSON.stringify(latest.current);
+
+      if (serialized.length > MAX_FILE_BYTES) {
+        throw new Error("The diagram exceeds the autosave size limit.");
+      }
+
+      window.localStorage.setItem(STORAGE_KEY, serialized);
+      dirtyRef.current = false;
+      setStatus("saved");
+    } catch {
+      setStatus("error");
     }
-  };
+  }, [latest]);
 
+  useEffect(() => {
+    dirtyRef.current = true;
+    setStatus("pending");
+
+    clearTimeout(debounceRef.current);
+    debounceRef.current = setTimeout(flush, 400);
+
+    if (!maxWaitRef.current) {
+      maxWaitRef.current = setTimeout(flush, 2000);
+    }
+
+    return () => clearTimeout(debounceRef.current);
+  }, [snapshot, flush]);
+
+  useEffect(() => {
+    const onVisibility = () => {
+      if (document.visibilityState === "hidden") flush();
+    };
+
+    window.addEventListener("pagehide", flush);
+    document.addEventListener("visibilitychange", onVisibility);
+
+    return () => {
+      window.removeEventListener("pagehide", flush);
+      document.removeEventListener("visibilitychange", onVisibility);
+      flush();
+      clearTimeout(debounceRef.current);
+      clearTimeout(maxWaitRef.current);
+    };
+  }, [flush]);
+
+  return { status, flush };
+}
+
+function useTableWidths(tables, relationshipColumns) {
+  const [fontRevision, setFontRevision] = useState(0);
+
+  useEffect(() => {
+    let active = true;
+
+    const update = () => {
+      if (active) setFontRevision((revision) => revision + 1);
+    };
+
+    document.fonts?.ready.then(update);
+    document.fonts?.addEventListener?.("loadingdone", update);
+
+    return () => {
+      active = false;
+      document.fonts?.removeEventListener?.("loadingdone", update);
+    };
+  }, []);
+
+  return useMemo(() => {
+    const result = dictionary();
+    const canvas =
+      typeof document !== "undefined" ? document.createElement("canvas") : null;
+    const context = canvas?.getContext("2d");
+
+    const measure = (text, font) => {
+      const value = String(text || "");
+
+      if (!context) return value.length * 7.5;
+
+      context.font = font;
+      return context.measureText(value).width;
+    };
+
+    for (const table of tables) {
+      let width = Math.max(
+        TABLE_MIN_WIDTH,
+        measure(table.name, "700 12px 'DM Sans', sans-serif") + 78,
+      );
+
+      for (const column of table.columns) {
+        const related = relationshipColumns.get(table.name)?.has(column.name);
+
+        const nameFont =
+          `${related && !column.isPk ? "italic " : ""}` +
+          `${column.isPk ? "600" : "400"} 12.5px 'DM Sans', sans-serif`;
+
+        const nameWidth = measure(column.name, nameFont);
+        const typeWidth = measure(
+          column.type,
+          "400 11px 'JetBrains Mono', monospace",
+        );
+
+        const iconWidth = column.isPk || related ? 18 : 0;
+        const badges =
+          (column.isUnique && !column.isPk ? 22 : 0) +
+          (column.increment ? 18 : 0) +
+          (column.notNull && !column.isPk ? 22 : 0);
+
+        width = Math.max(
+          width,
+          24 + iconWidth + nameWidth + 20 + typeWidth + badges,
+        );
+      }
+
+      result[table.name] = Math.ceil(width + TABLE_BORDER * 2);
+    }
+
+    return result;
+  }, [tables, relationshipColumns, fontRevision]);
+}
+
+/* -------------------------------------------------------------------------- */
+/* Reusable UI                                                                */
+/* -------------------------------------------------------------------------- */
+
+function ToolButton({
+  children,
+  label,
+  onClick,
+  disabled = false,
+  buttonRef,
+  className = "",
+  ...rest
+}) {
   return (
-    <div
-      data-diagram-table={table.name}
-      onMouseDown={handleMouseDown}
-      onContextMenu={(e) => {
-        e.preventDefault();
-        e.stopPropagation();
-        onTableContextMenu(table.name, e);
-      }}
-      onDragStart={(e) => e.preventDefault()}
-      onMouseEnter={() => onHover(table.name)}
-      onMouseLeave={() => onHover(null)}
-      title={[table.alias && `Alias: ${table.alias}`, table.note].filter(Boolean).join("\n") || undefined}
-      style={{
-        position: "absolute",
-        left: position.x,
-        top: position.y,
-        width: width || TABLE_WIDTH,
-        borderRadius: "6px",
-        overflow: "hidden",
-        boxShadow: isSelected
-          ? `0 0 0 2px ${color}, 0 8px 24px rgba(0,0,0,0.12)`
-          : `0 2px 8px rgba(0,0,0,0.09), 0 0 0 1px ${theme.tableBorder}`,
-        cursor: "grab",
-        userSelect: "none",
-        WebkitUserSelect: "none",
-        WebkitUserDrag: "none",
-        opacity: isDimmed ? 0.35 : 1,
-        transition: "box-shadow 0.15s ease, opacity 0.2s ease",
-        background: theme.tableBg,
-        border: `1px solid ${isSelected ? color : theme.tableBorder}`,
-      }}
+    <button
+      ref={buttonRef}
+      type="button"
+      className={`sker-button ${className}`}
+      aria-label={label}
+      title={label}
+      onClick={onClick}
+      disabled={disabled}
+      {...rest}
     >
-      {/* Flat solid header */}
-      <div
-        style={{
-          height: HEADER_HEIGHT,
-          background: color,
-          display: "flex",
-          alignItems: "center",
-          gap: TABLE_HEADER_GAP,
-          paddingRight: TABLE_HEADER_GAP,
-          boxSizing: "border-box",
-          position: "relative",
-          fontFamily: "'DM Sans', sans-serif",
-        }}
-      >
-        {/* Left-flush pill: square left edge, rounded right, capped before the collapse control */}
-        <span style={{
-          display: "inline-block",
-          background: `rgba(0,0,0,${TABLE_NAME_DARKNESS})`,
-          borderRadius: `0 ${TABLE_CORNER_RADIUS}px ${TABLE_CORNER_RADIUS}px 0`,
-          color: "#fff",
-          padding: "4px 12px",
-          fontSize: "12px",
-          fontWeight: 700,
-          whiteSpace: "nowrap",
-          flex: "1 0 auto",
-          minWidth: 0,
-        }}>{table.name}</span>
-        <button
-          className="table-collapse-toggle"
-          type="button"
-          title={isCollapsed ? `Expand ${table.name}` : `Collapse ${table.name} to keys`}
-          aria-label={isCollapsed ? `Expand ${table.name}` : `Collapse ${table.name} to keys`}
-          onMouseDown={(e) => { e.preventDefault(); e.stopPropagation(); }}
-          onClick={(e) => { e.stopPropagation(); onToggleCollapse(table.name); }}
-          style={{
-            width: TABLE_COLLAPSE_SIZE,
-            height: TABLE_COLLAPSE_SIZE,
-            flexShrink: 0,
-            padding: 0,
-            border: "none",
-            borderRadius: "5px",
-            background: "rgba(0,0,0,0.16)",
-            color: "#fff",
-            cursor: "pointer",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-          }}
-        >
-          <svg width="11" height="11" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"
-            style={{ transform: `rotate(${isCollapsed ? 0 : 90}deg)`, transition: "transform 0.15s ease" }}>
-            <polyline points="4,2 8,6 4,10" />
-          </svg>
-        </button>
-      </div>
-
-      <div>
-        {table.columns.map((col, i) => {
-          const isFk = fkColumns?.has(col.name);
-          const isHighlighted = activeColumns?.has(col.name);
-          return (
-            <div
-              key={col.name}
-              title={[
-                col.note,
-                col.notNull && "NOT NULL",
-                col.isUnique && "UNIQUE",
-                col.increment && "AUTO INCREMENT",
-                col.defaultValue != null && `Default: ${col.defaultValue}`,
-              ].filter(Boolean).join(" · ") || undefined}
-              style={{
-                height: COL_HEIGHT,
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "space-between",
-                padding: "0 12px",
-                fontSize: "12.5px",
-                borderBottom: i < table.columns.length - 1 ? `1px solid ${theme.colDivider}` : "none",
-                background: isHighlighted ? theme.activeColBg : "transparent",
-                transition: "background 0.15s",
-                fontFamily: "'DM Sans', sans-serif",
-              }}
-            >
-              <span style={{ display: "flex", alignItems: "center", gap: "6px", color: theme.colText }}>
-                {col.isPk && (
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
-                  </svg>
-                )}
-                {isFk && !col.isPk && (
-                  <svg width="11" height="11" viewBox="0 0 24 24" fill="none" stroke="#6366f1" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
-                    <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71" />
-                    <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71" />
-                  </svg>
-                )}
-                <span style={{ fontWeight: col.isPk ? 600 : 400, fontStyle: isFk && !col.isPk ? "italic" : "normal" }}>
-                  {col.name}
-                </span>
-              </span>
-              <span
-                style={{
-                  color: theme.colType,
-                  fontSize: "11px",
-                  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-                  fontWeight: 400,
-                  display: "flex",
-                  alignItems: "center",
-                  gap: "5px",
-                }}
-              >
-                <span>{col.type}</span>
-                {col.isUnique && !col.isPk && <span style={{ color: "#8b5cf6", fontSize: "9px" }}>UQ</span>}
-                {col.increment && <span style={{ color: "#10b981", fontSize: "9px" }}>++</span>}
-                {col.notNull && !col.isPk && <span style={{ color: theme.textMuted, fontSize: "9px" }}>NN</span>}
-              </span>
-            </div>
-          );
-        })}
-      </div>
-      {hasTableMeta(table) && (
-        <div title={[
-          table.note,
-          table.indexes?.length && `${table.indexes.length} indexes`,
-          table.checks?.length && `${table.checks.length} checks`,
-          table.records?.length && `${table.records.length} record sets`,
-        ].filter(Boolean).join(" · ")}
-          style={{
-            height: TABLE_META_HEIGHT,
-            display: "flex",
-            alignItems: "center",
-            gap: "8px",
-            padding: "0 12px",
-            borderTop: `1px solid ${theme.colDivider}`,
-            color: theme.textMuted,
-            fontSize: "9.5px",
-            fontFamily: "'DM Sans', sans-serif",
-          }}>
-          {table.note && <span>note</span>}
-          {table.indexes?.length > 0 && <span>{table.indexes.length} idx</span>}
-          {table.checks?.length > 0 && <span>{table.checks.length} check</span>}
-          {table.records?.length > 0 && <span>{table.records.length} data</span>}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function Tooltip({ text, theme, align = "center" }) {
-  const pos = align === "right"
-    ? { right: 0 }
-    : align === "left"
-    ? { left: 0 }
-    : { left: "50%", transform: "translateX(-50%)" };
-  return (
-    <div style={{
-      position: "absolute",
-      top: "calc(100% + 10px)",
-      ...pos,
-      background: theme.toolbarBg,
-      border: `1px solid ${theme.toolbarBorder}`,
-      color: theme.textPrimary,
-      fontSize: "12.5px",
-      fontWeight: 500,
-      padding: "7px 14px",
-      borderRadius: "8px",
-      whiteSpace: "nowrap",
-      boxShadow: "0 6px 20px rgba(0,0,0,0.13)",
-      zIndex: 100,
-      fontFamily: "'DM Sans', sans-serif",
-      pointerEvents: "none",
-      letterSpacing: "0.1px",
-    }}>
-      {text}
-    </div>
-  );
-}
-
-function TBtn({ onClick, tip, theme, children, style = {}, tipAlign = "center" }) {
-  const [hovered, setHovered] = useState(false);
-  const base = {
-    position: "relative",
-    padding: "7px 12px",
-    background: theme.toolbarBg,
-    border: `1px solid ${theme.toolbarBorder}`,
-    borderRadius: "8px",
-    color: theme.toolbarText,
-    cursor: "pointer",
-    fontSize: "12px",
-    display: "flex",
-    alignItems: "center",
-    gap: "5px",
-    fontFamily: "'DM Sans', sans-serif",
-    fontWeight: 500,
-    transition: "all 0.15s",
-    ...style,
-  };
-  return (
-    <button style={base} onClick={onClick}
-      onMouseEnter={() => setHovered(true)}
-      onMouseLeave={() => setHovered(false)}>
       {children}
-      {hovered && tip && <Tooltip text={tip} theme={theme} align={tipAlign} />}
     </button>
   );
 }
 
-function ZoomControl({ zoom, onZoomSet, theme }) {
-  const [open, setOpen] = useState(false);
-  const [inputVal, setInputVal] = useState(String(Math.round(zoom * 100)));
-  const ref = useRef(null);
-
-  useEffect(() => {
-    setInputVal(String(Math.round(zoom * 100)));
-  }, [zoom]);
-
-  useEffect(() => {
-    if (!open) return;
-    const handler = (e) => {
-      if (ref.current && !ref.current.contains(e.target)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", handler);
-    return () => document.removeEventListener("pointerdown", handler);
-  }, [open]);
-
-  const applyInput = () => {
-    const v = parseInt(inputVal, 10);
-    if (!isNaN(v)) onZoomSet(Math.max(25, Math.min(200, v)) / 100);
-  };
-
+function ToggleSwitch({ checked, onChange, label }) {
   return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <button
-        onClick={() => setOpen((o) => !o)}
-        title="Canvas zoom"
-        aria-label={`Canvas zoom ${Math.round(zoom * 100)}%`}
-        style={{
-          padding: "7px 12px",
-          background: open ? "#10b98122" : theme.toolbarBg,
-          border: `1px solid ${open ? "#10b981" : theme.toolbarBorder}`,
-          borderRadius: "8px",
-          color: open ? "#10b981" : theme.toolbarText,
-          cursor: "pointer",
-          fontSize: "11px",
-          minWidth: "50px",
-          textAlign: "center",
-          fontFamily: "'DM Sans', sans-serif",
-          fontWeight: 500,
-          transition: "all 0.15s",
-        }}
-      >
-        {Math.round(zoom * 100)}%
-      </button>
-
-      {open && (
-        <div style={{
-          position: "absolute",
-          top: "calc(100% + 8px)",
-          left: "50%",
-          transform: "translateX(-50%)",
-          background: theme.toolbarBg,
-          border: `1px solid ${theme.toolbarBorder}`,
-          borderRadius: "10px",
-          padding: "14px 16px",
-          width: "210px",
-          boxShadow: "0 8px 28px rgba(0,0,0,0.14)",
-          zIndex: 200,
-          display: "flex",
-          flexDirection: "column",
-          gap: "10px",
-          fontFamily: "'DM Sans', sans-serif",
-        }}>
-          <div style={{ display: "flex", justifyContent: "space-between", fontSize: "11px", color: theme.textMuted }}>
-            <span>25%</span><span>200%</span>
-          </div>
-          <input
-            type="range" min="25" max="200" step="5"
-            value={Math.round(zoom * 100)}
-            onChange={(e) => onZoomSet(parseInt(e.target.value, 10) / 100)}
-            style={{ width: "100%", accentColor: "#10b981", cursor: "pointer" }}
-          />
-          <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-            <input
-              type="number" min="25" max="200"
-              value={inputVal}
-              onChange={(e) => setInputVal(e.target.value)}
-              onKeyDown={(e) => { if (e.key === "Enter") { applyInput(); setOpen(false); } }}
-              onBlur={applyInput}
-              style={{
-                flex: 1,
-                padding: "5px 8px",
-                background: theme.editorPanelBg,
-                border: `1px solid ${theme.border}`,
-                borderRadius: "6px",
-                color: theme.textPrimary,
-                fontSize: "12px",
-                fontFamily: "'DM Sans', sans-serif",
-                outline: "none",
-                textAlign: "right",
-              }}
-            />
-            <span style={{ fontSize: "12px", color: theme.textMuted, flexShrink: 0 }}>%</span>
-          </div>
-          <div style={{ display: "flex", gap: "6px" }}>
-            {[50, 100, 150].map((p) => (
-              <button key={p} onClick={() => { onZoomSet(p / 100); setOpen(false); }}
-                style={{
-                  flex: 1, padding: "4px 0",
-                  background: Math.round(zoom * 100) === p ? "#10b98122" : theme.editorPanelBg,
-                  border: `1px solid ${Math.round(zoom * 100) === p ? "#10b981" : theme.border}`,
-                  borderRadius: "6px", cursor: "pointer",
-                  color: Math.round(zoom * 100) === p ? "#10b981" : theme.textSecondary,
-                  fontSize: "11px", fontFamily: "'DM Sans', sans-serif", fontWeight: 500,
-                }}>
-                {p}%
-              </button>
-            ))}
-          </div>
-        </div>
-      )}
-    </div>
+    <label className="sker-toggle-label">
+      <input
+        type="checkbox"
+        className="sker-toggle-input"
+        checked={checked}
+        onChange={(event) => onChange(event.target.checked)}
+      />
+      <span className="sker-toggle-track" aria-hidden="true">
+        <span />
+      </span>
+      <span>{label}</span>
+    </label>
   );
 }
 
-function ArrangeControl({ onArrange, isArranging, theme }) {
-  const [open, setOpen] = useState(false);
-  const [hierarchyDirection, setHierarchyDirection] = useState(HIERARCHY_LEAVES_LEFT);
-  const ref = useRef(null);
-
-  useEffect(() => {
-    if (!open) return undefined;
-    const handleOutsideClick = (event) => {
-      if (ref.current && !ref.current.contains(event.target)) setOpen(false);
-    };
-    document.addEventListener("pointerdown", handleOutsideClick);
-    return () => document.removeEventListener("pointerdown", handleOutsideClick);
-  }, [open]);
-
-  const runLayout = (mode, direction = hierarchyDirection) => {
-    setOpen(false);
-    onArrange(mode, direction);
-  };
-
-  const swapHierarchyDirection = (event) => {
-    event.stopPropagation();
-    const nextDirection = hierarchyDirection === HIERARCHY_LEAVES_LEFT
-      ? HIERARCHY_ROOTS_LEFT
-      : HIERARCHY_LEAVES_LEFT;
-    setHierarchyDirection(nextDirection);
-    onArrange("hierarchical", nextDirection);
-  };
-
-  const optionStyle = {
-    width: "100%",
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    padding: "10px",
-    border: "none",
-    borderRadius: "8px",
-    background: "transparent",
-    color: theme.textPrimary,
-    cursor: isArranging ? "wait" : "pointer",
-    textAlign: "left",
-    fontFamily: "'DM Sans', sans-serif",
-  };
-
-  return (
-    <div ref={ref} style={{ position: "relative" }}>
-      <button
-        type="button"
-        disabled={isArranging}
-        onClick={() => setOpen((value) => !value)}
-        style={{
-          padding: "7px 12px",
-          background: open ? "#10b98122" : theme.toolbarBg,
-          border: `1px solid ${open ? "#10b981" : theme.toolbarBorder}`,
-          borderRadius: "8px",
-          color: open ? "#10b981" : theme.toolbarText,
-          cursor: isArranging ? "wait" : "pointer",
-          fontSize: "12px",
-          display: "flex",
-          alignItems: "center",
-          gap: "5px",
-          fontFamily: "'DM Sans', sans-serif",
-          fontWeight: 500,
-          opacity: isArranging ? 0.65 : 1,
-        }}
-      >
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
-          <rect x="3" y="3" width="7" height="7" rx="1" /><rect x="14" y="3" width="7" height="7" rx="1" />
-          <rect x="3" y="14" width="7" height="7" rx="1" /><rect x="14" y="14" width="7" height="7" rx="1" />
-        </svg>
-        {isArranging ? "Arranging…" : "Layout"}
-        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.7" strokeLinecap="round" strokeLinejoin="round"
-          style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
-          <polyline points="2,4 6,8 10,4" />
-        </svg>
-      </button>
-      {open && (
-        <div style={{
-          position: "absolute",
-          top: "calc(100% + 8px)",
-          right: 0,
-          width: "286px",
-          padding: "7px",
-          background: theme.toolbarBg,
-          border: `1px solid ${theme.toolbarBorder}`,
-          borderRadius: "11px",
-          boxShadow: "0 10px 32px rgba(0,0,0,0.18)",
-          zIndex: 250,
-          fontFamily: "'DM Sans', sans-serif",
-        }}>
-          <button type="button" disabled={isArranging} onClick={() => runLayout("smart")} style={optionStyle}>
-            <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-              <path d="M4 7h6M14 7h6M7 4v6M17 4v6"/><path d="M7 10v4h10v-4M12 14v6"/>
-            </svg>
-            <span style={{ flex: 1 }}>
-              <span style={{ display: "flex", alignItems: "center", gap: "7px", fontSize: "12px", fontWeight: 700 }}>
-                Smart grouped
-                <span style={{ padding: "2px 5px", borderRadius: "4px", background: "#10b98120", color: "#10b981", fontSize: "8px", letterSpacing: "0.4px" }}>RECOMMENDED</span>
-              </span>
-              <span style={{ display: "block", marginTop: "3px", color: theme.textMuted, fontSize: "10px", lineHeight: 1.35 }}>
-                Keeps groups together and minimizes crossings
-              </span>
-            </span>
-          </button>
-
-          <div style={{ height: 1, margin: "3px 7px", background: theme.toolbarBorder }} />
-
-          <div style={{ display: "flex", alignItems: "stretch", gap: "5px" }}>
-            <button type="button" disabled={isArranging} onClick={() => runLayout("hierarchical")} style={{ ...optionStyle, flex: 1 }}>
-              <svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="#3b82f6" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" style={{ flexShrink: 0 }}>
-                <circle cx="4" cy="6" r="2"/><circle cx="4" cy="18" r="2"/><circle cx="12" cy="12" r="2"/><circle cx="20" cy="12" r="2"/>
-                <path d="M6 6h2a4 4 0 0 1 4 4M6 18h2a4 4 0 0 0 4-4M14 12h4"/>
-              </svg>
-              <span style={{ flex: 1 }}>
-                <span style={{ display: "block", fontSize: "12px", fontWeight: 700 }}>Strict hierarchy</span>
-                <span style={{ display: "block", marginTop: "3px", color: theme.textMuted, fontSize: "10px", lineHeight: 1.35 }}>
-                  {hierarchyDirection === HIERARCHY_LEAVES_LEFT ? "Leaves → roots" : "Roots → leaves"}
-                </span>
-              </span>
-            </button>
-            <button
-              type="button"
-              disabled={isArranging}
-              onClick={swapHierarchyDirection}
-              title="Swap hierarchy left and right"
-              aria-label="Swap hierarchy left and right"
-              style={{
-                width: "38px",
-                margin: "6px 4px 6px 0",
-                padding: 0,
-                borderRadius: "7px",
-                border: `1px solid ${theme.toolbarBorder}`,
-                background: theme.editorPanelBg,
-                color: theme.textSecondary,
-                cursor: isArranging ? "wait" : "pointer",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-              }}
-            >
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
-                <path d="M7 7h12l-3-3M17 17H5l3 3"/>
-              </svg>
-            </button>
-          </div>
-        </div>
-      )}
-    </div>
-  );
-}
-
-function ShareControl({ onCopyLink, onShowQr, copyStatus, theme, triggerRef }) {
+function Popover({
+  label,
+  children,
+  trigger,
+  triggerRef,
+  disabled = false,
+  align = "right",
+}) {
+  const id = useId();
   const [open, setOpen] = useState(false);
   const containerRef = useRef(null);
-  const firstItemRef = useRef(null);
-  const lastItemRef = useRef(null);
-  const initialFocusRef = useRef("first");
+  const localTriggerRef = useRef(null);
+  const actualTriggerRef = triggerRef || localTriggerRef;
+
+  const close = useCallback((restoreFocus = false) => {
+    setOpen(false);
+
+    if (restoreFocus) {
+      requestAnimationFrame(() => actualTriggerRef.current?.focus());
+    }
+  }, [actualTriggerRef]);
 
   useEffect(() => {
     if (!open) return undefined;
 
-    const focusFrame = requestAnimationFrame(() => {
-      (initialFocusRef.current === "last" ? lastItemRef.current : firstItemRef.current)?.focus();
-    });
-    const handlePointerDown = (event) => {
-      if (containerRef.current && !containerRef.current.contains(event.target)) setOpen(false);
+    const onPointer = (event) => {
+      if (!containerRef.current?.contains(event.target)) close();
     };
-    const handleFocusIn = (event) => {
-      if (containerRef.current && !containerRef.current.contains(event.target)) setOpen(false);
+
+    const onFocus = (event) => {
+      if (!containerRef.current?.contains(event.target)) close();
     };
-    const handleKeyDown = (event) => {
+
+    const onKey = (event) => {
       if (event.key !== "Escape") return;
+
       event.preventDefault();
-      setOpen(false);
-      triggerRef.current?.focus();
+      event.stopPropagation();
+      close(true);
     };
 
-    document.addEventListener("pointerdown", handlePointerDown);
-    document.addEventListener("focusin", handleFocusIn);
-    document.addEventListener("keydown", handleKeyDown);
+    document.addEventListener("pointerdown", onPointer, true);
+    document.addEventListener("focusin", onFocus);
+    containerRef.current?.addEventListener("keydown", onKey);
+
+    const container = containerRef.current;
+
     return () => {
-      cancelAnimationFrame(focusFrame);
-      document.removeEventListener("pointerdown", handlePointerDown);
-      document.removeEventListener("focusin", handleFocusIn);
-      document.removeEventListener("keydown", handleKeyDown);
+      document.removeEventListener("pointerdown", onPointer, true);
+      document.removeEventListener("focusin", onFocus);
+      container?.removeEventListener("keydown", onKey);
     };
-  }, [open, triggerRef]);
+  }, [open, close]);
 
-  const handleMenuKeyDown = (event) => {
-    if (event.key === "Tab") {
-      setOpen(false);
-      return;
-    }
-    if (event.key !== "ArrowDown" && event.key !== "ArrowUp") return;
-    event.preventDefault();
-    const items = [...containerRef.current.querySelectorAll('[role="menuitem"]')];
-    const currentIndex = items.indexOf(document.activeElement);
-    const direction = event.key === "ArrowDown" ? 1 : -1;
-    items[(currentIndex + direction + items.length) % items.length]?.focus();
-  };
-
-  const menuItemStyle = {
-    width: "100%",
-    boxSizing: "border-box",
-    display: "flex",
-    alignItems: "center",
-    gap: "10px",
-    padding: "10px",
-    border: "none",
-    borderRadius: "7px",
-    background: "transparent",
-    color: theme.textPrimary,
-    cursor: "pointer",
-    textAlign: "left",
-    fontFamily: "'DM Sans', sans-serif",
-  };
-  const setItemHighlight = (event, highlighted) => {
-    event.currentTarget.style.background = highlighted ? theme.editorPanelBg : "transparent";
-  };
   return (
-    <div ref={containerRef} style={{ position: "relative" }}>
-      <button
-        ref={triggerRef}
-        type="button"
-        aria-haspopup="menu"
+    <div ref={containerRef} className="sker-popover-container">
+      <ToolButton
+        buttonRef={actualTriggerRef}
+        label={label}
+        disabled={disabled}
         aria-expanded={open}
-        aria-label="Share diagram"
-        title="Share diagram"
-        onClick={() => {
-          initialFocusRef.current = "first";
-          setOpen((previous) => !previous);
-        }}
+        aria-controls={id}
+        onClick={() => setOpen((value) => !value)}
         onKeyDown={(event) => {
-          if (event.key === "ArrowDown" || event.key === "ArrowUp") {
-            event.preventDefault();
-            initialFocusRef.current = event.key === "ArrowUp" ? "last" : "first";
-            if (open) {
-              (event.key === "ArrowUp" ? lastItemRef.current : firstItemRef.current)?.focus();
-            }
-            setOpen(true);
-          }
-        }}
-        style={{
-          position: "relative",
-          padding: "7px 10px 7px 12px",
-          background: open ? "#10b98122" : theme.toolbarBg,
-          border: `1px solid ${open ? "#10b981" : theme.toolbarBorder}`,
-          borderRadius: "8px",
-          color: copyStatus === "error" ? "#ef4444" : copyStatus === "copied" || open ? "#10b981" : theme.toolbarText,
-          cursor: "pointer",
-          fontSize: "12px",
-          display: "flex",
-          alignItems: "center",
-          gap: "5px",
-          fontFamily: "'DM Sans', sans-serif",
-          fontWeight: 500,
-          transition: "all 0.15s",
+          if (event.key !== "ArrowDown") return;
+
+          event.preventDefault();
+          setOpen(true);
+
+          requestAnimationFrame(() => {
+            containerRef.current
+              ?.querySelector("[data-popover-panel] button, [data-popover-panel] input")
+              ?.focus();
+          });
         }}
       >
-        {copyStatus === "copied" ? (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <polyline points="20 6 9 17 4 12"/>
-          </svg>
-        ) : (
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-            <circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/>
-            <line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/>
-          </svg>
-        )}
-        <span>Share</span>
-        <svg width="10" height="10" viewBox="0 0 12 12" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ transform: open ? "rotate(180deg)" : "none", transition: "transform 0.15s" }}>
-          <path d="m3 4.5 3 3 3-3"/>
-        </svg>
-      </button>
-      <span
-        role="status"
-        aria-live="polite"
-        style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}
-      >
-        {copyStatus === "copied" ? "Shareable link copied." : copyStatus === "error" ? "Unable to copy the shareable link." : ""}
-      </span>
+        {trigger} <span aria-hidden="true">▾</span>
+      </ToolButton>
 
       {open && (
         <div
-          role="menu"
-          aria-label="Share options"
-          onKeyDown={handleMenuKeyDown}
-          style={{
-            position: "absolute",
-            top: "calc(100% + 8px)",
-            right: 0,
-            width: "min(238px, calc(100vw - 24px))",
-            boxSizing: "border-box",
-            padding: "6px",
-            background: theme.toolbarBg,
-            border: `1px solid ${theme.toolbarBorder}`,
-            borderRadius: "10px",
-            boxShadow: "0 10px 30px rgba(0,0,0,0.18)",
-            zIndex: 250,
-            fontFamily: "'DM Sans', sans-serif",
-          }}
+          id={id}
+          data-popover-panel="1"
+          data-canvas-wheel-ignore="1"
+          role="region"
+          aria-label={label}
+          className={`sker-popover sker-popover-${align}`}
         >
-          <button
-            ref={firstItemRef}
-            type="button"
-            role="menuitem"
-            tabIndex={0}
-            onClick={() => {
-              setOpen(false);
-              void onCopyLink();
-              requestAnimationFrame(() => triggerRef.current?.focus());
-            }}
-            onMouseEnter={(event) => setItemHighlight(event, true)}
-            onMouseLeave={(event) => setItemHighlight(event, false)}
-            onFocus={(event) => setItemHighlight(event, true)}
-            onBlur={(event) => setItemHighlight(event, false)}
-            style={menuItemStyle}
-          >
-            <span style={{ width: 30, height: 30, flexShrink: 0, borderRadius: "7px", background: "#10b98118", color: "#10b981", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/><path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-              </svg>
-            </span>
-            <span>
-              <span style={{ display: "block", fontSize: "12px", fontWeight: 700 }}>Copy shareable link</span>
-              <span style={{ display: "block", marginTop: 2, color: theme.textMuted, fontSize: "10.5px" }}>Copy the current diagram URL</span>
-            </span>
-          </button>
-          <button
-            ref={lastItemRef}
-            type="button"
-            role="menuitem"
-            tabIndex={-1}
-            onClick={() => { setOpen(false); onShowQr(); }}
-            onMouseEnter={(event) => setItemHighlight(event, true)}
-            onMouseLeave={(event) => setItemHighlight(event, false)}
-            onFocus={(event) => setItemHighlight(event, true)}
-            onBlur={(event) => setItemHighlight(event, false)}
-            style={menuItemStyle}
-          >
-            <span style={{ width: 30, height: 30, flexShrink: 0, borderRadius: "7px", background: "#3b82f618", color: "#3b82f6", display: "flex", alignItems: "center", justifyContent: "center" }}>
-              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
-                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM18 18h3v3h-3zM18 14h3M14 18v3"/>
-              </svg>
-            </span>
-            <span>
-              <span style={{ display: "block", fontSize: "12px", fontWeight: 700 }}>Show QR code</span>
-              <span style={{ display: "block", marginTop: 2, color: theme.textMuted, fontSize: "10.5px" }}>Scan from a phone</span>
-            </span>
-          </button>
+          {children(close)}
         </div>
       )}
     </div>
   );
 }
 
-function ShareQrModal({ url, fileName, theme, copyStatus, onCopy, onClose }) {
-  const [qrDataUrl, setQrDataUrl] = useState(null);
-  const [qrError, setQrError] = useState(null);
+function Dialog({ title, onClose, restoreFocusRef, children, wide = false }) {
+  const titleId = useId();
   const panelRef = useRef(null);
   const closeRef = useRef(null);
+  const onCloseRef = useLatest(onClose);
 
-  useEffect(() => {
-    let active = true;
-    setQrDataUrl(null);
-    setQrError(null);
-    generateShareQrDataUrl(url).then((result) => {
-      if (!active) return;
-      setQrDataUrl(result.dataUrl);
-      setQrError(result.error);
-    });
-    return () => { active = false; };
-  }, [url]);
+  useLayoutEffect(() => {
+    const previousFocus = document.activeElement;
+    closeRef.current?.focus();
 
-  useEffect(() => {
-    const focusFrame = requestAnimationFrame(() => closeRef.current?.focus());
-    const handleKeyDown = (event) => {
+    const onKeyDown = (event) => {
       if (event.key === "Escape") {
         event.preventDefault();
-        onClose();
+        event.stopPropagation();
+        onCloseRef.current();
         return;
       }
-      if (event.key !== "Tab" || !panelRef.current) return;
-      const focusable = [...panelRef.current.querySelectorAll('button:not([disabled]), [href], input:not([disabled]), [tabindex]:not([tabindex="-1"])')];
-      if (focusable.length === 0) return;
+
+      if (event.key !== "Tab") return;
+
+      const focusable = [
+        ...(panelRef.current?.querySelectorAll(
+          'button:not([disabled]), a[href], input:not([disabled]), ' +
+          'select:not([disabled]), textarea:not([disabled]), ' +
+          '[tabindex]:not([tabindex="-1"])',
+        ) || []),
+      ].filter((element) => element.getClientRects().length > 0);
+
       const first = focusable[0];
       const last = focusable[focusable.length - 1];
-      if (!panelRef.current.contains(document.activeElement)) {
+
+      if (!first || !last) {
+        event.preventDefault();
+        panelRef.current?.focus();
+        return;
+      }
+
+      if (!panelRef.current?.contains(document.activeElement)) {
         event.preventDefault();
         (event.shiftKey ? last : first).focus();
       } else if (event.shiftKey && document.activeElement === first) {
@@ -1347,2859 +1500,4066 @@ function ShareQrModal({ url, fileName, theme, copyStatus, onCopy, onClose }) {
         first.focus();
       }
     };
-    document.addEventListener("keydown", handleKeyDown);
-    return () => {
-      cancelAnimationFrame(focusFrame);
-      document.removeEventListener("keydown", handleKeyDown);
-    };
-  }, [onClose]);
 
-  let shareHost = "";
-  let isLocalOnly = false;
-  try {
-    const parsedUrl = new URL(url);
-    shareHost = parsedUrl.host || "Local file";
-    const hostname = parsedUrl.hostname.toLowerCase().replace(/\.$/, "");
-    isLocalOnly = parsedUrl.protocol === "file:"
-      || hostname === "localhost"
-      || hostname === "0.0.0.0"
-      || hostname === "[::1]"
-      || hostname === "::1"
-      || /^127(?:\.\d{1,3}){3}$/.test(hostname);
-  } catch {
-    shareHost = window.location.host || "Local file";
-    isLocalOnly = true;
-  }
-  const isTooLarge = qrError === SHARE_QR_TOO_LARGE;
+    document.addEventListener("keydown", onKeyDown, true);
+
+    return () => {
+      document.removeEventListener("keydown", onKeyDown, true);
+
+      requestAnimationFrame(() => {
+        const target =
+          restoreFocusRef?.current ||
+          (previousFocus?.isConnected ? previousFocus : null);
+
+        target?.focus?.();
+      });
+    };
+  }, [onCloseRef, restoreFocusRef]);
+
+  return createPortal(
+    <div
+      className="sker-dialog-backdrop"
+      data-canvas-wheel-ignore="1"
+      onPointerDown={(event) => {
+        if (event.target === event.currentTarget) onClose();
+      }}
+    >
+      <section
+        ref={panelRef}
+        role="dialog"
+        aria-modal="true"
+        aria-labelledby={titleId}
+        tabIndex={-1}
+        className={`sker-dialog ${wide ? "sker-dialog-wide" : ""}`}
+      >
+        <header className="sker-dialog-header">
+          <h2 id={titleId}>{title}</h2>
+          <ToolButton buttonRef={closeRef} label="Close dialog" onClick={onClose}>
+            ×
+          </ToolButton>
+        </header>
+        <div className="sker-dialog-content">{children}</div>
+      </section>
+    </div>,
+    document.body,
+  );
+}
+
+function ColorPicker({ value, onChange, label = "Choose a custom color" }) {
+  return (
+    <label className="sker-color-picker" title={label}>
+      <span aria-hidden="true">◉</span>
+      <input
+        type="color"
+        value={normalizeColor(value) || "#10b981"}
+        aria-label={label}
+        onChange={(event) => onChange(event.target.value)}
+      />
+    </label>
+  );
+}
+
+function ColorPalette({ colors, selected, onChoose, label }) {
+  return (
+    <div className="sker-color-row" role="group" aria-label={label}>
+      {colors.map((color) => (
+        <button
+          key={color}
+          type="button"
+          className={`sker-color-dot ${selected === color ? "is-selected" : ""}`}
+          style={{ background: color }}
+          aria-label={`Apply color ${color}`}
+          title={color}
+          onClick={() => onChoose(color)}
+        />
+      ))}
+    </div>
+  );
+}
+
+function ZoomControl({ zoom, onChange }) {
+  const [draft, setDraft] = useState(String(Math.round(zoom * 100)));
+
+  useEffect(() => {
+    setDraft(String(Math.round(zoom * 100)));
+  }, [zoom]);
+
+  const apply = () => {
+    const parsed = Number(draft);
+
+    if (!Number.isFinite(parsed) || !draft.trim()) {
+      setDraft(String(Math.round(zoom * 100)));
+      return;
+    }
+
+    onChange(clampZoom(parsed / 100));
+  };
+
+  return (
+    <Popover label="Canvas zoom" trigger={`${Math.round(zoom * 100)}%`}>
+      {(close) => (
+        <div className="sker-stack">
+          <label className="sker-stack">
+            <span>Zoom</span>
+            <input
+              type="range"
+              min={MIN_ZOOM * 100}
+              max={MAX_ZOOM * 100}
+              step={1}
+              value={zoom * 100}
+              onChange={(event) => onChange(Number(event.target.value) / 100)}
+            />
+          </label>
+
+          <div className="sker-inline">
+            <label className="sker-grow">
+              <span className="sker-sr-only">Zoom percentage</span>
+              <input
+                type="number"
+                min={MIN_ZOOM * 100}
+                max={MAX_ZOOM * 100}
+                value={draft}
+                onChange={(event) => setDraft(event.target.value)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter") {
+                    event.preventDefault();
+                    apply();
+                    close(true);
+                  }
+                }}
+              />
+            </label>
+            <span>%</span>
+            <ToolButton label="Apply zoom" onClick={apply}>
+              Apply
+            </ToolButton>
+          </div>
+
+          <div className="sker-inline">
+            {[50, 100, 150].map((percentage) => (
+              <ToolButton
+                key={percentage}
+                label={`Zoom to ${percentage}%`}
+                onClick={() => {
+                  onChange(percentage / 100);
+                  close(true);
+                }}
+              >
+                {percentage}%
+              </ToolButton>
+            ))}
+          </div>
+        </div>
+      )}
+    </Popover>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Relationship rendering                                                     */
+/* -------------------------------------------------------------------------- */
+
+function CardinalityEnd({ x, y, direction, cardinality, color }) {
+  const relation = cardinality || "1";
+  const optional = relation.startsWith("0") || relation === "?";
+  const many = relation.includes("*");
+  const one = relation.includes("1") || !many;
+
+  return (
+    <>
+      {optional && (
+        <circle
+          cx={x + direction * 4}
+          cy={y}
+          r={3.2}
+          fill="none"
+          stroke={color}
+          strokeWidth={1.3}
+        />
+      )}
+
+      {one && (
+        <line
+          x1={x + direction * 10}
+          y1={y - 5}
+          x2={x + direction * 10}
+          y2={y + 5}
+          stroke={color}
+          strokeWidth={1.3}
+          strokeLinecap="round"
+        />
+      )}
+    </>
+  );
+}
+
+function FlowArrow({ x, y, direction, color }) {
+  return (
+    <polyline
+      points={`${x - direction * 6},${y - 4} ${x},${y} ${x - direction * 6},${y + 4}`}
+      fill="none"
+      stroke={color}
+      strokeWidth={1.5}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ pointerEvents: "none" }}
+    />
+  );
+}
+
+function RelationshipLines({
+  refs,
+  tables,
+  positions,
+  widths,
+  colors,
+  overrides,
+  hoveredTable,
+  selectedTables,
+  showAll,
+  reverseFlow,
+  theme,
+  reducedMotion,
+  onDragStart,
+  onMoveLine,
+}) {
+  const instanceId = useId().replace(/[^A-Za-z0-9_-]/g, "");
+  const selected = useMemo(() => new Set(selectedTables), [selectedTables]);
+
+  const routes = useMemo(() => {
+    const tableMap = new Map(tables.map((table) => [table.name, table]));
+    const columnMaps = new Map(
+      tables.map((table) => [
+        table.name,
+        new Map(table.columns.map((column, index) => [column.name, index])),
+      ]),
+    );
+
+    const obstacles = tables.flatMap((table) => {
+      const position = positions[table.name];
+      if (!position) return [];
+
+      return [{
+        table: table.name,
+        left: position.x - ROUTING_CLEARANCE,
+        right:
+          position.x +
+          (widths[table.name] || TABLE_WIDTH) +
+          ROUTING_CLEARANCE,
+        top: position.y - ROUTING_CLEARANCE,
+        bottom: position.y + getTableHeight(table) + ROUTING_CLEARANCE,
+      }];
+    });
+
+    const items = [];
+
+    for (const ref of refs) {
+      const from = positions[ref.from.table];
+      const to = positions[ref.to.table];
+
+      if (
+        !from ||
+        !to ||
+        !tableMap.has(ref.from.table) ||
+        !tableMap.has(ref.to.table)
+      ) {
+        continue;
+      }
+
+      const fromIndex = columnMaps.get(ref.from.table)?.get(ref.from.column);
+      const toIndex = columnMaps.get(ref.to.table)?.get(ref.to.column);
+
+      if (fromIndex === undefined || toIndex === undefined) continue;
+
+      const fromWidth = widths[ref.from.table] || TABLE_WIDTH;
+      const toWidth = widths[ref.to.table] || TABLE_WIDTH;
+      const fromRight = from.x + fromWidth;
+      const toRight = to.x + toWidth;
+
+      const overlap = Math.max(
+        0,
+        Math.min(fromRight, toRight) - Math.max(from.x, to.x),
+      );
+
+      let direction;
+
+      if (
+        ref.from.table === ref.to.table ||
+        overlap / Math.min(fromWidth, toWidth) > 0.5
+      ) {
+        direction = "stack";
+      } else if (to.x >= fromRight) {
+        direction = "right";
+      } else if (from.x >= toRight) {
+        direction = "left";
+      } else {
+        direction =
+          from.x + fromWidth / 2 <= to.x + toWidth / 2
+            ? "right"
+            : "left";
+      }
+
+      items.push({
+        ref,
+        from,
+        to,
+        fromIndex,
+        toIndex,
+        fromRight,
+        toRight,
+        direction,
+        sourceEndpointY: getColumnY(from, fromIndex),
+        fromLane: 0,
+        fromLaneCount: 1,
+        toLane: 0,
+        toLaneCount: 1,
+      });
+    }
+
+    const fromGroups = new Map();
+    const toGroups = new Map();
+
+    for (const item of items) {
+      const fromKey = JSON.stringify([item.ref.from.table, item.direction]);
+      const toSide =
+        item.direction === "right" || item.direction === "stack"
+          ? "left"
+          : "right";
+      const toKey = JSON.stringify([
+        item.ref.to.table,
+        item.ref.to.column,
+        toSide,
+      ]);
+
+      if (!fromGroups.has(fromKey)) fromGroups.set(fromKey, []);
+      if (!toGroups.has(toKey)) toGroups.set(toKey, []);
+
+      fromGroups.get(fromKey).push(item);
+      toGroups.get(toKey).push(item);
+    }
+
+    for (const group of fromGroups.values()) {
+      group.sort(
+        (a, b) =>
+          a.fromIndex - b.fromIndex ||
+          a.ref.routeKey.localeCompare(b.ref.routeKey),
+      );
+
+      group.forEach((item, index) => {
+        item.fromLane = index;
+        item.fromLaneCount = group.length;
+      });
+    }
+
+    for (const group of toGroups.values()) {
+      orderSharedColumnArrivals(group).forEach((item, index) => {
+        item.toLane = index;
+        item.toLaneCount = group.length;
+      });
+    }
+
+    return items.map((item) => {
+      const {
+        ref,
+        from,
+        to,
+        fromRight,
+        toRight,
+        fromIndex,
+        toIndex,
+        direction,
+        fromLane,
+        fromLaneCount,
+        toLane,
+        toLaneCount,
+      } = item;
+
+      const fromSide = direction === "right" ? 1 : -1;
+      const toSide =
+        direction === "right" || direction === "stack" ? -1 : 1;
+
+      const x1 = fromSide === 1 ? fromRight + 1 : from.x - 1;
+      const x2 = toSide === -1 ? to.x - 1 : toRight + 1;
+      const y1 = getColumnY(from, fromIndex);
+
+      const maxSpread = COL_HEIGHT / 2 - 6;
+      const spacing =
+        toLaneCount > 1
+          ? Math.min(ARRIVAL_SPACING, (maxSpread * 2) / (toLaneCount - 1))
+          : 0;
+
+      let y2 =
+        getColumnY(to, toIndex) +
+        (toLane - (toLaneCount - 1) / 2) * spacing;
+
+      // A same-row self-reference needs a visible loop rather than a zero-height path.
+      if (ref.from.table === ref.to.table && Math.abs(y2 - y1) < 1) {
+        y2 += 8;
+      }
+
+      const pathStartX = x1 + fromSide * 10;
+      const pathEndX = x2 + toSide * 6;
+
+      const symmetricOffset =
+        (fromLane - (fromLaneCount - 1) / 2) * LANE_SPACING;
+
+      const preferredMidX =
+        direction === "stack"
+          ? Math.min(from.x, to.x) - 30 - fromLane * LANE_SPACING
+          : (pathStartX + pathEndX) / 2 +
+            (direction === "right" ? symmetricOffset : -symmetricOffset);
+
+      const points = routeOrthogonalConnection({
+        start: { x: pathStartX, y: y1 },
+        end: { x: pathEndX, y: y2 },
+        preferredMidX,
+        startDirection: fromSide,
+        endDirection: toSide,
+        obstacles: obstacles.filter(
+          ({ table }) => table !== ref.from.table && table !== ref.to.table,
+        ),
+        manualMidX: overrides[ref.routeKey],
+        lane: fromLane,
+      });
+
+      return {
+        ...item,
+        x1,
+        x2,
+        y1,
+        y2,
+        fromSide,
+        toSide,
+        path: orthogonalPointsToPath(points),
+        segment: longestVerticalSegment(points),
+      };
+    });
+  }, [refs, tables, positions, widths, overrides]);
+
+  return routes.map((route, index) => {
+    const {
+      ref,
+      x1,
+      x2,
+      y1,
+      y2,
+      fromSide,
+      toSide,
+      path,
+      segment,
+    } = route;
+
+    const id = `sker-${instanceId}-relationship-${index}`;
+
+    const active =
+      showAll ||
+      hoveredTable === ref.from.table ||
+      hoveredTable === ref.to.table ||
+      selected.has(ref.from.table) ||
+      selected.has(ref.to.table);
+
+    const filtering = !showAll && (hoveredTable || selected.size > 0);
+
+    const color =
+      normalizeColor(ref.color) ||
+      (active ? colors[ref.from.table] || theme.line : theme.line);
+
+    const description =
+      `${ref.from.table}.${ref.from.column} ` +
+      `(${ref.from.cardinality || "1"}) to ` +
+      `${ref.to.table}.${ref.to.column} ` +
+      `(${ref.to.cardinality || "1"})`;
+
+    return (
+      <g
+        key={ref.routeKey}
+        data-export-bounds="1"
+        opacity={filtering && !active ? 0.2 : 1}
+      >
+        <title>
+          {[
+            ref.name && `Relationship: ${ref.name}`,
+            description,
+            ref.onDelete && `ON DELETE ${ref.onDelete}`,
+            ref.onUpdate && `ON UPDATE ${ref.onUpdate}`,
+            ref.inactive && "Inactive relationship",
+          ].filter(Boolean).join("\n")}
+        </title>
+
+        <path
+          id={id}
+          d={path}
+          fill="none"
+          stroke={color}
+          strokeWidth={1.3}
+          strokeDasharray={ref.inactive ? "6 5" : undefined}
+        />
+
+        {segment && (
+          <>
+            <line
+              data-export-hide="1"
+              x1={segment.x}
+              y1={segment.minY}
+              x2={segment.x}
+              y2={segment.maxY}
+              stroke="transparent"
+              strokeWidth={16}
+              tabIndex={0}
+              role="button"
+              aria-label={`Reroute ${description}. Use left and right arrow keys.`}
+              className="sker-line-handle"
+              style={{ pointerEvents: "stroke", cursor: "col-resize" }}
+              onPointerDown={(event) => {
+                event.stopPropagation();
+                if (event.button !== 0) return;
+                event.preventDefault();
+                onDragStart(ref.routeKey, segment.x, event);
+              }}
+              onKeyDown={(event) => {
+                if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") {
+                  return;
+                }
+
+                event.preventDefault();
+                event.stopPropagation();
+
+                onMoveLine(
+                  ref.routeKey,
+                  segment.x +
+                    (event.key === "ArrowLeft" ? -1 : 1) *
+                      (event.shiftKey ? 20 : 5),
+                );
+              }}
+            />
+            <circle
+              data-export-hide="1"
+              cx={segment.x}
+              cy={(segment.minY + segment.maxY) / 2}
+              r={2.5}
+              fill={color}
+              opacity={active ? 0.7 : 0.35}
+              style={{ pointerEvents: "none" }}
+            />
+          </>
+        )}
+
+        <CardinalityEnd
+          x={x1}
+          y={y1}
+          direction={fromSide}
+          cardinality={ref.from.cardinality}
+          color={color}
+        />
+        <CardinalityEnd
+          x={x2}
+          y={y2}
+          direction={toSide}
+          cardinality={ref.to.cardinality}
+          color={color}
+        />
+
+        <FlowArrow
+          x={reverseFlow ? x2 + toSide * 18 : x1 + fromSide * 18}
+          y={reverseFlow ? y2 : y1}
+          direction={reverseFlow ? -toSide : -fromSide}
+          color={color}
+        />
+
+        <text
+          x={x1 + fromSide * 13}
+          y={y1 - 7}
+          textAnchor={fromSide === 1 ? "start" : "end"}
+          fill={color}
+          fontSize={11}
+          fontWeight={700}
+          fontFamily="'DM Sans', sans-serif"
+        >
+          {ref.from.cardinality}
+        </text>
+
+        <text
+          x={x2 + toSide * 13}
+          y={y2 - 7}
+          textAnchor={toSide === 1 ? "start" : "end"}
+          fill={color}
+          fontSize={10}
+          fontFamily="'DM Sans', sans-serif"
+        >
+          {ref.to.cardinality}
+        </text>
+
+        {active && !reducedMotion && (
+          <circle data-export-hide="1" r={2.8} fill={color}>
+            <animateMotion
+              dur="1.8s"
+              repeatCount="indefinite"
+              keyPoints={reverseFlow ? "0;1" : "1;0"}
+              keyTimes="0;1"
+              calcMode="linear"
+            >
+              <mpath href={`#${id}`} />
+            </animateMotion>
+          </circle>
+        )}
+      </g>
+    );
+  });
+}
+
+/* -------------------------------------------------------------------------- */
+/* Diagram components                                                         */
+/* -------------------------------------------------------------------------- */
+
+function TableNode({
+  table,
+  position,
+  width,
+  color,
+  theme,
+  selected,
+  dimmed,
+  relationshipColumns,
+  activeColumns,
+  onPointerDown,
+  onSelect,
+  onMove,
+  onContextMenu,
+  onHover,
+  onToggleCollapse,
+}) {
+  const metadata = [
+    table.note && "note",
+    table.indexes?.length > 0 && `${table.indexes.length} idx`,
+    table.checks?.length > 0 && `${table.checks.length} check`,
+    table.records?.length > 0 && `${table.records.length} data`,
+  ].filter(Boolean);
 
   return (
     <div
-      data-canvas-wheel-ignore="1"
-      role="dialog"
-      aria-modal="true"
-      aria-labelledby="share-qr-title"
-      onClick={onClose}
-      onWheelCapture={(event) => event.stopPropagation()}
+      data-diagram-table={table.name}
+      className="sker-table"
+      role="group"
+      tabIndex={0}
+      aria-label={`${table.name}${selected ? ", selected" : ""}. Enter to select. Arrow keys to move. Shift F10 for options.`}
+      onPointerDown={(event) => {
+        event.stopPropagation();
+
+        if (event.button !== 0) return;
+        if (event.target.closest("button, input, a")) return;
+
+        event.preventDefault();
+        event.currentTarget.focus({ preventScroll: true });
+
+        onPointerDown(table.name, event);
+      }}
+      onKeyDown={(event) => {
+        if (event.target !== event.currentTarget) return;
+
+        if (event.key === "Enter" || event.key === " ") {
+          event.preventDefault();
+          event.stopPropagation();
+          onSelect(table.name, event.ctrlKey || event.metaKey);
+          return;
+        }
+
+        if (
+          event.key === "ContextMenu" ||
+          (event.shiftKey && event.key === "F10")
+        ) {
+          event.preventDefault();
+
+          const bounds = event.currentTarget.getBoundingClientRect();
+
+          onContextMenu(table.name, {
+            clientX: bounds.left + 20,
+            clientY: bounds.top + 20,
+            ctrlKey: false,
+            metaKey: false,
+          });
+          return;
+        }
+
+        const directions = {
+          ArrowLeft: [-1, 0],
+          ArrowRight: [1, 0],
+          ArrowUp: [0, -1],
+          ArrowDown: [0, 1],
+        };
+
+        const direction = directions[event.key];
+        if (!direction) return;
+
+        event.preventDefault();
+        event.stopPropagation();
+
+        const step = event.shiftKey ? 20 : 5;
+        onMove(table.name, direction[0] * step, direction[1] * step);
+      }}
+      onContextMenu={(event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        onContextMenu(table.name, event);
+      }}
+      onDragStart={(event) => event.preventDefault()}
+      onMouseEnter={() => onHover(table.name)}
+      onMouseLeave={() => onHover(null)}
+      title={[table.alias && `Alias: ${table.alias}`, table.note]
+        .filter(Boolean).join("\n") || undefined}
       style={{
-        position: "fixed",
-        inset: 0,
-        zIndex: 600,
-        display: "flex",
-        alignItems: "center",
-        justifyContent: "center",
-        padding: "20px",
+        position: "absolute",
+        left: position.x,
+        top: position.y,
+        width,
         boxSizing: "border-box",
-        background: "rgba(0,0,0,0.56)",
-        backdropFilter: "blur(5px)",
+        border: `${TABLE_BORDER}px solid ${selected ? color : theme.tableBorder}`,
+        borderRadius: 6,
+        overflow: "hidden",
+        background: theme.tableBg,
+        color: theme.columnText,
+        opacity: dimmed ? 0.35 : 1,
+        boxShadow: selected
+          ? `0 0 0 2px ${color}, 0 8px 24px rgba(0,0,0,0.12)`
+          : "0 2px 8px rgba(0,0,0,0.09)",
+        cursor: "grab",
+        userSelect: "none",
         fontFamily: "'DM Sans', sans-serif",
       }}
     >
       <div
-        ref={panelRef}
-        onClick={(event) => event.stopPropagation()}
         style={{
-          width: "min(430px, 94vw)",
-          maxHeight: "calc(100dvh - 40px)",
-          overflowY: "auto",
+          height: HEADER_HEIGHT,
           boxSizing: "border-box",
-          padding: "20px",
-          border: `1px solid ${theme.toolbarBorder}`,
-          borderRadius: "16px",
-          background: theme.toolbarBg,
-          boxShadow: "0 24px 70px rgba(0,0,0,0.34)",
+          background: color,
+          display: "flex",
+          alignItems: "center",
+          gap: 12,
+          paddingRight: 12,
         }}
       >
-        <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: "16px", marginBottom: "16px" }}>
-          <div style={{ minWidth: 0 }}>
-            <div id="share-qr-title" style={{ color: theme.textPrimary, fontSize: "16px", fontWeight: 750 }}>Share via QR code</div>
-            <div style={{ marginTop: "5px", color: theme.textSecondary, fontSize: "11.5px", lineHeight: 1.5, overflowWrap: "anywhere" }}>
-              Scan to open <strong>{fileName || "this diagram"}</strong> on another device.
-            </div>
-          </div>
-          <button
-            ref={closeRef}
-            type="button"
-            onClick={onClose}
-            aria-label="Close QR code"
-            title="Close"
-            style={{
-              width: 30,
-              height: 30,
-              boxSizing: "border-box",
-              flexShrink: 0,
-              padding: 0,
-              border: `1px solid ${theme.toolbarBorder}`,
-              borderRadius: "8px",
-              background: theme.editorPanelBg,
-              color: theme.textSecondary,
-              cursor: "pointer",
-              fontSize: "20px",
-              lineHeight: 1,
-            }}
-          >×</button>
-        </div>
-
-        <div
-          aria-live="polite"
+        <span
           style={{
-            minHeight: 340,
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            boxSizing: "border-box",
-            padding: "10px",
-            border: "1px solid #e5e7eb",
-            borderRadius: "12px",
-            background: "#ffffff",
+            flex: 1,
+            minWidth: 0,
+            padding: "4px 12px",
+            background: "rgba(0,0,0,0.5)",
+            borderRadius: "0 6px 6px 0",
+            color: "#ffffff",
+            fontSize: 12,
+            fontWeight: 700,
+            whiteSpace: "nowrap",
           }}
         >
-          {qrDataUrl ? (
-            <img src={qrDataUrl} width="320" height="320" alt="QR code for the shared diagram" style={{ display: "block", width: "min(320px, 100%)", height: "auto" }} />
-          ) : qrError ? (
-            <div style={{ maxWidth: 260, textAlign: "center", color: "#374151", fontSize: "12px", lineHeight: 1.6 }}>
-              <svg width="34" height="34" viewBox="0 0 24 24" fill="none" stroke="#f59e0b" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: "block", margin: "0 auto 10px" }}>
-                <path d="M10.3 2.9 1.8 17a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 2.9a2 2 0 0 0-3.4 0z"/><path d="M12 9v4M12 17h.01"/>
-              </svg>
-              {isTooLarge
-                ? "This diagram is too large to fit in a QR code. Copy the shareable link instead."
-                : "Unable to generate a QR code. You can still copy the shareable link."}
-            </div>
-          ) : (
-            <div style={{ textAlign: "center", color: "#6b7280", fontSize: "12px" }}>
-              <svg width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true" style={{ display: "block", margin: "0 auto 10px" }}>
-                <rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><path d="M14 14h3v3h-3zM18 18h3v3h-3z"/>
-              </svg>
-              Generating QR code…
-            </div>
-          )}
-        </div>
+          {table.name}
+        </span>
 
-        <div style={{ marginTop: "12px", display: "flex", justifyContent: "space-between", gap: "10px", color: theme.textMuted, fontSize: "10.5px" }}>
-          <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>{shareHost}</span>
-          <span style={{ flexShrink: 0 }}>{url.length.toLocaleString()} characters</span>
-        </div>
-        {isLocalOnly && (
-          <div role="note" style={{ marginTop: "10px", padding: "8px 10px", border: "1px solid #f59e0b55", borderRadius: "8px", background: "#f59e0b14", color: theme.textSecondary, fontSize: "10.5px", lineHeight: 1.5 }}>
-            This link uses a local address. A phone can open it only when SketchER is served from a deployed or network-accessible URL.
-          </div>
-        )}
         <button
           type="button"
-          onClick={() => { void onCopy(url); }}
-          style={{
-            width: "100%",
-            boxSizing: "border-box",
-            marginTop: "14px",
-            padding: "9px 12px",
-            border: "none",
-            borderRadius: "8px",
-            background: copyStatus === "error" ? "#b91c1c" : "#047857",
-            color: "#ffffff",
-            cursor: "pointer",
-            fontFamily: "'DM Sans', sans-serif",
-            fontSize: "12px",
-            fontWeight: 700,
+          data-export-hide="1"
+          className="sker-collapse-button"
+          aria-expanded={!table.isCollapsed}
+          aria-label={
+            table.isCollapsed
+              ? `Expand ${table.name}`
+              : `Collapse ${table.name} to keys`
+          }
+          title={
+            table.isCollapsed
+              ? `Expand ${table.name}; ${table.hiddenColumnCount} hidden columns`
+              : `Collapse ${table.name} to keys`
+          }
+          onPointerDown={(event) => event.stopPropagation()}
+          onClick={(event) => {
+            event.stopPropagation();
+            onToggleCollapse(table.name);
           }}
         >
-          {copyStatus === "copied" ? "Link copied!" : copyStatus === "error" ? "Copy failed — try again" : "Copy shareable link"}
+          {table.isCollapsed ? "▸" : "▾"}
         </button>
-        <span
-          role="status"
-          aria-live="polite"
-          style={{ position: "absolute", width: 1, height: 1, padding: 0, margin: -1, overflow: "hidden", clip: "rect(0, 0, 0, 0)", whiteSpace: "nowrap", border: 0 }}
+      </div>
+
+      {table.columns.map((column, index) => {
+        const related = relationshipColumns?.has(column.name);
+        const highlighted = activeColumns?.has(column.name);
+
+        return (
+          <div
+            key={column.name}
+            title={[
+              column.note,
+              column.notNull && "NOT NULL",
+              column.isUnique && "UNIQUE",
+              column.increment && "AUTO INCREMENT",
+              column.defaultValue != null && `Default: ${column.defaultValue}`,
+            ].filter(Boolean).join(" · ") || undefined}
+            style={{
+              height: COL_HEIGHT,
+              boxSizing: "border-box",
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              gap: 20,
+              padding: "0 12px",
+              borderBottom:
+                index < table.columns.length - 1
+                  ? `1px solid ${theme.divider}`
+                  : "none",
+              background: highlighted ? theme.activeColumn : "transparent",
+              fontSize: 12.5,
+              whiteSpace: "nowrap",
+            }}
+          >
+            <span style={{ display: "flex", alignItems: "center", gap: 6 }}>
+              {(column.isPk || related) && (
+                <span
+                  aria-label={column.isPk ? "Primary key" : "Relationship column"}
+                  title={column.isPk ? "Primary key" : "Relationship column"}
+                  style={{
+                    width: 12,
+                    fontSize: 11,
+                    color: column.isPk ? "#d97706" : "#6366f1",
+                    fontWeight: 700,
+                  }}
+                >
+                  {column.isPk ? "◆" : "↔"}
+                </span>
+              )}
+
+              <span
+                style={{
+                  fontWeight: column.isPk ? 600 : 400,
+                  fontStyle: related && !column.isPk ? "italic" : "normal",
+                }}
+              >
+                {column.name}
+              </span>
+            </span>
+
+            <span
+              style={{
+                display: "flex",
+                gap: 5,
+                alignItems: "center",
+                color: theme.columnType,
+                fontFamily: "'JetBrains Mono', monospace",
+                fontSize: 11,
+              }}
+            >
+              <span>{column.type}</span>
+              {column.isUnique && !column.isPk && <small>UQ</small>}
+              {column.increment && <small>++</small>}
+              {column.notNull && !column.isPk && <small>NN</small>}
+            </span>
+          </div>
+        );
+      })}
+
+      {hasTableMeta(table) && (
+        <div
+          title={table.note || metadata.join(" · ")}
+          style={{
+            height: TABLE_META_HEIGHT,
+            boxSizing: "border-box",
+            borderTop: `1px solid ${theme.divider}`,
+            padding: "0 12px",
+            display: "flex",
+            alignItems: "center",
+            gap: 8,
+            fontSize: 9.5,
+            color: theme.muted,
+          }}
         >
-          {copyStatus === "copied" ? "Shareable link copied." : copyStatus === "error" ? "Unable to copy the shareable link." : ""}
-        </span>
-        <div style={{ marginTop: "9px", color: theme.textMuted, textAlign: "center", fontSize: "10px", lineHeight: 1.4 }}>
-          The QR code is generated locally in your browser.
+          {metadata.map((item) => <span key={item}>{item}</span>)}
         </div>
-      </div>
+      )}
     </div>
   );
 }
 
-function Toolbar({ onAutoLayout, isAutoLayoutRunning, onZoomIn, onZoomOut, onZoomSet, zoom, onResetView, onFit, isDark, onToggleTheme, theme, onExport, onSave, onLoad, onShowHelp, onCopyShareLink, onShowShareQr, shareCopyStatus, shareTriggerRef, allTablesCollapsed, onToggleAllTables }) {
-  return (
-    <div data-export-hide="1" onMouseDown={(e) => e.stopPropagation()} style={{ position: "absolute", top: 12, right: 12, display: "flex", gap: "6px", zIndex: 20 }}>
-      <TBtn onClick={onToggleTheme} tip={isDark ? "Switch to light mode" : "Switch to dark mode"} theme={theme}>
-        {isDark ? (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <circle cx="12" cy="12" r="5" />
-            <line x1="12" y1="1" x2="12" y2="3" /><line x1="12" y1="21" x2="12" y2="23" />
-            <line x1="4.22" y1="4.22" x2="5.64" y2="5.64" /><line x1="18.36" y1="18.36" x2="19.78" y2="19.78" />
-            <line x1="1" y1="12" x2="3" y2="12" /><line x1="21" y1="12" x2="23" y2="12" />
-            <line x1="4.22" y1="19.78" x2="5.64" y2="18.36" /><line x1="18.36" y1="5.64" x2="19.78" y2="4.22" />
-          </svg>
-        ) : (
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-          </svg>
-        )}
-      </TBtn>
-      <TBtn onClick={onZoomOut} tip="Zoom out" theme={theme}>−</TBtn>
-      <ZoomControl zoom={zoom} onZoomSet={onZoomSet} theme={theme} />
-      <TBtn onClick={onZoomIn} tip="Zoom in" theme={theme}>+</TBtn>
-      <TBtn onClick={onResetView} tip="Reset view" theme={theme}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round">
-          <path d="M3 12a9 9 0 1 1 3 6.7" /><path d="M3 21v-6h6" />
-        </svg>
-      </TBtn>
-      <TBtn onClick={onFit} tip="Fit all tables in view" theme={theme}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M8 3H5a2 2 0 0 0-2 2v3"/><path d="M21 8V5a2 2 0 0 0-2-2h-3"/>
-          <path d="M3 16v3a2 2 0 0 0 2 2h3"/><path d="M16 21h3a2 2 0 0 0 2-2v-3"/>
-        </svg>
-        Fit
-      </TBtn>
-      <ArrangeControl onArrange={onAutoLayout} isArranging={isAutoLayoutRunning} theme={theme} />
-      <TBtn onClick={onToggleAllTables}
-        tip={allTablesCollapsed ? "Expand every table" : "Collapse every table to keys"}
-        theme={theme}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <rect x="4" y="4" width="16" height="16" rx="2" />
-          {allTablesCollapsed
-            ? <><path d="M8 10l4-4 4 4"/><path d="M8 14l4 4 4-4"/></>
-            : <><path d="M8 7l4 4 4-4"/><path d="M8 17l4-4 4 4"/></>}
-        </svg>
-        {allTablesCollapsed ? "Expand All" : "Collapse All"}
-      </TBtn>
-      <TBtn onClick={onSave} tip="Save diagram to .sker file" theme={theme}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/>
-          <polyline points="17 21 17 13 7 13 7 21"/>
-          <polyline points="7 3 7 8 15 8"/>
-        </svg>
-        Save
-      </TBtn>
-      <TBtn onClick={onLoad} tip="Open a .sker diagram file" theme={theme}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"/>
-        </svg>
-        Open
-      </TBtn>
-      <TBtn onClick={onExport} tip="Export diagram as PNG image" theme={theme}>
-        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
-          <polyline points="7 10 12 15 17 10"/>
-          <line x1="12" y1="15" x2="12" y2="3"/>
-        </svg>
-        Export
-      </TBtn>
-      <ShareControl
-        onCopyLink={onCopyShareLink}
-        onShowQr={onShowShareQr}
-        copyStatus={shareCopyStatus}
-        theme={theme}
-        triggerRef={shareTriggerRef}
-      />
-      <TBtn onClick={onShowHelp} tip="Help & reference" theme={theme} tipAlign="right">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-          <circle cx="12" cy="12" r="10"/>
-          <line x1="12" y1="8" x2="12" y2="12"/>
-          <line x1="12" y1="16" x2="12.01" y2="16"/>
-        </svg>
-      </TBtn>
-    </div>
-  );
+function GroupOverlay({
+  groups,
+  visible,
+  positions,
+  tablesByName,
+  widths,
+  colors,
+  selectedGroup,
+  onSelect,
+  onDragStart,
+  onMove,
+}) {
+  if (!visible) return null;
+
+  return groups.map((group, index) => {
+    const bounds = getGroupBounds(group, positions, tablesByName, widths);
+    if (!bounds) return null;
+
+    const color =
+      colors[group.name] ||
+      normalizeColor(group.color) ||
+      GROUP_COLORS[index % GROUP_COLORS.length];
+
+    const selected = selectedGroup === group.name;
+    const members = group.tables.filter((name) => tablesByName.has(name));
+
+    return (
+      <g key={group.name} data-export-bounds="1">
+        {group.note && <title>{group.note}</title>}
+
+        <rect
+          {...bounds}
+          rx={12}
+          fill={color}
+          opacity={0.06}
+          style={{ pointerEvents: "none" }}
+        />
+
+        <rect
+          {...bounds}
+          rx={12}
+          fill="none"
+          stroke={color}
+          strokeWidth={selected ? 2.5 : 1.5}
+          strokeDasharray="7 4"
+          opacity={selected ? 0.95 : 0.45}
+          style={{ pointerEvents: "stroke", cursor: "pointer" }}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            if (event.button === 0) onSelect(group.name);
+          }}
+        />
+
+        <text
+          x={bounds.x + 14}
+          y={bounds.y + 20}
+          fill={color}
+          fontSize={11}
+          fontWeight={700}
+          fontFamily="'DM Sans', sans-serif"
+          style={{ pointerEvents: "none" }}
+        >
+          {group.name}
+        </text>
+
+        <rect
+          data-export-hide="1"
+          x={bounds.x}
+          y={bounds.y}
+          width={bounds.width}
+          height={GROUP_LABEL_HEIGHT + 4}
+          fill="transparent"
+          rx={12}
+          role="button"
+          tabIndex={0}
+          aria-label={`Group ${group.name}. Enter to select; arrow keys to move.`}
+          className="sker-group-handle"
+          style={{ pointerEvents: "all", cursor: "move" }}
+          onPointerDown={(event) => {
+            event.stopPropagation();
+            if (event.button !== 0) return;
+
+            event.preventDefault();
+            onSelect(group.name);
+            onDragStart(members, event);
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" || event.key === " ") {
+              event.preventDefault();
+              onSelect(group.name);
+              return;
+            }
+
+            const directions = {
+              ArrowLeft: [-1, 0],
+              ArrowRight: [1, 0],
+              ArrowUp: [0, -1],
+              ArrowDown: [0, 1],
+            };
+
+            const direction = directions[event.key];
+            if (!direction) return;
+
+            event.preventDefault();
+            event.stopPropagation();
+
+            const step = event.shiftKey ? 20 : 5;
+            onMove(members, direction[0] * step, direction[1] * step);
+          }}
+        />
+      </g>
+    );
+  });
 }
 
-const INFO_SECTIONS = [
-  { id: "tables",        label: "Tables",          color: "#10b981" },
-  { id: "relationships", label: "Relationships",   color: "#3b82f6" },
-  { id: "advanced",      label: "Advanced DBML",   color: "#14b8a6" },
-  { id: "groups",        label: "Table Groups",    color: "#8b5cf6" },
-  { id: "canvas",        label: "Canvas Controls", color: "#f59e0b" },
-  { id: "colors",        label: "Colors & Theming",color: "#ec4899" },
-  { id: "saving",        label: "Saving & Export", color: "#06b6d4" },
-];
+function MiniMap({ tables, positions, widths, colors, viewport, canvasSize, theme }) {
+  const width = 160;
+  const height = 100;
 
-function InfoModal({ theme, onClose }) {
-  const [activeSection, setActiveSection] = useState("tables");
-  const scrollRef = useRef(null);
-  const sectionRefs = useRef({});
+  const rectangles = tables.flatMap((table) => {
+    const position = positions[table.name];
+    if (!position) return [];
 
-  const scrollTo = (id) => {
-    const container = scrollRef.current;
-    const target = sectionRefs.current[id];
-    if (!container || !target) return;
-    container.scrollTo({ top: target.offsetTop - 16, behavior: "smooth" });
-    setActiveSection(id);
-  };
+    return [{
+      name: table.name,
+      x: position.x,
+      y: position.y,
+      width: widths[table.name] || TABLE_WIDTH,
+      height: getTableHeight(table),
+    }];
+  });
 
-  const Code = ({ children }) => (
-    <pre style={{
-      background: theme.editorPanelBg,
-      border: `1px solid ${theme.border}`,
-      borderRadius: "7px",
-      padding: "11px 14px",
-      fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-      fontSize: "11.5px",
-      color: theme.editorText,
-      lineHeight: "1.75",
-      margin: "8px 0 18px",
-      overflowX: "auto",
-      whiteSpace: "pre",
-    }}>{children}</pre>
-  );
+  const bounds = unionBounds(rectangles, 40);
+  if (!bounds) return null;
 
-  const Section = ({ id, color, icon, title, children }) => (
-    <div ref={(el) => { if (id) sectionRefs.current[id] = el; }} style={{ marginBottom: "32px" }}>
-      <div style={{
-        display: "flex", alignItems: "center", gap: "8px",
-        marginBottom: "12px", paddingBottom: "8px",
-        borderBottom: `1px solid ${theme.border}`,
-      }}>
-        <span style={{
-          display: "flex", alignItems: "center", justifyContent: "center",
-          width: 26, height: 26, borderRadius: "7px",
-          background: color + "22", color, flexShrink: 0,
-        }}>{icon}</span>
-        <span style={{ fontWeight: 700, fontSize: "13.5px", color: theme.textPrimary, letterSpacing: "0.1px" }}>
-          {title}
-        </span>
-      </div>
-      <div style={{ fontSize: "12.5px", color: theme.textSecondary, lineHeight: "1.7" }}>
-        {children}
-      </div>
-    </div>
-  );
-
-  const KBD = ({ children }) => (
-    <code style={{
-      display: "inline-block",
-      background: theme.editorPanelBg,
-      border: `1px solid ${theme.border}`,
-      borderRadius: "4px",
-      padding: "1px 6px",
-      fontFamily: "'JetBrains Mono', monospace",
-      fontSize: "11px",
-      color: theme.textPrimary,
-      lineHeight: "1.6",
-    }}>{children}</code>
-  );
-
-  const Row = ({ label, children }) => (
-    <div style={{ display: "flex", gap: "10px", marginBottom: "7px", alignItems: "flex-start" }}>
-      <span style={{ color: theme.textMuted, flexShrink: 0, minWidth: 155, fontSize: "12px" }}>{label}</span>
-      <span>{children}</span>
-    </div>
-  );
+  const scale = Math.min(width / bounds.width, height / bounds.height);
+  const marginX = (width - bounds.width * scale) / 2;
+  const marginY = (height - bounds.height * scale) / 2;
 
   return (
     <div
-      onClick={onClose}
-      style={{
-        position: "fixed", inset: 0,
-        background: "rgba(0,0,0,0.52)",
-        zIndex: 300,
-        display: "flex", alignItems: "center", justifyContent: "center",
-        backdropFilter: "blur(4px)",
-      }}
+      className="sker-minimap"
+      data-export-hide="1"
+      data-canvas-wheel-ignore="1"
+      onPointerDown={(event) => event.stopPropagation()}
+      aria-label="Diagram overview"
+      role="img"
+      style={{ background: theme.legendBg }}
     >
-      <div
-        onClick={(e) => e.stopPropagation()}
-        style={{
-          background: theme.toolbarBg,
-          border: `1px solid ${theme.toolbarBorder}`,
-          borderRadius: "14px",
-          width: "min(860px, 94vw)",
-          maxHeight: "84vh",
-          display: "flex", flexDirection: "column",
-          boxShadow: "0 24px 64px rgba(0,0,0,0.28)",
-          overflow: "hidden",
-          fontFamily: "'DM Sans', sans-serif",
-        }}
+      <svg width={width} height={height} aria-hidden="true">
+        {rectangles.map((rectangle) => (
+          <rect
+            key={rectangle.name}
+            x={marginX + (rectangle.x - bounds.x) * scale}
+            y={marginY + (rectangle.y - bounds.y) * scale}
+            width={rectangle.width * scale}
+            height={rectangle.height * scale}
+            fill={colors[rectangle.name]}
+            rx={1}
+            opacity={0.7}
+          />
+        ))}
+
+        <rect
+          x={
+            marginX +
+            (-viewport.offset.x / viewport.zoom - bounds.x) * scale
+          }
+          y={
+            marginY +
+            (-viewport.offset.y / viewport.zoom - bounds.y) * scale
+          }
+          width={(canvasSize.width / viewport.zoom) * scale}
+          height={(canvasSize.height / viewport.zoom) * scale}
+          fill="none"
+          stroke="#10b981"
+          strokeWidth={1.5}
+        />
+      </svg>
+    </div>
+  );
+}
+
+function LegendColorSwatch({ color, onNotify }) {
+  const operationRef = useRef(0);
+  const mountedRef = useRef(true);
+
+  useEffect(() => {
+    mountedRef.current = true;
+
+    return () => {
+      mountedRef.current = false;
+      operationRef.current += 1;
+    };
+  }, []);
+
+  const copy = async () => {
+    const operation = ++operationRef.current;
+
+    try {
+      await copyTextToClipboard(color);
+
+      if (mountedRef.current && operation === operationRef.current) {
+        onNotify(`Copied ${color.toUpperCase()}.`);
+      }
+    } catch {
+      if (mountedRef.current && operation === operationRef.current) {
+        onNotify("Unable to copy the color.", "error");
+      }
+    }
+  };
+
+  return (
+    <button
+      type="button"
+      className="sker-legend-swatch"
+      style={{ background: color }}
+      aria-label={`Copy color ${color.toUpperCase()}`}
+      title={`Copy ${color.toUpperCase()}`}
+      onClick={copy}
+    />
+  );
+}
+
+function ColorLegend({
+  entries,
+  descriptions,
+  onChange,
+  legendRef,
+  theme,
+  onNotify,
+}) {
+  return (
+    <section
+      ref={legendRef}
+      className="sker-legend"
+      data-color-legend="1"
+      data-canvas-wheel-ignore="1"
+      aria-label="Color legend"
+      style={{ background: theme.legendBg }}
+      onPointerDown={(event) => event.stopPropagation()}
+      onContextMenu={(event) => event.stopPropagation()}
+    >
+      <h2 className="sker-small-heading">Color legend</h2>
+
+      <div data-color-legend-items="1" className="sker-legend-items">
+        {!entries.length && (
+          <p className="sker-muted">Table colors will appear here.</p>
+        )}
+
+        {entries.map(({ color }) => (
+          <div key={color} className="sker-inline">
+            <LegendColorSwatch color={color} onNotify={onNotify} />
+            <input
+              type="text"
+              value={descriptions[color] || ""}
+              maxLength={20_000}
+              placeholder="Add description…"
+              aria-label={`Description for ${color}`}
+              onChange={(event) => onChange(color, event.target.value)}
+            />
+          </div>
+        ))}
+      </div>
+    </section>
+  );
+}
+
+/* -------------------------------------------------------------------------- */
+/* Dialogs                                                                    */
+/* -------------------------------------------------------------------------- */
+
+function ShareQrDialog({
+  url,
+  fileName,
+  onCopy,
+  copyStatus,
+  onClose,
+  restoreFocusRef,
+}) {
+  const [result, setResult] = useState({ dataUrl: null, error: null });
+
+  useEffect(() => {
+    let active = true;
+    setResult({ dataUrl: null, error: null });
+
+    Promise.resolve()
+      .then(() => generateShareQrDataUrl(url))
+      .then((next) => {
+        if (active) {
+          setResult({
+            dataUrl: next?.dataUrl || null,
+            error: next?.error || (!next?.dataUrl ? "unknown" : null),
+          });
+        }
+      })
+      .catch(() => {
+        if (active) setResult({ dataUrl: null, error: "unknown" });
+      });
+
+    return () => {
+      active = false;
+    };
+  }, [url]);
+
+  let host = "Local file";
+  let localOnly = false;
+
+  try {
+    const parsed = new URL(url);
+    const hostname = parsed.hostname.toLowerCase().replace(/\.$/, "");
+
+    host = parsed.host || "Local file";
+    localOnly =
+      parsed.protocol === "file:" ||
+      hostname === "localhost" ||
+      hostname.endsWith(".localhost") ||
+      hostname === "0.0.0.0" ||
+      hostname === "[::1]" ||
+      /^127(?:\.\d{1,3}){3}$/.test(hostname);
+  } catch {
+    localOnly = true;
+  }
+
+  return (
+    <Dialog
+      title="Share via QR code"
+      onClose={onClose}
+      restoreFocusRef={restoreFocusRef}
+    >
+      <p>Scan to open <strong>{fileName || "this diagram"}</strong>.</p>
+
+      <div className="sker-qr-panel" aria-live="polite">
+        {result.dataUrl ? (
+          <img
+            src={result.dataUrl}
+            width={320}
+            height={320}
+            alt="QR code for the shared diagram"
+          />
+        ) : result.error ? (
+          <p>
+            {result.error === SHARE_QR_TOO_LARGE
+              ? "This diagram is too large for a QR code. Copy the shareable link instead."
+              : "Unable to generate a QR code. You can still copy the shareable link."}
+          </p>
+        ) : (
+          <p>Generating QR code…</p>
+        )}
+      </div>
+
+      <div className="sker-inline sker-between sker-muted">
+        <span className="sker-truncate">{host}</span>
+        <span>{url.length.toLocaleString()} characters</span>
+      </div>
+
+      {localOnly && (
+        <p className="sker-warning">
+          This address is local to this device. Serve SketchER at a deployed or
+          network-accessible URL before sharing with a phone.
+        </p>
+      )}
+
+      <ToolButton
+        label="Copy shareable link"
+        className="sker-primary"
+        onClick={() => void onCopy(url)}
       >
-        {/* Header */}
-        <div style={{
-          display: "flex", alignItems: "center", justifyContent: "space-between",
-          padding: "16px 22px 14px",
-          borderBottom: `1px solid ${theme.border}`,
-          flexShrink: 0,
-        }}>
-          <div style={{ display: "flex", alignItems: "center", gap: "10px" }}>
-            <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#10b981" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <circle cx="12" cy="12" r="10"/>
-              <line x1="12" y1="8" x2="12" y2="12"/>
-              <line x1="12" y1="16" x2="12.01" y2="16"/>
-            </svg>
-            <span style={{ fontWeight: 700, fontSize: "14px", color: theme.textPrimary }}>
-              SketchER Reference
-            </span>
-          </div>
-          <button onClick={onClose} style={{
-            background: "none", border: "none", cursor: "pointer",
-            color: theme.textMuted, fontSize: "20px", lineHeight: 1,
-            padding: "2px 6px", borderRadius: "6px",
-          }}>×</button>
-        </div>
+        {copyStatus === "copied"
+          ? "Link copied"
+          : copyStatus === "error"
+            ? "Copy failed — retry"
+            : "Copy shareable link"}
+      </ToolButton>
 
-        {/* Body = sidebar + content */}
-        <div style={{ display: "flex", flex: 1, minHeight: 0, overflow: "hidden" }}>
+      <p className="sker-muted">
+        QR generation happens locally. The link contains a snapshot of the
+        diagram; treat it as shared data, not a private access-controlled link.
+      </p>
+    </Dialog>
+  );
+}
 
-          {/* Left sidebar */}
-          <div style={{
-            width: "162px",
-            flexShrink: 0,
-            borderRight: `1px solid ${theme.border}`,
-            padding: "16px 10px",
-            display: "flex",
-            flexDirection: "column",
-            gap: "2px",
-            overflowY: "auto",
-            background: theme.editorPanelBg,
-          }}>
-            {INFO_SECTIONS.map((s) => (
-              <button
-                key={s.id}
-                onClick={() => scrollTo(s.id)}
-                style={{
-                  display: "flex", alignItems: "center", gap: "8px",
-                  padding: "7px 10px",
-                  borderRadius: "7px",
-                  border: "none",
-                  background: activeSection === s.id ? s.color + "18" : "transparent",
-                  color: activeSection === s.id ? s.color : theme.textSecondary,
-                  fontFamily: "'DM Sans', sans-serif",
-                  fontSize: "12px",
-                  fontWeight: activeSection === s.id ? 600 : 400,
-                  cursor: "pointer",
-                  textAlign: "left",
-                  transition: "all 0.13s",
-                  width: "100%",
-                }}
-              >
-                <span style={{
-                  width: 7, height: 7, borderRadius: "50%",
-                  background: s.color,
-                  flexShrink: 0,
-                  opacity: activeSection === s.id ? 1 : 0.35,
-                  transition: "opacity 0.13s",
-                }} />
-                {s.label}
-              </button>
-            ))}
-          </div>
+function HelpDialog({ onClose, restoreFocusRef }) {
+  return (
+    <Dialog
+      title="SketchER reference"
+      onClose={onClose}
+      restoreFocusRef={restoreFocusRef}
+      wide
+    >
+      <nav className="sker-help-nav" aria-label="Reference sections">
+        <a href="#sker-help-tables">Tables</a>
+        <a href="#sker-help-relationships">Relationships</a>
+        <a href="#sker-help-groups">Groups</a>
+        <a href="#sker-help-canvas">Canvas</a>
+        <a href="#sker-help-saving">Saving and sharing</a>
+      </nav>
 
-          {/* Scrollable content */}
-          <div
-            ref={scrollRef}
-            onScroll={() => {
-              const container = scrollRef.current;
-              if (!container) return;
-              const scrollTop = container.scrollTop;
-              let current = INFO_SECTIONS[0].id;
-              for (const s of INFO_SECTIONS) {
-                const el = sectionRefs.current[s.id];
-                if (el && el.offsetTop - 32 <= scrollTop) current = s.id;
-              }
-              setActiveSection(current);
-            }}
-            style={{ flex: 1, minHeight: 0, overflowY: "auto", overscrollBehavior: "contain", padding: "24px 28px" }}
-          >
-            <Section id="tables" color="#10b981" title="Creating Tables"
-              icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/></svg>}>
-              <p style={{ marginTop: 0 }}>SketchER uses the official DBML v2 parser. Schemas, quoted identifiers, aliases, parameterized or quoted types, defaults, checks, notes, indexes, metadata, and reusable partials are accepted.</p>
-              <Code>{`Table core.users as U [headercolor: #3498DB] {
-  id       bigint       [pk, increment]
-  email    varchar(255) [not null, unique]
-  balance  decimal(10,2) [default: 0, check: \`balance >= 0\`]
+      <section id="sker-help-tables">
+        <h3>Tables and advanced DBML</h3>
+        <p>
+          The editor uses the project’s DBML parser. Schemas, quoted identifiers,
+          aliases, parameterized types, defaults, notes, indexes, and other
+          supported DBML metadata are preserved in the parsed model.
+        </p>
+        <pre>{`Table core.users as U [headercolor: #3498db] {
+  id bigint [pk, increment]
+  email varchar(255) [not null, unique]
+  balance decimal(10,2) [default: 0]
   full_name "character varying" [note: 'Display name']
 
   indexes {
     (email, full_name) [name: 'users_search_idx']
   }
-}`}</Code>
-              <Row label="Column settings"><KBD>pk</KBD>, <KBD>not null</KBD>, <KBD>unique</KBD>, <KBD>increment</KBD>, <KBD>default</KBD>, <KBD>check</KBD>, and <KBD>note</KBD></Row>
-              <Row label="Validation">Errors show at their exact Monaco line and the canvas keeps the last valid diagram visible</Row>
-              <Row label="Column order">Top-to-bottom matches left-panel definition order</Row>
-              <Row label="Types">All database types are accepted; quote types containing spaces</Row>
-            </Section>
+}`}</pre>
+        <p>
+          Invalid edits show diagnostics while the canvas retains the last valid
+          model from the current document. Opening a different file never reuses
+          the previous file’s model.
+        </p>
+      </section>
 
-            <Section id="relationships" color="#3b82f6" title="Relationships & References"
-              icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>}>
-              <p style={{ marginTop: 0 }}>References define foreign key lines. Use inline syntax on a column, or standalone <KBD>Ref:</KBD> blocks anywhere in the file.</p>
-              <Code>{`// Inline
-Table orders {
-  id      int [pk]
-  user_id int [ref: >? users.id]
-}
-
-// Named, composite, cross-schema relationship
-Ref order_owner {
-  sales.orders.(tenant_id, user_id) > core.users.(tenant_id, id) [delete: cascade, color: #79AD51]
-}`}</Code>
-              <Row label="Cardinalities"><KBD>&lt;</KBD> one-to-many, <KBD>&gt;</KBD> many-to-one, <KBD>-</KBD> one-to-one, <KBD>&lt;&gt;</KBD> many-to-many</Row>
-              <Row label="Optional endpoints">Add <KBD>?</KBD> on either side of an operator, such as <KBD>&gt;?</KBD> or <KBD>?&gt;</KBD></Row>
-              <Row label="Ref settings"><KBD>delete</KBD>, <KBD>update</KBD>, <KBD>color</KBD>, and <KBD>inactive</KBD> are rendered and exposed in line tooltips</Row>
-              <Row label="Drag line midpoint">Hover a line to reveal its grip dot, then drag to reroute</Row>
-              <Row label="Connection flow">Use Settings → <strong>Reverse connection flow</strong> to animate and point from the first DBML endpoint to the second</Row>
-            </Section>
-
-            <Section id="advanced" color="#14b8a6" title="Advanced DBML"
-              icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M4 4h16v16H4z"/><path d="M8 9h8M8 13h5"/></svg>}>
-              <Code>{`TablePartial timestamps {
-  created_at timestamp [default: \`now()\`]
-  updated_at timestamp
-}
-
-Enum core.status {
-  pending
-  active [note: 'Visible to users']
-}
-
-Table core.items {
-  ~timestamps
+      <section id="sker-help-relationships">
+        <h3>Relationships</h3>
+        <pre>{`Table orders {
   id int [pk]
-  status core.status
-  records (id, status, created_at, updated_at) {
-    1, pending, \`now()\`, null
-  }
-}`}</Code>
-              <Row label="Supported">Project, schemas, aliases, enums, checks, indexes, records, TablePartial, sticky notes, DiagramView, custom metadata, and multiline strings</Row>
-              <Row label="Single document">The editor validates one DBML document; multi-file <KBD>use … from …</KBD> projects require a future file-workspace UI</Row>
-            </Section>
+  user_id int [ref: > users.id]
+}
 
-            <Section id="groups" color="#8b5cf6" title="Table Groups"
-              icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><rect x="2" y="2" width="9" height="9" rx="1.5"/><rect x="13" y="2" width="9" height="9" rx="1.5"/><rect x="2" y="13" width="9" height="9" rx="1.5"/><rect x="13" y="13" width="9" height="9" rx="1.5"/></svg>}>
-              <p style={{ marginTop: 0 }}>Group related tables visually with a <KBD>TableGroup</KBD> block. Each member goes on its own line — just the table name, no punctuation.</p>
-              <Code>{`TableGroup Auth [color: #8b5cf6, note: 'Identity domain'] {
+Ref order_owner {
+  sales.orders.(tenant_id, user_id) > core.users.(tenant_id, id)
+}`}</pre>
+        <p>
+          Cardinalities: <code>&lt;</code> one-to-many, <code>&gt;</code>{" "}
+          many-to-one, <code>-</code> one-to-one, and <code>&lt;&gt;</code>{" "}
+          many-to-many. Optional endpoint syntax depends on the parser version.
+        </p>
+        <p>
+          Drag a relationship’s vertical grip to reroute it. Keyboard users can
+          focus a grip and use Left/Right; hold Shift for larger steps.
+          Reversing display flow does not change relationship cardinality.
+        </p>
+      </section>
+
+      <section id="sker-help-groups">
+        <h3>Groups and colors</h3>
+        <pre>{`TableGroup Auth [color: #8b5cf6] {
   core.users
   core.roles
-  sessions
-}`}</Code>
-              <Row label="Enable groups">Toggle the <strong>Table Groups</strong> switch in the bottom bar of the canvas</Row>
-              <Row label="Create from selection">Select tables with <KBD>Ctrl/Cmd</KBD> + click, then right-click a selected table and name the new group</Row>
-              <Row label="Group colors">Click a group label or outline, then choose a common, recent, or custom color from the left palette</Row>
-              <Row label="Drag a group">Grab the group label strip at the top of its bounding box to move all member tables together</Row>
-              <Row label="Membership">Driven purely by DBML — moving a table out of a group box does not change membership</Row>
-            </Section>
+}`}</pre>
+        <p>
+          Ctrl/Cmd-click tables to select multiple tables. Right-click, or use
+          Shift+F10 on a focused table, to create a group. Drag a group’s label
+          strip to move all members and its manually positioned internal routes.
+        </p>
+        <p>
+          Palette colors are explicit UI overrides. Use “Use DBML/default color”
+          to remove a table override. Applying a color to multiple selected
+          tables creates related shades.
+        </p>
+      </section>
 
-            <Section id="canvas" color="#f59e0b" title="Canvas Controls"
-              icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg>}>
-              <Row label="Trackpad pinch">Zoom around the pointer (Ctrl/Cmd + scroll also works)</Row>
-              <Row label="Two-finger swipe">Pan horizontally and vertically across the canvas</Row>
-              <Row label="Click zoom %">Scales canvas tables and text with a slider or typeable zoom level</Row>
-              <Row label="Drag canvas">Pan the diagram (click and drag any empty area)</Row>
-              <Row label="Collapse editor">Use the triangle in the code header to give the canvas the full window; the right-pointing triangle restores it</Row>
-              <Row label="Drag table">Reposition any individual table</Row>
-              <Row label="Table arrow">Collapse one table to primary/relationship keys, or expand it again</Row>
-              <Row label="Collapse All">Use the toolbar button to collapse every table to keys; it changes to <strong>Expand All</strong></Row>
-              <Row label="Drag line grip">Reroute a relationship line's vertical corridor</Row>
-              <Row label="Drag group label">Move all tables in a group at once</Row>
-              <Row label="Layout button">Choose <strong>Smart grouped</strong> or a strict lineage hierarchy; use the swap control to reverse hierarchy direction</Row>
-              <Row label="Reset view">Return to 100% zoom at origin</Row>
-            </Section>
+      <section id="sker-help-canvas">
+        <h3>Canvas controls</h3>
+        <ul>
+          <li>Drag empty canvas to pan.</li>
+          <li>Two-finger trackpad scrolling pans in both axes.</li>
+          <li>Ctrl/Cmd-wheel or trackpad pinch zooms around the pointer.</li>
+          <li>Touch and pen dragging use pointer events.</li>
+          <li>Touch users can use the zoom buttons or slider.</li>
+          <li>Focus a table: Enter selects; arrow keys move it.</li>
+          <li>Hold Shift with arrow keys for larger movement steps.</li>
+          <li>Focus the canvas: arrows pan, +/− zoom, F fits, 0 resets.</li>
+          <li>Collapse tables to retain primary and relationship columns.</li>
+          <li>Smart layout groups tables; hierarchy layout emphasizes lineage.</li>
+        </ul>
+        <p>
+          Large diagrams can fit down to 5% zoom. Reduced-motion system
+          preferences disable animated relationship particles.
+        </p>
+      </section>
 
-            <Section id="colors" color="#ec4899" title="Colors & Theming"
-              icon={<svg width="13" height="13" viewBox="0 0 20 20"><path d="M10 1.5a8.5 8.5 0 100 17 8.5 8.5 0 000-17z" fill="none" stroke="currentColor" strokeWidth="1.8"/></svg>}>
-              <Row label="Table color">Right-click a table for its five recent colors and custom color wheel</Row>
-              <Row label="Quick palette">Select a table or group to reveal common colors and a custom color wheel in the left panel</Row>
-              <Row label="Recent colors">The last 12 settled colors are kept in a reusable history row; wheel previews are debounced</Row>
-              <Row label="Colour legend">Enable it from the bottom bar, then describe each unique table colour in the right-side panel</Row>
-              <Row label="Dark / light mode">Use the sun / moon icon in the toolbar to toggle themes</Row>
-              <Row label="Group accent colors">Auto-assigned initially, then independently overridable from the quick palette</Row>
-            </Section>
-
-            <Section id="saving" color="#06b6d4" title="Saving & Export"
-              icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>}>
-              <Row label="Auto-save">All state saves to <KBD>localStorage</KBD> every 400 ms automatically</Row>
-              <Row label="Save (.sker)">Toolbar → <strong>Save</strong> — downloads a <KBD>diagram.sker</KBD> JSON file</Row>
-              <Row label="Open (.sker)">Toolbar → <strong>Open</strong> — loads a previously saved <KBD>.sker</KBD> file</Row>
-              <Row label="Export PNG">Toolbar → <strong>Export</strong> — renders a 2× resolution PNG and includes the legend when visible</Row>
-              <Row label="Share link">Toolbar → <strong>Share</strong> → <strong>Copy shareable link</strong></Row>
-              <Row label="Share QR code">Toolbar → <strong>Share</strong> → <strong>Show QR code</strong> — scan it from a phone; oversized diagrams can still be copied as links</Row>
-              <p style={{ marginTop: 10, marginBottom: 0 }}>The <KBD>.sker</KBD> file is plain JSON — safe to version in git or share with teammates.</p>
-            </Section>
-          </div>
-        </div>
-      </div>
-    </div>
+      <section id="sker-help-saving">
+        <h3>Saving, export, and sharing</h3>
+        <ul>
+          <li>
+            Autosave runs after 400 ms of inactivity, with a two-second maximum
+            wait during continuous changes.
+          </li>
+          <li>
+            Save downloads a versioned <code>.sker</code> JSON document.
+          </li>
+          <li>
+            Open validates the complete document before replacing current state.
+          </li>
+          <li>PNG export includes the visible legend.</li>
+          <li>Share creates a snapshot link; QR codes have a smaller size limit.</li>
+        </ul>
+        <p>
+          Browser storage can fail or be cleared. Keep downloaded backups for
+          important diagrams. Opening a shared snapshot removes its hash from
+          the address bar so a later reload restores the edited autosave rather
+          than reopening the original snapshot.
+        </p>
+      </section>
+    </Dialog>
   );
 }
 
-function MiniMap({ tablePositions, tableData, colors, canvasOffset, zoom, canvasWidth, canvasHeight, theme, tableWidths }) {
-  const MINIMAP_W = 160;
-  const MINIMAP_H = 100;
-  if (Object.keys(tablePositions).length === 0) return null;
+/* -------------------------------------------------------------------------- */
+/* Monaco                                                                     */
+/* -------------------------------------------------------------------------- */
 
-  const allX = Object.values(tablePositions).map((p) => p.x);
-  const allY = Object.values(tablePositions).map((p) => p.y);
-  const minX = Math.min(...allX) - 50;
-  const minY = Math.min(...allY) - 50;
-  const maxX = Math.max(...Object.entries(tablePositions).map(([n, p]) => p.x + (tableWidths[n] || TABLE_WIDTH))) + 50;
-  const maxY = Math.max(...allY) + 300;
-  const worldW = maxX - minX || 1;
-  const worldH = maxY - minY || 1;
-  const scale = Math.min(MINIMAP_W / worldW, MINIMAP_H / worldH);
+function configureMonaco(monaco) {
+  if (!monaco.languages.getLanguages().some((language) => language.id === "dbml")) {
+    monaco.languages.register({ id: "dbml" });
+  }
 
-  const viewX = (-canvasOffset.x / zoom - minX) * scale;
-  const viewY = (-canvasOffset.y / zoom - minY) * scale;
-  const viewW = (canvasWidth / zoom) * scale;
-  const viewH = (canvasHeight / zoom) * scale;
+  monaco.languages.setMonarchTokensProvider("dbml", dbmlMonarchTokensProvider);
+  monaco.languages.setLanguageConfiguration("dbml", dbmlLanguageConfig);
 
-  return (
-    <div
-      data-export-hide="1"
-      onMouseDown={(e) => e.stopPropagation()}
-      style={{
-        position: "absolute",
-        bottom: 12,
-        right: 12,
-        width: MINIMAP_W,
-        height: MINIMAP_H,
-        background: theme.minimapBg,
-        border: `1px solid ${theme.border}`,
-        borderRadius: "8px",
-        overflow: "hidden",
-        zIndex: 20,
-        backdropFilter: "blur(8px)",
-      }}
-    >
-      <svg width={MINIMAP_W} height={MINIMAP_H}>
-        {Object.entries(tablePositions).map(([name, pos]) => (
-          <rect
-            key={name}
-            x={(pos.x - minX) * scale}
-            y={(pos.y - minY) * scale}
-            width={(tableWidths[name] || TABLE_WIDTH) * scale}
-            height={getTableHeight(tableData.find((t) => t.name === name) || { columns: [{}] }) * scale}
-            fill={colors[name] || "#10b981"}
-            rx="1"
-            opacity="0.65"
-          />
-        ))}
-        <rect
-          x={viewX} y={viewY} width={viewW} height={viewH}
-          fill="none" stroke="#10b981" strokeWidth="1.5" opacity="0.8" rx="1"
-        />
-      </svg>
-    </div>
-  );
+  monaco.editor.defineTheme("dbml-light", {
+    base: "vs",
+    inherit: true,
+    rules: [
+      { token: "keyword", foreground: "d73a49", fontStyle: "bold" },
+      { token: "type", foreground: "005cc5" },
+      { token: "attribute", foreground: "22863a" },
+      { token: "comment", foreground: "6a737d", fontStyle: "italic" },
+      { token: "string", foreground: "032f62" },
+      { token: "number", foreground: "005cc5" },
+      { token: "operator", foreground: "d73a49" },
+    ],
+    colors: {
+      "editor.background": LIGHT_THEME.editorBg,
+      "editor.foreground": LIGHT_THEME.text,
+      "editor.lineHighlightBackground": "#e8e8e8",
+      "editorLineNumber.foreground": "#777777",
+      "editor.selectionBackground": "#10b98130",
+      "editor.findMatchBackground": "#10b98140",
+    },
+  });
+
+  monaco.editor.defineTheme("dbml-dark", {
+    base: "vs-dark",
+    inherit: true,
+    rules: [
+      { token: "keyword", foreground: "f97583", fontStyle: "bold" },
+      { token: "type", foreground: "79b8ff" },
+      { token: "attribute", foreground: "85e89d" },
+      { token: "comment", foreground: "959daa", fontStyle: "italic" },
+      { token: "string", foreground: "9ecbff" },
+      { token: "number", foreground: "79b8ff" },
+      { token: "operator", foreground: "f97583" },
+    ],
+    colors: {
+      "editor.background": DARK_THEME.editorBg,
+      "editor.foreground": DARK_THEME.text,
+      "editor.lineHighlightBackground": "#303034",
+      "editorLineNumber.foreground": "#96969e",
+      "editor.selectionBackground": "#10b98130",
+      "editor.findMatchBackground": "#10b98140",
+    },
+  });
 }
 
-function ToggleSwitch({ checked, onChange, theme }) {
-  return (
-    <div
-      onClick={onChange}
-      style={{
-        width: 32, height: 18,
-        background: checked ? "#10b981" : theme.toolbarBorder,
-        borderRadius: 9,
-        cursor: "pointer",
-        position: "relative",
-        transition: "background 0.2s",
-        flexShrink: 0,
-      }}
-    >
-      <div style={{
-        position: "absolute",
-        top: 2,
-        left: checked ? 16 : 2,
-        width: 14, height: 14,
-        borderRadius: "50%",
-        background: "#fff",
-        transition: "left 0.2s",
-        boxShadow: "0 1px 3px rgba(0,0,0,0.2)",
-      }} />
-    </div>
-  );
+const MONACO_OPTIONS = {
+  fontSize: 12.5,
+  fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
+  fontLigatures: true,
+  lineHeight: 20,
+  minimap: { enabled: false },
+  scrollBeyondLastLine: false,
+  renderLineHighlight: "line",
+  lineNumbers: "on",
+  lineNumbersMinChars: 3,
+  glyphMargin: false,
+  folding: true,
+  automaticLayout: true,
+  tabSize: 2,
+  insertSpaces: true,
+  wordWrap: "on",
+  padding: { top: 10 },
+  overviewRulerLanes: 0,
+  overviewRulerBorder: false,
+  scrollbar: {
+    verticalScrollbarSize: 8,
+    horizontalScrollbarSize: 8,
+  },
+};
+
+/* -------------------------------------------------------------------------- */
+/* Styles                                                                     */
+/* -------------------------------------------------------------------------- */
+
+const STYLES = `
+.sker-root,
+.sker-root *,
+.sker-dialog-backdrop,
+.sker-dialog-backdrop * {
+  box-sizing: border-box;
 }
 
-const GROUP_PAD = 22;
-const GROUP_LABEL_H = 26;
-
-function GroupOverlay({ groups, groupColors, selectedGroupName, tablePositions, tableWidths, tableData, groupsVisible, onGroupDragStart, onGroupSelect }) {
-  if (!groupsVisible || groups.length === 0) return null;
-
-  return (
-    <>
-      {groups.map((group, gi) => {
-        const color = groupColors[group.name] || group.color || GROUP_ACCENT_COLORS[gi % GROUP_ACCENT_COLORS.length];
-        const isSelected = selectedGroupName === group.name;
-        const members = group.tables.filter((n) => tablePositions[n]);
-        if (members.length === 0) return null;
-
-        const positions = members.map((n) => ({
-          x: tablePositions[n].x,
-          y: tablePositions[n].y,
-          w: tableWidths[n] || TABLE_WIDTH,
-          h: getTableHeight(tableData.find((t) => t.name === n) || { columns: [] }),
-        }));
-
-        const minX = Math.min(...positions.map((p) => p.x)) - GROUP_PAD;
-        const minY = Math.min(...positions.map((p) => p.y)) - GROUP_PAD - GROUP_LABEL_H;
-        const maxX = Math.max(...positions.map((p) => p.x + p.w)) + GROUP_PAD;
-        const maxY = Math.max(...positions.map((p) => p.y + p.h)) + GROUP_PAD;
-        const bw = maxX - minX;
-        const bh = maxY - minY;
-
-        return (
-          <g key={group.name} data-export-bounds="1">
-            {group.note && <title>{group.note}</title>}
-            {/* D — Background fill */}
-            <rect x={minX} y={minY} width={bw} height={bh} rx="12"
-              fill={color} opacity="0.06" style={{ pointerEvents: "none" }} />
-
-            {/* A — Dashed border box */}
-            <rect x={minX} y={minY} width={bw} height={bh} rx="12"
-              fill="none" stroke={color} strokeWidth={isSelected ? "2.5" : "1.5"} strokeDasharray="7 4"
-              opacity={isSelected ? 0.9 : 0.35}
-              style={{ pointerEvents: "stroke", cursor: "pointer" }}
-              onMouseDown={(e) => {
-                e.stopPropagation();
-                onGroupSelect(group.name);
-              }} />
-
-            {isSelected && <rect data-export-hide="1"
-              x={minX - 4} y={minY - 4} width={bw + 8} height={bh + 8} rx="15"
-              fill="none" stroke={color} strokeWidth="1" opacity="0.28" style={{ pointerEvents: "none" }} />}
-
-            {/* B — Label background pill */}
-            <rect x={minX + 12} y={minY + 6} width={group.name.length * 7 + 18} height={20}
-              rx="5" fill={color} opacity="0.2" style={{ pointerEvents: "none" }} />
-
-            {/* B — Label text */}
-            <text x={minX + 21} y={minY + 19}
-              fill={color} fontSize="11" fontWeight="700"
-              fontFamily="'DM Sans', sans-serif" letterSpacing="0.4"
-              opacity="0.85" style={{ pointerEvents: "none" }}>
-              {group.name}
-            </text>
-
-            {/* E — Drag hit area (top strip of the group box) */}
-            <rect x={minX} y={minY} width={bw} height={GROUP_LABEL_H + 4}
-              data-export-hide="1"
-              fill="transparent" rx="12"
-              style={{ cursor: "move", pointerEvents: "all" }}
-              onMouseDown={(e) => {
-                e.preventDefault();
-                e.stopPropagation();
-                onGroupSelect(group.name);
-                onGroupDragStart(group.name, members, e.clientX, e.clientY);
-              }}
-            />
-          </g>
-        );
-      })}
-    </>
-  );
+.sker-root {
+  display: flex;
+  width: 100%;
+  height: 100dvh;
+  min-height: 320px;
+  overflow: hidden;
+  background: var(--sker-app);
+  color: var(--sker-text);
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 12px;
 }
 
-function LegendColorSwatch({ color, theme }) {
-  const [hovered, setHovered] = useState(false);
-  const [copyStatus, setCopyStatus] = useState("idle");
-  const resetTimerRef = useRef(null);
-  const swatchRef = useRef(null);
-  const [tooltipPosition, setTooltipPosition] = useState(null);
-
-  useEffect(() => () => window.clearTimeout(resetTimerRef.current), []);
-
-  const showTooltip = () => {
-    const bounds = swatchRef.current?.getBoundingClientRect();
-    if (bounds) {
-      setTooltipPosition({
-        left: bounds.left + bounds.width / 2,
-        top: bounds.top - 7,
-      });
-    }
-    setHovered(true);
-  };
-
-  const handleCopy = async () => {
-    try {
-      await copyTextToClipboard(color);
-      setCopyStatus("copied");
-    } catch {
-      setCopyStatus("error");
-    }
-    window.clearTimeout(resetTimerRef.current);
-    resetTimerRef.current = window.setTimeout(() => setCopyStatus("idle"), 1200);
-  };
-
-  const overlayText = copyStatus === "copied"
-    ? "Copied"
-    : copyStatus === "error"
-    ? "Error"
-    : color.toUpperCase();
-
-  return (
-    <button
-      ref={swatchRef}
-      type="button"
-      onClick={handleCopy}
-      onMouseEnter={showTooltip}
-      onMouseLeave={() => setHovered(false)}
-      onFocus={showTooltip}
-      onBlur={() => setHovered(false)}
-      aria-label={`Copy colour ${color.toUpperCase()}`}
-      style={{
-        width: 36,
-        height: 32,
-        padding: 0,
-        flexShrink: 0,
-        border: `1px solid ${theme.toolbarBorder}`,
-        borderRadius: 8,
-        background: color,
-        boxShadow: "0 1px 4px rgba(0,0,0,0.12)",
-        cursor: "copy",
-      }}
-    >
-      {(hovered || copyStatus !== "idle") && tooltipPosition && createPortal(
-        <span
-          data-export-hide="1"
-          role="status"
-          style={{
-            position: "fixed",
-            left: tooltipPosition.left,
-            top: tooltipPosition.top,
-            transform: "translate(-50%, -100%)",
-            padding: "5px 8px",
-            border: `1px solid ${theme.toolbarBorder}`,
-            borderRadius: 6,
-            background: theme.toolbarBg,
-            color: theme.textPrimary,
-            boxShadow: "0 4px 12px rgba(0,0,0,0.16)",
-            fontFamily: "'JetBrains Mono', monospace",
-            fontSize: 9,
-            fontWeight: 600,
-            lineHeight: 1,
-            whiteSpace: "nowrap",
-            pointerEvents: "none",
-            zIndex: 1000,
-          }}
-        >
-          {overlayText}
-          <span aria-hidden="true" style={{
-            position: "absolute",
-            left: "50%",
-            bottom: -4,
-            width: 7,
-            height: 7,
-            transform: "translateX(-50%) rotate(45deg)",
-            borderRight: `1px solid ${theme.toolbarBorder}`,
-            borderBottom: `1px solid ${theme.toolbarBorder}`,
-            background: theme.toolbarBg,
-          }} />
-        </span>,
-        document.body,
-      )}
-    </button>
-  );
+.sker-root button,
+.sker-root input,
+.sker-dialog button,
+.sker-dialog input {
+  font: inherit;
 }
 
-function ColorLegend({ entries, descriptions, onDescriptionChange, theme, legendRef }) {
-  return (
-    <div
-      ref={legendRef}
-      data-color-legend="1"
-      data-canvas-wheel-ignore="1"
-      onMouseDown={(event) => event.stopPropagation()}
-      onContextMenu={(event) => event.stopPropagation()}
-      style={{
-        position: "absolute",
-        top: 64,
-        right: 12,
-        width: 226,
-        maxHeight: "calc(100% - 188px)",
-        display: "flex",
-        flexDirection: "column",
-        overflow: "hidden",
-        border: `1px solid ${theme.toolbarBorder}`,
-        borderRadius: 10,
-        background: theme.legendBg,
-        boxShadow: "0 8px 22px rgba(0,0,0,0.12)",
-        backdropFilter: "blur(14px)",
-        WebkitBackdropFilter: "blur(14px)",
-        color: theme.textPrimary,
-        fontFamily: "'DM Sans', sans-serif",
-        zIndex: 19,
-      }}
-    >
-      <div
-        data-color-legend-items="1"
-        style={{
-          flex: 1,
-          minHeight: 0,
-          overflowY: "auto",
-          padding: 8,
-          display: "flex",
-          flexDirection: "column",
-          gap: 6,
-        }}
-      >
-        {entries.length === 0 ? (
-          <div style={{ padding: "16px 8px", color: theme.textMuted, fontSize: 11, lineHeight: 1.5, textAlign: "center" }}>
-            Table colours will appear here once the diagram contains tables.
-          </div>
-        ) : entries.map((entry) => (
-          <div key={entry.color} style={{ display: "flex", alignItems: "center", gap: 7 }}>
-            <LegendColorSwatch color={entry.color} theme={theme} />
-            <input
-              type="text"
-              value={descriptions[entry.color] || ""}
-              onChange={(event) => onDescriptionChange(entry.color, event.target.value)}
-              placeholder="Add description…"
-              aria-label={`Description for ${entry.color}`}
-              style={{
-                minWidth: 0,
-                flex: 1,
-                height: 32,
-                boxSizing: "border-box",
-                border: `1px solid ${theme.toolbarBorder}`,
-                borderRadius: 8,
-                outline: "none",
-                padding: "0 9px",
-                background: theme.editorPanelBg,
-                color: theme.textPrimary,
-                fontFamily: "'DM Sans', sans-serif",
-                fontSize: 11.5,
-              }}
-            />
-          </div>
-        ))}
-      </div>
-    </div>
-  );
+.sker-root button,
+.sker-dialog button {
+  touch-action: manipulation;
 }
 
-function BottomGroupPane({ groupsVisible, onToggle, showAllConnections, onToggleConnections, legendVisible, onToggleLegend, theme }) {
-  const divider = (
-    <div style={{ width: 1, height: 18, background: theme.toolbarBorder, flexShrink: 0 }} />
-  );
-  return (
-    <div data-export-hide="1" onMouseDown={(e) => e.stopPropagation()} style={{
-      position: "absolute",
-      bottom: 12,
-      left: "50%",
-      transform: "translateX(-50%)",
-      display: "flex",
-      alignItems: "center",
-      gap: "10px",
-      background: theme.toolbarBg,
-      border: `1px solid ${theme.toolbarBorder}`,
-      borderRadius: "10px",
-      padding: "8px 16px",
-      zIndex: 20,
-      boxShadow: "0 4px 16px rgba(0,0,0,0.08)",
-      fontFamily: "'DM Sans', sans-serif",
-      fontSize: "12px",
-      color: theme.toolbarText,
-      fontWeight: 500,
-      userSelect: "none",
-    }}>
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="2" y="2" width="9" height="9" rx="1.5"/>
-        <rect x="13" y="2" width="9" height="9" rx="1.5"/>
-        <rect x="2" y="13" width="9" height="9" rx="1.5"/>
-        <rect x="13" y="13" width="9" height="9" rx="1.5"/>
-      </svg>
-      <span>Table Groups</span>
-      <ToggleSwitch checked={groupsVisible} onChange={onToggle} theme={theme} />
-      {divider}
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={showAllConnections ? "#10b981" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <path d="M10 13a5 5 0 0 0 7.54.54l3-3a5 5 0 0 0-7.07-7.07l-1.72 1.71"/>
-        <path d="M14 11a5 5 0 0 0-7.54-.54l-3 3a5 5 0 0 0 7.07 7.07l1.71-1.71"/>
-      </svg>
-      <span style={{ color: showAllConnections ? "#10b981" : undefined }}>Highlight Links</span>
-      <ToggleSwitch checked={showAllConnections} onChange={onToggleConnections} theme={theme} />
-      {divider}
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke={legendVisible ? "#10b981" : "currentColor"} strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-        <rect x="3" y="4" width="5" height="5" rx="1" fill={legendVisible ? "#10b981" : "none"}/>
-        <path d="M11 6.5h10M3 14h5v5H3zM11 16.5h10"/>
-      </svg>
-      <span style={{ color: legendVisible ? "#10b981" : undefined }}>Colour Legend</span>
-      <ToggleSwitch checked={legendVisible} onChange={onToggleLegend} theme={theme} />
-    </div>
-  );
+.sker-root :focus-visible,
+.sker-dialog :focus-visible {
+  outline: 2px solid #10b981;
+  outline-offset: 3px;
 }
 
-
-const STORAGE_KEY = "sketcher-state";
-
-function loadInitialState() {
-  const fromHash = decodeShareHash(window.location.hash);
-  if (fromHash) return fromHash;
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    return raw ? JSON.parse(raw) : null;
-  } catch { return null; }
+.sker-root input:not([type="color"]):not([type="range"]):not([type="checkbox"]),
+.sker-dialog input:not([type="color"]):not([type="range"]):not([type="checkbox"]) {
+  min-width: 0;
+  width: 100%;
+  padding: 7px 9px;
+  border: 1px solid var(--sker-border);
+  border-radius: 6px;
+  color: var(--sker-text);
+  background: var(--sker-editor);
 }
+
+.sker-button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  min-height: 32px;
+  padding: 6px 10px;
+  border: 1px solid var(--sker-border);
+  border-radius: 7px;
+  color: var(--sker-secondary);
+  background: var(--sker-panel);
+  cursor: pointer;
+  white-space: nowrap;
+}
+
+.sker-button:hover:not(:disabled) {
+  background: var(--sker-soft);
+}
+
+.sker-button:disabled {
+  opacity: .55;
+  cursor: not-allowed;
+}
+
+.sker-primary {
+  color: white;
+  background: #047857;
+  border-color: #047857;
+}
+
+.sker-primary:hover:not(:disabled) {
+  background: #065f46;
+}
+
+.sker-inline {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.sker-between { justify-content: space-between; }
+.sker-grow { flex: 1; min-width: 0; }
+.sker-stack { display: flex; flex-direction: column; gap: 10px; }
+.sker-muted { color: var(--sker-muted); font-size: 11px; line-height: 1.5; }
+.sker-truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+.sker-editor {
+  flex-shrink: 0;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  overflow: hidden;
+  background: var(--sker-editor);
+  border-right: 1px solid var(--sker-border);
+}
+
+.sker-editor-header {
+  padding: 14px;
+  border-bottom: 1px solid var(--sker-border);
+}
+
+.sker-logo { font-size: 18px; letter-spacing: .2px; }
+.sker-logo span { color: #10b981; }
+
+.sker-editor-content { flex: 1; min-height: 0; overflow: hidden; }
+.sker-editor-stats { padding: 8px 14px; border-bottom: 1px solid var(--sker-border); }
+.sker-editor-footer { padding: 10px 14px; border-top: 1px solid var(--sker-border); }
+.sker-editor-footer a { color: #059669; }
+
+.sker-palette { padding: 10px 14px; border-bottom: 1px solid var(--sker-border); }
+.sker-color-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.sker-color-dot {
+  width: 23px;
+  height: 23px;
+  padding: 0;
+  border: 2px solid transparent;
+  border-radius: 50%;
+  cursor: pointer;
+}
+.sker-color-dot.is-selected { outline: 2px solid var(--sker-text); outline-offset: 1px; }
+
+.sker-color-picker {
+  position: relative;
+  display: inline-flex;
+  width: 28px;
+  height: 28px;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--sker-border);
+  border-radius: 50%;
+  background: conic-gradient(#f87171,#fbbf24,#34d399,#22d3ee,#818cf8,#f472b6,#f87171);
+  cursor: pointer;
+}
+.sker-color-picker span { color: white; }
+.sker-color-picker input {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  opacity: 0;
+  cursor: pointer;
+}
+.sker-color-picker:focus-within { outline: 2px solid #10b981; outline-offset: 3px; }
+
+.sker-resizer {
+  flex-shrink: 0;
+  width: 5px;
+  cursor: col-resize;
+  touch-action: none;
+}
+.sker-resizer:hover,
+.sker-resizer:focus { background: #10b98180; }
+
+.sker-canvas {
+  position: relative;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  touch-action: none;
+  overscroll-behavior: none;
+}
+
+.sker-topbar {
+  position: absolute;
+  top: 12px;
+  left: 12px;
+  right: 12px;
+  z-index: 30;
+  display: flex;
+  flex-wrap: wrap;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 8px;
+  pointer-events: none;
+}
+.sker-topbar > * { pointer-events: auto; }
+.sker-toolbar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
+.sker-filename { max-width: min(230px, 65vw); }
+
+.sker-popover-container { position: relative; }
+.sker-popover {
+  position: absolute;
+  top: calc(100% + 8px);
+  width: min(280px, calc(100vw - 30px));
+  padding: 12px;
+  border: 1px solid var(--sker-border);
+  border-radius: 10px;
+  background: var(--sker-panel);
+  color: var(--sker-text);
+  box-shadow: 0 10px 30px #0003;
+  z-index: 60;
+}
+.sker-popover-right { right: 0; }
+.sker-popover-left { left: 0; }
+.sker-popover input[type="range"] { width: 100%; accent-color: #10b981; }
+
+.sker-collapse-button {
+  width: 22px;
+  height: 22px;
+  flex-shrink: 0;
+  border: 0;
+  border-radius: 5px;
+  background: #0003;
+  color: white;
+  cursor: pointer;
+}
+
+.sker-line-handle:focus { stroke: #10b98166; }
+.sker-group-handle:focus { stroke: #10b981; stroke-width: 2; }
+
+.sker-bottom-controls {
+  position: absolute;
+  z-index: 25;
+  left: 12px;
+  bottom: 12px;
+  max-width: calc(100% - 196px);
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--sker-border);
+  border-radius: 9px;
+  background: var(--sker-panel);
+}
+
+.sker-toggle-label { display: inline-flex; align-items: center; gap: 7px; cursor: pointer; }
+.sker-toggle-input { position: absolute; width: 1px; height: 1px; opacity: 0; }
+.sker-toggle-track {
+  width: 32px;
+  height: 18px;
+  flex-shrink: 0;
+  border-radius: 9px;
+  background: var(--sker-border);
+  position: relative;
+}
+.sker-toggle-track span {
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: white;
+  transition: transform .15s;
+}
+.sker-toggle-input:checked + .sker-toggle-track { background: #047857; }
+.sker-toggle-input:checked + .sker-toggle-track span { transform: translateX(14px); }
+.sker-toggle-input:focus-visible + .sker-toggle-track { outline: 2px solid #10b981; outline-offset: 3px; }
+
+.sker-minimap {
+  position: absolute;
+  z-index: 24;
+  bottom: 12px;
+  right: 12px;
+  width: 162px;
+  height: 102px;
+  overflow: hidden;
+  border: 1px solid var(--sker-border);
+  border-radius: 8px;
+}
+
+.sker-legend {
+  position: absolute;
+  right: 12px;
+  top: var(--sker-chrome-top, 64px);
+  z-index: 22;
+  width: min(226px, calc(100% - 24px));
+  max-height: calc(100% - var(--sker-chrome-top, 64px) - 126px);
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--sker-border);
+  border-radius: 10px;
+  overflow: hidden;
+  box-shadow: 0 8px 22px #0002;
+}
+.sker-small-heading { font-size: 12px; padding: 10px; margin: 0; }
+.sker-legend-items { display: flex; flex-direction: column; gap: 7px; padding: 8px; min-height: 0; overflow: auto; }
+.sker-legend-swatch { width: 34px; height: 32px; border: 1px solid var(--sker-border); border-radius: 7px; flex-shrink: 0; cursor: copy; }
+
+.sker-empty {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 30px;
+  text-align: center;
+  color: var(--sker-muted);
+  pointer-events: none;
+}
+
+.sker-notice {
+  position: absolute;
+  z-index: 50;
+  left: 12px;
+  top: var(--sker-chrome-top, 64px);
+  max-width: min(460px, calc(100% - 24px));
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 9px 12px;
+  border: 1px solid #10b981;
+  border-radius: 8px;
+  background: var(--sker-panel);
+  box-shadow: 0 4px 16px #0002;
+}
+.sker-notice-error { border-color: #ef4444; }
+
+.sker-context {
+  position: fixed;
+  z-index: 100;
+  width: min(290px, calc(100vw - 16px));
+  max-height: calc(100dvh - 16px);
+  overflow: auto;
+  padding: 12px;
+  border: 1px solid var(--sker-border);
+  border-radius: 10px;
+  background: var(--sker-panel);
+  color: var(--sker-text);
+  box-shadow: 0 12px 34px #0004;
+}
+
+.sker-dialog-backdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 1000;
+  padding: 20px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: #0009;
+  backdrop-filter: blur(4px);
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 12px;
+  color: var(--sker-text);
+}
+.sker-dialog {
+  width: min(440px, 100%);
+  max-height: calc(100dvh - 40px);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+  border: 1px solid var(--sker-border);
+  border-radius: 14px;
+  background: var(--sker-panel);
+  box-shadow: 0 24px 70px #0006;
+}
+.sker-dialog-wide { width: min(800px, 100%); }
+.sker-dialog-header { padding: 14px 18px; display: flex; align-items: center; justify-content: space-between; gap: 12px; border-bottom: 1px solid var(--sker-border); }
+.sker-dialog-header h2 { margin: 0; font-size: 16px; }
+.sker-dialog-content { padding: 18px; overflow: auto; overscroll-behavior: contain; line-height: 1.65; }
+.sker-dialog pre { padding: 12px; border: 1px solid var(--sker-border); border-radius: 7px; overflow: auto; background: var(--sker-editor); font-size: 11px; }
+.sker-dialog section { scroll-margin-top: 12px; margin-bottom: 28px; }
+.sker-help-nav { display: flex; flex-wrap: wrap; gap: 12px; }
+.sker-help-nav a { color: #059669; }
+.sker-qr-panel { display: flex; justify-content: center; align-items: center; min-height: 320px; padding: 10px; background: white; color: #374151; border-radius: 10px; margin: 14px 0; text-align: center; }
+.sker-qr-panel img { display: block; max-width: 100%; height: auto; }
+.sker-warning { padding: 10px; border: 1px solid #f59e0b88; border-radius: 7px; background: #f59e0b15; }
+
+.sker-editor-glow-line { background: #10b98128; }
+
+.sker-sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  padding: 0;
+  margin: -1px;
+  overflow: hidden;
+  clip: rect(0,0,0,0);
+  white-space: nowrap;
+  border: 0;
+}
+
+@media (max-width: 760px) {
+  .sker-editor { position: absolute; z-index: 80; top: 0; bottom: 0; left: 0; max-width: 92vw; box-shadow: 8px 0 30px #0003; }
+  .sker-resizer { display: none; }
+  .sker-minimap { display: none; }
+  .sker-bottom-controls { max-width: calc(100% - 24px); gap: 8px; }
+  .sker-toolbar { justify-content: flex-start; }
+  .sker-legend { max-height: calc(100% - var(--sker-chrome-top, 64px) - 100px); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .sker-root *, .sker-dialog * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+}
+`;
+
+/* -------------------------------------------------------------------------- */
+/* Main application                                                           */
+/* -------------------------------------------------------------------------- */
 
 export default function SketchER() {
-  const saved = useRef(loadInitialState()).current;
-
-  const [isDark, setIsDark] = useState(saved?.isDark ?? false);
-  const theme = isDark ? DARK_THEME : LIGHT_THEME;
-
-  const [fileName, setFileName] = useState(saved?.fileName ?? "Untitled");
-  const [editingFileName, setEditingFileName] = useState(false);
-  const fileNameInputRef = useRef(null);
-  const pendingFitRef = useRef(false);
-  const hasFittedRef = useRef(false);
-
-  const [dbml, setDbml] = useState(saved?.dbml ?? DEFAULT_DBML);
-  const [tablePositions, setTablePositions] = useState(saved?.tablePositions ?? {});
-  const [tableColors, setTableColors] = useState(saved?.tableColors ?? {});
-  const [groupColors, setGroupColors] = useState(saved?.groupColors ?? {});
-  const [recentColors, setRecentColors] = useState(
-    () => Array.isArray(saved?.recentColors) ? saved.recentColors.slice(0, 12) : []
+  const [state, dispatch] = useReducer(
+    documentReducer,
+    undefined,
+    initializeApplication,
   );
-  const recentHistoryTimerRef = useRef(null);
-  const pendingRecentColorsRef = useRef([]);
-  const [collapsedTables, setCollapsedTables] = useState(
-    () => new Set(Array.isArray(saved?.collapsedTables) ? saved.collapsedTables : [])
-  );
-  const [selectedTables, setSelectedTables] = useState(new Set());
-  const selectedTablesRef = useRef(selectedTables);
-  const [selectedGroupName, setSelectedGroupName] = useState(null);
-  const [tableGroupMenu, setTableGroupMenu] = useState(null);
-  const [newTableGroupName, setNewTableGroupName] = useState("");
-  const [hoveredTable, setHoveredTable] = useState(null);
-  const [dragging, setDragging] = useState(null);
-  const [draggingLine, setDraggingLine] = useState(null); // { pathKey, startClientX, startMidX }
-  const [lineMidXOverrides, setLineMidXOverrides] = useState(saved?.lineMidXOverrides ?? {});
-  const [groupsVisible, setGroupsVisible] = useState(saved?.groupsVisible ?? false);
-  const [colorLegendVisible, setColorLegendVisible] = useState(saved?.colorLegendVisible ?? false);
-  const [colorLegendDescriptions, setColorLegendDescriptions] = useState(
-    () => saved?.colorLegendDescriptions && typeof saved.colorLegendDescriptions === "object"
-      ? saved.colorLegendDescriptions
-      : {}
-  );
-  const [draggingGroup, setDraggingGroup] = useState(null);
-  const [showHelp, setShowHelp] = useState(false); // { memberTables, startClientX, startClientY, startPositions }
-  const [canvasOffset, setCanvasOffset] = useState({ x: 0, y: 0 });
-  const [isPanning, setIsPanning] = useState(false);
-  const [panStart, setPanStart] = useState(null);
-  const [zoom, setZoom] = useState(1);
-  const zoomRef = useRef(zoom);
-  const canvasOffsetRef = useRef(canvasOffset);
-  const [editorWidth, setEditorWidth] = useState(470);
-  const [isEditorCollapsed, setIsEditorCollapsed] = useState(saved?.isEditorCollapsed ?? false);
-  const [isResizing, setIsResizing] = useState(false);
+
+  const { data, model } = state;
+  const theme = data.isDark ? DARK_THEME : LIGHT_THEME;
+  const reducedMotion = useReducedMotion();
+
+  const rootRef = useRef(null);
   const canvasRef = useRef(null);
-  const transformRef = useRef(null);
-  const colorLegendRef = useRef(null);
-  const [canvasSize, setCanvasSize] = useState({ w: 0, h: 0 });
-  const [showAllConnections, setShowAllConnections] = useState(false);
-  const [isAutoLayoutRunning, setIsAutoLayoutRunning] = useState(false);
-  const [showSettings, setShowSettings] = useState(false);
-  const settingsRef = useRef(null);
-  const [jumpToTableOnClick, setJumpToTableOnClick] = useState(saved?.jumpToTableOnClick ?? false);
-  const [reverseConnectionFlow, setReverseConnectionFlow] = useState(saved?.reverseConnectionFlow ?? false);
+  const sceneRef = useRef(null);
+  const legendRef = useRef(null);
+  const topbarRef = useRef(null);
+  const loadInputRef = useRef(null);
+  const shareTriggerRef = useRef(null);
+  const helpTriggerRef = useRef(null);
+  const editorPanelRef = useRef(null);
+
+  const editorRef = useRef(null);
+  const monacoRef = useRef(null);
   const glowTimerRef = useRef(null);
   const glowDecorationsRef = useRef([]);
-  const monacoEditorRef = useRef(null);
-  const monacoRef = useRef(null);
+
+  const mountedRef = useRef(true);
+  const layoutRequestRef = useRef(0);
+  const loadRequestRef = useRef(0);
+  const copyRequestRef = useRef(0);
+  const copyTimerRef = useRef(null);
+  const recentTimerRef = useRef(null);
+  const pendingRecentRef = useRef([]);
+
   const [editorMounted, setEditorMounted] = useState(false);
-
-  useEffect(() => { zoomRef.current = zoom; }, [zoom]);
-  useEffect(() => { canvasOffsetRef.current = canvasOffset; }, [canvasOffset]);
-
-  const deferredDbml = useDeferredValue(dbml);
-  const parseResult = useMemo(() => parseDBMLDocument(deferredDbml), [deferredDbml]);
-  const lastValidModelRef = useRef(parseResult.model || EMPTY_DBML_MODEL);
-  if (parseResult.model) lastValidModelRef.current = parseResult.model;
-  const { tables, refs, groups, enums } = parseResult.model || lastValidModelRef.current;
-  const parseErrors = parseResult.errors;
-  const parseWarnings = parseResult.warnings || [];
-  const relationshipCount = useMemo(() => new Set(refs.map((ref) => ref.id.split(":")[0])).size, [refs]);
-  const previousTablesRef = useRef(tables);
-  const colorLegendEntries = useMemo(
-    () => buildColorLegendEntries(tables, tableColors),
-    [tables, tableColors],
+  const [layoutRunning, setLayoutRunning] = useState(false);
+  const [exportRunning, setExportRunning] = useState(false);
+  const [loadRunning, setLoadRunning] = useState(false);
+  const [copyStatus, setCopyStatus] = useState("idle");
+  const [dialog, setDialog] = useState(null);
+  const [notice, setNotice] = useState(() =>
+    state.startupWarnings.length
+      ? { text: state.startupWarnings.join(" "), kind: "error" }
+      : null,
   );
 
-  const handleLegendDescriptionChange = useCallback((color, description) => {
-    setColorLegendDescriptions((previous) => {
-      const next = { ...previous };
-      if (description) next[color] = description;
-      else delete next[color];
-      return next;
-    });
-  }, []);
+  const [contextMenu, setContextMenu] = useState(null);
+  const [newGroupName, setNewGroupName] = useState("");
+  const contextRef = useRef(null);
 
-  // Which columns to highlight per table when a table is hovered
-  const activeColumns = useMemo(() => {
-    if (!hoveredTable) return {};
-    const map = {};
+  const [editingName, setEditingName] = useState(false);
+  const [nameDraft, setNameDraft] = useState(data.fileName);
+  const nameInputRef = useRef(null);
+
+  const [viewport, setViewport] = useState(
+    () => data.viewport || { zoom: 1, offset: { x: 0, y: 0 } },
+  );
+
+  const [fitRequest, setFitRequest] = useState(() => data.viewport ? 0 : 1);
+  const handledFitRef = useRef(0);
+
+  const canvasSize = useElementSize(canvasRef);
+  const topbarSize = useElementSize(topbarRef);
+
+  const stateRef = useLatest(state);
+  const viewportRef = useLatest(viewport);
+  const canvasSizeRef = useLatest(canvasSize);
+  const dialogRef = useLatest(dialog);
+
+  const tables = modelTables(model);
+  const groups = modelGroups(model);
+
+  const refs = useMemo(
+    () => identifyRelationships(model, data.tableIds),
+    [model, data.tableIds],
+  );
+
+  const refsRef = useLatest(refs);
+
+  const tablesByName = useMemo(
+    () => new Map(tables.map((table) => [table.name, table])),
+    [tables],
+  );
+
+  const relationshipColumns = useMemo(() => {
+    const map = new Map();
+
     for (const ref of refs) {
-      if (ref.from.table === hoveredTable || ref.to.table === hoveredTable) {
-        if (!map[ref.from.table]) map[ref.from.table] = new Set();
-        for (const column of ref.from.columns || [ref.from.column]) map[ref.from.table].add(column);
-        if (!map[ref.to.table]) map[ref.to.table] = new Set();
-        for (const column of ref.to.columns || [ref.to.column]) map[ref.to.table].add(column);
+      for (const endpoint of [ref.from, ref.to]) {
+        if (!map.has(endpoint.table)) map.set(endpoint.table, new Set());
+
+        for (const column of endpoint.columns || [endpoint.column]) {
+          map.get(endpoint.table).add(column);
+        }
       }
     }
-    return map;
-  }, [hoveredTable, refs]);
 
-  // Tables connected to the hovered table (for dimming)
-  const connectedToHovered = useMemo(() => {
-    if (!hoveredTable) return null;
-    const connected = new Set([hoveredTable]);
-    for (const ref of refs) {
-      if (ref.from.table === hoveredTable) connected.add(ref.to.table);
-      if (ref.to.table === hoveredTable) connected.add(ref.from.table);
-    }
-    return connected;
-  }, [hoveredTable, refs]);
-
-  // Columns participating in a relationship. This includes both ends because
-  // one-to-one and many-to-many DBML relationships do not always have one FK side.
-  const fkMap = useMemo(() => {
-    const map = {};
-    for (const ref of refs) {
-      if (!map[ref.from.table]) map[ref.from.table] = new Set();
-      for (const column of ref.from.columns || [ref.from.column]) map[ref.from.table].add(column);
-      if (!map[ref.to.table]) map[ref.to.table] = new Set();
-      for (const column of ref.to.columns || [ref.to.column]) map[ref.to.table].add(column);
-    }
     return map;
   }, [refs]);
 
-  // Collapsed tables keep primary keys and every relationship endpoint visible.
-  // Geometry consumers use this derived model so lines remain attached to rows.
-  const diagramTables = useMemo(() => tables.map((table) => {
-    if (!collapsedTables.has(table.name)) return { ...table, isCollapsed: false, hiddenColumnCount: 0 };
-    const visibleColumns = table.columns.filter((column) =>
-      column.isPk || fkMap[table.name]?.has(column.name));
-    return {
-      ...table,
-      columns: visibleColumns,
-      isCollapsed: true,
-      hiddenColumnCount: table.columns.length - visibleColumns.length,
-    };
-  }), [tables, fkMap, collapsedTables]);
+  const collapsedSet = useMemo(
+    () => new Set(data.collapsedTables),
+    [data.collapsedTables],
+  );
 
-  const allTablesCollapsed = tables.length > 0
-    && tables.every((table) => collapsedTables.has(table.name));
-
-  const toggleTableCollapsed = useCallback((tableName) => {
-    setCollapsedTables((previous) => {
-      const next = new Set(previous);
-      if (next.has(tableName)) next.delete(tableName);
-      else next.add(tableName);
-      return next;
-    });
-  }, []);
-
-  const toggleAllTablesCollapsed = useCallback(() => {
-    setCollapsedTables(allTablesCollapsed
-      ? new Set()
-      : new Set(tables.map((table) => table.name)));
-  }, [allTablesCollapsed, tables]);
-
-  // Compute per-table widths based on actual text content
-  const tableWidths = useMemo(() => {
-    const cvs = document.createElement("canvas");
-    const ctx = cvs.getContext("2d");
-    const measure = (text, font) => { ctx.font = font; return ctx.measureText(text).width; };
-    const MIN_W = 200;
-    const PAD = 12; // horizontal padding on each side
-
-    const widths = {};
-    for (const table of diagramTables) {
-      // Header: title padding + equal gaps before and after the collapse control.
-      const headerW = measure(table.name, "700 12px 'DM Sans', sans-serif")
-        + PAD * 2
-        + TABLE_HEADER_GAP * 2
-        + TABLE_COLLAPSE_SIZE;
-
-      let maxW = Math.max(MIN_W, Math.ceil(headerW));
-      for (const col of table.columns) {
-        const isFk = fkMap[table.name]?.has(col.name);
-        const iconW = col.isPk || isFk ? 17 : 0; // 11px icon + 6px gap
-        const nameW = measure(col.name, `${col.isPk ? "600" : "400"} 12.5px 'DM Sans', sans-serif`);
-        const typeW = measure(col.type, "400 11px 'JetBrains Mono', monospace");
-        const badgeW = (col.isUnique && !col.isPk ? 20 : 0)
-          + (col.increment ? 16 : 0) + (col.notNull && !col.isPk ? 20 : 0);
-        const rowW = PAD + iconW + nameW + 20 + typeW + badgeW + PAD;
-        maxW = Math.max(maxW, Math.ceil(rowW));
+  const diagramTables = useMemo(
+    () => tables.map((table) => {
+      if (!collapsedSet.has(table.name)) {
+        return { ...table, isCollapsed: false, hiddenColumnCount: 0 };
       }
-      widths[table.name] = maxW;
-    }
-    return widths;
-  }, [diagramTables, fkMap]);
 
-  // Auto-save to localStorage on every meaningful change
+      const columns = table.columns.filter(
+        (column) =>
+          column.isPk ||
+          relationshipColumns.get(table.name)?.has(column.name),
+      );
+
+      return {
+        ...table,
+        columns,
+        isCollapsed: true,
+        hiddenColumnCount: table.columns.length - columns.length,
+      };
+    }),
+    [tables, collapsedSet, relationshipColumns],
+  );
+
+  const diagramTablesByName = useMemo(
+    () => new Map(diagramTables.map((table) => [table.name, table])),
+    [diagramTables],
+  );
+
+  const tableWidths = useTableWidths(diagramTables, relationshipColumns);
+
+  const effectiveColors = useMemo(() => {
+    const colors = dictionary();
+
+    for (const table of tables) {
+      colors[table.name] =
+        data.tableColors[table.name] ||
+        normalizeColor(table.headerColor) ||
+        TABLE_COLORS[
+          stableHash(data.tableIds[table.name] || table.name) % TABLE_COLORS.length
+        ];
+    }
+
+    return colors;
+  }, [tables, data.tableColors, data.tableIds]);
+
+  const legendEntries = useMemo(
+    () => [...new Set(Object.values(effectiveColors))]
+      .sort()
+      .map((color) => ({ color })),
+    [effectiveColors],
+  );
+
+  const activeColumns = useMemo(() => {
+    const map = new Map();
+    if (!state.hoveredTable) return map;
+
+    for (const ref of refs) {
+      if (
+        ref.from.table !== state.hoveredTable &&
+        ref.to.table !== state.hoveredTable
+      ) {
+        continue;
+      }
+
+      for (const endpoint of [ref.from, ref.to]) {
+        if (!map.has(endpoint.table)) map.set(endpoint.table, new Set());
+
+        for (const column of endpoint.columns || [endpoint.column]) {
+          map.get(endpoint.table).add(column);
+        }
+      }
+    }
+
+    return map;
+  }, [refs, state.hoveredTable]);
+
+  const connectedTables = useMemo(() => {
+    if (!state.hoveredTable) return null;
+
+    const connected = new Set([state.hoveredTable]);
+
+    for (const ref of refs) {
+      if (ref.from.table === state.hoveredTable) connected.add(ref.to.table);
+      if (ref.to.table === state.hoveredTable) connected.add(ref.from.table);
+    }
+
+    return connected;
+  }, [refs, state.hoveredTable]);
+
+  const selectedSet = useMemo(
+    () => new Set(state.selectedTables),
+    [state.selectedTables],
+  );
+
+  const allCollapsed =
+    tables.length > 0 && tables.every((table) => collapsedSet.has(table.name));
+
+  const deferredInput = useDeferredValue(
+    useMemo(() => ({ dbml: data.dbml, epoch: state.epoch }), [data.dbml, state.epoch]),
+  );
+
+  const parsedResult = useMemo(
+    () => parseDocument(deferredInput.dbml),
+    [deferredInput],
+  );
+
   useEffect(() => {
-    const timer = setTimeout(() => {
-      try {
-        localStorage.setItem(STORAGE_KEY, JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, fileName, jumpToTableOnClick, reverseConnectionFlow, isEditorCollapsed }));
-      } catch {}
-    }, 400);
-    return () => clearTimeout(timer);
-  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, fileName, jumpToTableOnClick, reverseConnectionFlow, isEditorCollapsed]);
-
-  const [shareCopyStatus, setShareCopyStatus] = useState("idle");
-  const [shareQrUrl, setShareQrUrl] = useState(null);
-  const shareCopyTimerRef = useRef(null);
-  const shareCopyOperationRef = useRef(0);
-  const shareTriggerRef = useRef(null);
-
-  const createShareUrl = useCallback(() => buildShareUrl({
-    dbml,
-    tablePositions,
-    tableColors,
-    groupColors,
-    recentColors,
-    collapsedTables: [...collapsedTables],
-    lineMidXOverrides,
-    groupsVisible,
-    colorLegendVisible,
-    colorLegendDescriptions,
-    fileName,
-    reverseConnectionFlow,
-    isEditorCollapsed,
-  }, window.location), [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, fileName, reverseConnectionFlow, isEditorCollapsed]);
-
-  const copyShareLink = useCallback(async (urlOverride) => {
-    const url = typeof urlOverride === "string" ? urlOverride : createShareUrl();
-    const operationId = ++shareCopyOperationRef.current;
-    if (shareCopyTimerRef.current) {
-      clearTimeout(shareCopyTimerRef.current);
-      shareCopyTimerRef.current = null;
+    if (
+      state.parsedSource === deferredInput.dbml &&
+      state.epoch === deferredInput.epoch
+    ) {
+      return;
     }
-    setShareCopyStatus("idle");
-    try {
-      await copyTextToClipboard(url);
-      if (operationId !== shareCopyOperationRef.current) return;
-      setShareCopyStatus("copied");
-    } catch {
-      if (operationId !== shareCopyOperationRef.current) return;
-      setShareCopyStatus("error");
-    }
-    if (shareCopyTimerRef.current) clearTimeout(shareCopyTimerRef.current);
-    shareCopyTimerRef.current = setTimeout(() => {
-      if (operationId !== shareCopyOperationRef.current) return;
-      setShareCopyStatus("idle");
-      shareCopyTimerRef.current = null;
-    }, 2500);
-  }, [createShareUrl]);
 
-  const showShareQr = useCallback(() => {
-    shareCopyOperationRef.current += 1;
-    if (shareCopyTimerRef.current) {
-      clearTimeout(shareCopyTimerRef.current);
-      shareCopyTimerRef.current = null;
-    }
-    setShareCopyStatus("idle");
-    setShowHelp(false);
-    setShareQrUrl(createShareUrl());
-  }, [createShareUrl]);
+    dispatch({
+      type: "parsed",
+      source: deferredInput.dbml,
+      epoch: deferredInput.epoch,
+      result: parsedResult,
+    });
+  }, [
+    deferredInput,
+    parsedResult,
+    state.parsedSource,
+    state.epoch,
+  ]);
 
-  const closeShareQr = useCallback(() => {
-    setShareQrUrl(null);
-    requestAnimationFrame(() => shareTriggerRef.current?.focus());
+  const snapshot = useMemo(
+    () => ({
+      ...data,
+      version: DOCUMENT_VERSION,
+      viewport,
+    }),
+    [data, viewport],
+  );
+
+  const snapshotRef = useLatest(snapshot);
+  const { status: saveStatus, flush: flushAutosave } = useAutosave(snapshot);
+
+  const notify = useCallback((text, kind = "info") => {
+    setNotice({ text, kind });
   }, []);
 
-  useEffect(() => () => {
-    shareCopyOperationRef.current += 1;
-    if (shareCopyTimerRef.current) clearTimeout(shareCopyTimerRef.current);
+  const patch = useCallback((patchValue, geometry = false) => {
+    dispatch({ type: "patch", patch: patchValue, geometry });
   }, []);
 
-  // Save diagram to a .sker file
-  const saveToFile = useCallback(() => {
-    const blob = new Blob(
-      [JSON.stringify({ dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables: [...collapsedTables], isDark, lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, reverseConnectionFlow, isEditorCollapsed }, null, 2)],
-      { type: "application/json" }
-    );
-    const url = URL.createObjectURL(blob);
-    const link = document.createElement("a");
-    const baseName = fileName === "Untitled" ? "diagram" : fileName;
-    link.download = baseName.endsWith(".sker") ? baseName : `${baseName}.sker`;
-    link.href = url;
-    link.click();
-    URL.revokeObjectURL(url);
-    if (fileName === "Untitled") setFileName("diagram");
-  }, [dbml, tablePositions, tableColors, groupColors, recentColors, collapsedTables, isDark, lineMidXOverrides, groupsVisible, colorLegendVisible, colorLegendDescriptions, fileName, reverseConnectionFlow, isEditorCollapsed]);
+  useEffect(() => {
+    mountedRef.current = true;
 
-  // Load diagram from a .sker / .json file
-  const loadInputRef = useRef(null);
-  const handleLoadFile = useCallback((e) => {
-    const file = e.target.files?.[0];
-    if (!file) return;
-    const reader = new FileReader();
-    reader.onload = (evt) => {
-      try {
-        const state = JSON.parse(evt.target.result);
-        if (state.dbml !== undefined)              setDbml(state.dbml);
-        if (state.tablePositions !== undefined)    setTablePositions(state.tablePositions);
-        if (state.tableColors !== undefined)       setTableColors(state.tableColors);
-        if (state.groupColors !== undefined)       setGroupColors(state.groupColors);
-        if (Array.isArray(state.recentColors))      setRecentColors(state.recentColors.slice(0, 12));
-        setCollapsedTables(new Set(Array.isArray(state.collapsedTables) ? state.collapsedTables : []));
-        if (state.isDark !== undefined)            setIsDark(state.isDark);
-        if (state.lineMidXOverrides !== undefined) setLineMidXOverrides(state.lineMidXOverrides);
-        if (state.groupsVisible !== undefined)     setGroupsVisible(state.groupsVisible);
-        setColorLegendVisible(state.colorLegendVisible ?? false);
-        setColorLegendDescriptions(
-          state.colorLegendDescriptions && typeof state.colorLegendDescriptions === "object"
-            ? state.colorLegendDescriptions
-            : {}
-        );
-        if (state.reverseConnectionFlow !== undefined) setReverseConnectionFlow(state.reverseConnectionFlow);
-        if (state.isEditorCollapsed !== undefined) setIsEditorCollapsed(state.isEditorCollapsed);
-        setFileName(file.name.replace(/\.(sker|json)$/i, ""));
-        pendingFitRef.current = true;
-      } catch {}
+    return () => {
+      mountedRef.current = false;
+      layoutRequestRef.current += 1;
+      loadRequestRef.current += 1;
+      copyRequestRef.current += 1;
+      clearTimeout(copyTimerRef.current);
+      clearTimeout(recentTimerRef.current);
+      clearTimeout(glowTimerRef.current);
     };
-    reader.readAsText(file);
-    e.target.value = "";
   }, []);
 
-  const exportToPng = useCallback(async () => {
-    const sourceScene = transformRef.current;
-    if (!sourceScene || !Object.keys(tablePositions).length) return;
+  useEffect(() => {
+    if (!state.fromShare) return;
 
-    const tableElementMap = new Map(
-      [...sourceScene.querySelectorAll("[data-diagram-table]")]
-        .map((node) => [node.getAttribute("data-diagram-table"), node]),
-    );
-    const htmlNodes = [];
-    const rectangles = [];
-    for (const name of Object.keys(tablePositions)) {
-      const pos = tablePositions[name];
-      const node = tableElementMap.get(name);
-      if (!pos || !node) continue;
-      htmlNodes.push({ node, x: pos.x, y: pos.y });
-      rectangles.push({
-        x: pos.x,
-        y: pos.y,
-        width: node.offsetWidth,
-        height: node.offsetHeight,
-      });
+    try {
+      window.history.replaceState(
+        window.history.state,
+        "",
+        `${window.location.pathname}${window.location.search}`,
+      );
+    } catch {
+      notify(
+        "The shared snapshot opened, but its URL could not be cleared. Reloading may reopen the original snapshot.",
+        "error",
+      );
     }
-
-    const sourceDiagramSvg = sourceScene.querySelector("[data-diagram-svg]");
-    sourceDiagramSvg?.querySelectorAll("[data-export-bounds]").forEach((element) => {
-      try {
-        const bounds = element.getBBox();
-        if (bounds.width > 0 || bounds.height > 0) rectangles.push(bounds);
-      } catch {}
-    });
-    let bounds = calculateExportBounds(rectangles);
-    if (!bounds || !sourceDiagramSvg || htmlNodes.length === 0) return;
-
-    if (colorLegendVisible && colorLegendRef.current) {
-      const legendNode = colorLegendRef.current;
-      const legendItems = legendNode.querySelector("[data-color-legend-items]");
-      const hiddenItemsHeight = legendItems
-        ? Math.max(0, legendItems.scrollHeight - legendItems.clientHeight)
-        : 0;
-      const legendWidth = legendNode.offsetWidth;
-      const legendHeight = legendNode.offsetHeight + hiddenItemsHeight;
-      const legendPlacement = placeRightSideExportNode(bounds, {
-        width: legendWidth,
-        height: legendHeight,
-      });
-      htmlNodes.push({
-        node: legendNode,
-        x: legendPlacement.x,
-        y: legendPlacement.y,
-        width: legendWidth,
-        height: legendHeight,
-        expandForExport: true,
-      });
-      bounds = legendPlacement.bounds;
-    }
-
-    const png = await renderDiagramPng({
-      diagramSvg: sourceDiagramSvg,
-      htmlNodes,
-      bounds,
-      backgroundColor: isDark ? "#1e1e1e" : "#f5f5f5",
-    });
-    downloadPng(png, fileName);
-  }, [tablePositions, isDark, fileName, colorLegendVisible]);
+  }, [state.fromShare, notify]);
 
   useLayoutEffect(() => {
-    const tableRenames = detectTableRenames(previousTablesRef.current, tables);
-    previousTablesRef.current = tables;
-    const validNames = new Set(tables.map((table) => table.name));
+    if (!rootRef.current) return;
 
-    setTablePositions((prev) => {
-      const next = { ...prev };
-      let needsUpdate = false;
-      for (const [oldName, newName] of tableRenames) {
-        if (next[oldName] && !next[newName]) {
-          next[newName] = next[oldName];
-          needsUpdate = true;
-        }
-        if (oldName in next) {
-          delete next[oldName];
-          needsUpdate = true;
-        }
-      }
-      const cols = Math.ceil(Math.sqrt(tables.length));
-      tables.forEach((t, i) => {
-        if (!next[t.name]) {
-          const col = i % cols;
-          const row = Math.floor(i / cols);
-          next[t.name] = { x: 60 + col * (TABLE_WIDTH + 90), y: 60 + row * 290 };
-          needsUpdate = true;
-        }
-      });
-      for (const key of Object.keys(next)) {
-        if (!validNames.has(key)) {
-          delete next[key];
-          needsUpdate = true;
-        }
-      }
-      return needsUpdate ? next : prev;
-    });
-    setTableColors((prev) => {
-      const next = { ...prev };
-      let needsUpdate = false;
-      for (const [oldName, newName] of tableRenames) {
-        if (next[oldName] && !next[newName]) {
-          next[newName] = next[oldName];
-          needsUpdate = true;
-        }
-        if (oldName in next) {
-          delete next[oldName];
-          needsUpdate = true;
-        }
-      }
-      tables.forEach((t, i) => {
-        if (t.headerColor && next[t.name] !== t.headerColor) {
-          next[t.name] = t.headerColor;
-          needsUpdate = true;
-        } else if (!next[t.name]) {
-          next[t.name] = t.headerColor || TABLE_COLORS[i % TABLE_COLORS.length];
-          needsUpdate = true;
-        }
-      });
-      return needsUpdate ? next : prev;
-    });
-    setCollapsedTables((previous) => {
-      const next = new Set([...previous].map((name) => tableRenames.get(name) || name)
-        .filter((name) => validNames.has(name)));
-      const unchanged = next.size === previous.size && [...next].every((name) => previous.has(name));
-      return unchanged ? previous : next;
-    });
+    rootRef.current.inert = Boolean(dialog);
 
-    if (tableRenames.size) {
-      setSelectedTables((previous) => {
-        const next = new Set([...previous].map((name) => tableRenames.get(name) || name)
-          .filter((name) => validNames.has(name)));
-        selectedTablesRef.current = next;
-        return next;
-      });
-      setHoveredTable((previous) => tableRenames.get(previous) || previous);
+    return () => {
+      if (rootRef.current) rootRef.current.inert = false;
+    };
+  }, [dialog]);
+
+  useLayoutEffect(() => {
+    if (editorPanelRef.current) {
+      editorPanelRef.current.inert = data.isEditorCollapsed;
     }
-  }, [tables]);
+  }, [data.isEditorCollapsed]);
 
   useEffect(() => {
-    const el = canvasRef.current;
-    if (!el) return;
-    const obs = new ResizeObserver((entries) => {
-      for (const entry of entries) {
-        setCanvasSize({ w: entry.contentRect.width, h: entry.contentRect.height });
-      }
-    });
-    obs.observe(el);
-    return () => obs.disconnect();
-  }, []);
+    if (editingName) nameInputRef.current?.select();
+  }, [editingName]);
+
+  /* ----------------------------- Viewport -------------------------------- */
+
+  const applyViewport = useCallback((next) => {
+    const value = typeof next === "function" ? next(viewportRef.current) : next;
+
+    const normalized = {
+      zoom: clampZoom(value.zoom),
+      offset: {
+        x: clamp(value.offset.x, -MAX_COORDINATE, MAX_COORDINATE),
+        y: clamp(value.offset.y, -MAX_COORDINATE, MAX_COORDINATE),
+      },
+    };
+
+    viewportRef.current = normalized;
+    setViewport(normalized);
+  }, [viewportRef]);
 
   const setCanvasZoom = useCallback((requestedZoom, focalPoint) => {
-    const focus = focalPoint || {
-      x: canvasSize.w / 2,
-      y: canvasSize.h / 2,
+    const current = viewportRef.current;
+    const size = canvasSizeRef.current;
+
+    const focal = focalPoint || {
+      x: size.width / 2,
+      y: size.height / 2,
     };
-    const nextViewport = zoomCanvasAroundPoint({
-      currentZoom: zoomRef.current,
-      requestedZoom,
-      offset: canvasOffsetRef.current,
-      focalPoint: focus,
+
+    const zoom = clampZoom(requestedZoom);
+    const scale = zoom / current.zoom;
+
+    applyViewport({
+      zoom,
+      offset: {
+        x: focal.x - (focal.x - current.offset.x) * scale,
+        y: focal.y - (focal.y - current.offset.y) * scale,
+      },
     });
-    zoomRef.current = nextViewport.zoom;
-    canvasOffsetRef.current = nextViewport.offset;
-    setZoom(nextViewport.zoom);
-    setCanvasOffset(nextViewport.offset);
-  }, [canvasSize.h, canvasSize.w]);
+  }, [applyViewport, viewportRef, canvasSizeRef]);
 
-  const handleDragStart = useCallback((tableName, clientX, clientY) => {
-    const pos = tablePositions[tableName];
-    if (!pos) return;
-    setDragging({
-      table: tableName,
-      offsetX: clientX / zoom - pos.x - canvasOffset.x / zoom,
-      offsetY: clientY / zoom - pos.y - canvasOffset.y / zoom,
+  const resetView = useCallback(() => {
+    applyViewport({ zoom: 1, offset: { x: 0, y: 0 } });
+  }, [applyViewport]);
+
+  const fitToCanvas = useCallback(() => {
+    const size = canvasSizeRef.current;
+    if (!size.width || !size.height) return;
+
+    const rectangles = diagramTables.flatMap((table) => {
+      const position = data.tablePositions[table.name];
+      if (!position) return [];
+
+      return [{
+        ...position,
+        width: tableWidths[table.name] || TABLE_WIDTH,
+        height: getTableHeight(table),
+      }];
     });
-  }, [tablePositions, zoom, canvasOffset]);
 
-  const handleCanvasMouseDown = (e) => {
-    if (e.button !== 0) return;
-    setIsPanning(true);
-    setPanStart({ x: e.clientX - canvasOffset.x, y: e.clientY - canvasOffset.y });
-    const emptySelection = new Set();
-    selectedTablesRef.current = emptySelection;
-    setSelectedTables(emptySelection);
-    setSelectedGroupName(null);
-  };
+    const svg = sceneRef.current?.querySelector("[data-diagram-svg]");
 
-  const handleLineDragStart = useCallback((pathKey, clientX, currentMidX) => {
-    setDraggingLine({ pathKey, startClientX: clientX, startMidX: currentMidX });
-  }, []);
+    svg?.querySelectorAll("[data-export-bounds]").forEach((element) => {
+      try {
+        const bounds = element.getBBox();
 
-  const handleGroupDragStart = useCallback((groupName, memberTables, clientX, clientY) => {
-    const startPositions = {};
-    for (const name of memberTables) {
-      if (tablePositions[name]) startPositions[name] = { ...tablePositions[name] };
-    }
-    const memberSet = new Set(memberTables);
-    const internalLineMidXs = {};
-    for (const ref of refs) {
-      if (!memberSet.has(ref.from.table) || !memberSet.has(ref.to.table)) continue;
-      const pathKey = getRelationshipPathKey(ref);
-      if (lineMidXOverrides[pathKey] != null) {
-        internalLineMidXs[pathKey] = lineMidXOverrides[pathKey];
-      }
-    }
-    setDraggingGroup({
-      groupName,
-      memberTables,
-      startClientX: clientX,
-      startClientY: clientY,
-      startPositions,
-      internalLineMidXs,
-    });
-  }, [tablePositions, refs, lineMidXOverrides]);
-
-  const handleMouseMove = useCallback((e) => {
-    if (draggingGroup) {
-      const dx = (e.clientX - draggingGroup.startClientX) / zoom;
-      const dy = (e.clientY - draggingGroup.startClientY) / zoom;
-      setTablePositions((prev) => {
-        const next = { ...prev };
-        for (const name of draggingGroup.memberTables) {
-          const start = draggingGroup.startPositions[name];
-          if (start) next[name] = { x: start.x + dx, y: start.y + dy };
+        if (bounds.width || bounds.height) {
+          rectangles.push({
+            x: bounds.x,
+            y: bounds.y,
+            width: bounds.width,
+            height: bounds.height,
+          });
         }
-        return next;
-      });
-      const internalLines = Object.entries(draggingGroup.internalLineMidXs);
-      if (internalLines.length > 0) {
-        setLineMidXOverrides((prev) => {
-          const next = { ...prev };
-          for (const [pathKey, startMidX] of internalLines) {
-            next[pathKey] = startMidX + dx;
-          }
-          return next;
-        });
+      } catch {
+        // Detached or non-rendered SVG nodes have no usable bounding box.
       }
-    } else if (draggingLine) {
-      const dx = (e.clientX - draggingLine.startClientX) / zoom;
-      setLineMidXOverrides((prev) => ({
-        ...prev,
-        [draggingLine.pathKey]: draggingLine.startMidX + dx,
-      }));
-    } else if (dragging) {
-      setTablePositions((prev) => ({
-        ...prev,
-        [dragging.table]: {
-          x: e.clientX / zoom - dragging.offsetX - canvasOffset.x / zoom,
-          y: e.clientY / zoom - dragging.offsetY - canvasOffset.y / zoom,
-        },
-      }));
-    } else if (isPanning && panStart) {
-      const nextOffset = { x: e.clientX - panStart.x, y: e.clientY - panStart.y };
-      canvasOffsetRef.current = nextOffset;
-      setCanvasOffset(nextOffset);
-    } else if (isResizing) {
-      setEditorWidth(Math.max(460, Math.min(600, e.clientX)));
+    });
+
+    const bounds = unionBounds(rectangles, 35);
+    if (!bounds) return;
+
+    const top = Math.min(topbarSize.height + 30, size.height / 2);
+    const bottom = 110;
+    const right =
+      data.colorLegendVisible && size.width > 650 ? 250 : 20;
+
+    const availableWidth = Math.max(1, size.width - right - 20);
+    const availableHeight = Math.max(1, size.height - top - bottom);
+
+    const zoom = clampZoom(Math.min(
+      availableWidth / bounds.width,
+      availableHeight / bounds.height,
+    ));
+
+    applyViewport({
+      zoom,
+      offset: {
+        x: 20 + (availableWidth - bounds.width * zoom) / 2 - bounds.x * zoom,
+        y: top + (availableHeight - bounds.height * zoom) / 2 - bounds.y * zoom,
+      },
+    });
+  }, [
+    applyViewport,
+    canvasSizeRef,
+    diagramTables,
+    data.tablePositions,
+    data.colorLegendVisible,
+    tableWidths,
+    topbarSize.height,
+  ]);
+
+  useLayoutEffect(() => {
+    if (
+      handledFitRef.current === fitRequest ||
+      !canvasSize.width ||
+      !canvasSize.height ||
+      state.parsedSource !== data.dbml
+    ) {
+      return;
     }
-  }, [draggingGroup, draggingLine, dragging, isPanning, panStart, zoom, canvasOffset, isResizing]);
 
-  const handleMouseUp = useCallback(() => {
-    setDragging(null);
-    setDraggingLine(null);
-    setDraggingGroup(null);
-    setIsPanning(false);
-    setPanStart(null);
-    setIsResizing(false);
-  }, []);
+    handledFitRef.current = fitRequest;
+    fitToCanvas();
+  }, [
+    fitRequest,
+    canvasSize,
+    state.parsedSource,
+    data.dbml,
+    fitToCanvas,
+  ]);
 
-  useEffect(() => {
-    window.addEventListener("mousemove", handleMouseMove);
-    window.addEventListener("mouseup", handleMouseUp);
-    return () => {
-      window.removeEventListener("mousemove", handleMouseMove);
-      window.removeEventListener("mouseup", handleMouseUp);
-    };
-  }, [handleMouseMove, handleMouseUp]);
-
-  // Disable selection globally while an interaction crosses table/canvas bounds.
-  useEffect(() => {
-    if (!dragging && !draggingGroup && !draggingLine && !isPanning && !isResizing) return;
-    const previousUserSelect = document.body.style.userSelect;
-    const previousWebkitUserSelect = document.body.style.webkitUserSelect;
-    document.body.style.userSelect = "none";
-    document.body.style.webkitUserSelect = "none";
-    return () => {
-      document.body.style.userSelect = previousUserSelect;
-      document.body.style.webkitUserSelect = previousWebkitUserSelect;
-    };
-  }, [dragging, draggingGroup, draggingLine, isPanning, isResizing]);
-
-  const handleWheel = useCallback((e) => {
-    if (e.target instanceof Element && e.target.closest("[data-canvas-wheel-ignore]")) return;
-    e.preventDefault();
-    const modeScale = e.deltaMode === 1
-      ? 16
-      : e.deltaMode === 2
-      ? Math.max(canvasSize.h, 1)
-      : 1;
-    const deltaX = e.deltaX * modeScale;
-    const deltaY = e.deltaY * modeScale;
-
-    if (e.ctrlKey || e.metaKey) {
-      // Trackpad pinch gestures arrive as Ctrl/Cmd-modified wheel events.
-      // Preserve the world point under the pointer for natural zooming.
-      const rect = canvasRef.current?.getBoundingClientRect();
-      const pointerX = rect ? e.clientX - rect.left : canvasSize.w / 2;
-      const pointerY = rect ? e.clientY - rect.top : canvasSize.h / 2;
-      const currentZoom = zoomRef.current;
-      const nextZoom = clampCanvasZoom(currentZoom * Math.exp(-deltaY * 0.0025));
-      if (nextZoom === currentZoom) return;
-      setCanvasZoom(nextZoom, { x: pointerX, y: pointerY });
-    } else {
-      // Two-finger trackpad scrolling pans in both axes. Shift+wheel is a
-      // horizontal fallback for conventional mice.
-      const panX = e.shiftKey && deltaX === 0 ? deltaY : deltaX;
-      const panY = e.shiftKey && deltaX === 0 ? 0 : deltaY;
-      const currentOffset = canvasOffsetRef.current;
-      const nextOffset = { x: currentOffset.x - panX, y: currentOffset.y - panY };
-      canvasOffsetRef.current = nextOffset;
-      setCanvasOffset(nextOffset);
-    }
-  }, [canvasSize.h, canvasSize.w, setCanvasZoom]);
-
-  // A non-passive native listener is required so trackpad gestures stay in
-  // the canvas instead of scrolling or zooming the browser page.
   useEffect(() => {
     const canvas = canvasRef.current;
     if (!canvas) return undefined;
-    canvas.addEventListener("wheel", handleWheel, { passive: false });
-    return () => canvas.removeEventListener("wheel", handleWheel);
-  }, [handleWheel]);
 
-  const autoLayout = useCallback(async (mode, hierarchyDirection = HIERARCHY_LEAVES_LEFT) => {
-    if (!tables.length || isAutoLayoutRunning) return;
-    setIsAutoLayoutRunning(true);
-    try {
-      const layoutInput = { tables: diagramTables, refs, groups, tableWidths };
-      const newPositions = mode === "smart"
-        ? await buildSmartLayout(layoutInput)
-        : buildHierarchicalLayout({ ...layoutInput, direction: hierarchyDirection });
-      // Manually positioned line corridors belong to the old table geometry.
-      setLineMidXOverrides({});
-      pendingFitRef.current = true;
-      setTablePositions(newPositions);
-    } catch (error) {
-      console.error("Unable to auto-arrange tables", error);
-      // ELK should not leave the control unusable; strict hierarchy is a safe,
-      // deterministic fallback that supports the same table dimensions.
-      const fallbackPositions = buildHierarchicalLayout({
-        tables: diagramTables,
-        refs,
-        tableWidths,
-        direction: hierarchyDirection,
-      });
-      setLineMidXOverrides({});
-      pendingFitRef.current = true;
-      setTablePositions(fallbackPositions);
-    } finally {
-      setIsAutoLayoutRunning(false);
-    }
-  }, [diagramTables, groups, isAutoLayoutRunning, refs, tableWidths, tables.length]);
+    const handleWheel = (event) => {
+      if (dialogRef.current || interactionRef.current) return;
 
-  const resetView = () => {
-    const nextOffset = { x: 0, y: 0 };
-    canvasOffsetRef.current = nextOffset;
-    zoomRef.current = 1;
-    setCanvasOffset(nextOffset);
-    setZoom(1);
-  };
-
-  const fitToCanvas = useCallback(() => {
-    const tableNames = Object.keys(tablePositions);
-    if (tableNames.length === 0 || canvasSize.w === 0) return;
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const name of tableNames) {
-      const pos = tablePositions[name];
-      const td = diagramTables.find((t) => t.name === name);
-      if (!pos || !td) continue;
-      const w = tableWidths[name] || TABLE_WIDTH;
-      const h = getTableHeight(td);
-      minX = Math.min(minX, pos.x); minY = Math.min(minY, pos.y);
-      maxX = Math.max(maxX, pos.x + w); maxY = Math.max(maxY, pos.y + h);
-    }
-    if (!isFinite(minX)) return;
-    const PAD = 60;
-    const contentW = maxX - minX + PAD * 2;
-    const contentH = maxY - minY + PAD * 2;
-    const newZoom = clampCanvasZoom(Math.min(canvasSize.w / contentW, canvasSize.h / contentH));
-    const nextOffset = {
-      x: (canvasSize.w - contentW * newZoom) / 2 - (minX - PAD) * newZoom,
-      y: (canvasSize.h - contentH * newZoom) / 2 - (minY - PAD) * newZoom,
-    };
-    zoomRef.current = newZoom;
-    canvasOffsetRef.current = nextOffset;
-    setZoom(newZoom);
-    setCanvasOffset(nextOffset);
-  }, [tablePositions, diagramTables, tableWidths, canvasSize]);
-
-  // Auto-fit on initial load and after file load
-  useEffect(() => {
-    const hasPositions = Object.keys(tablePositions).length > 0;
-    if (!hasPositions || canvasSize.w === 0) return;
-    if (!hasFittedRef.current || pendingFitRef.current) {
-      hasFittedRef.current = true;
-      pendingFitRef.current = false;
-      fitToCanvas();
-    }
-  }, [tablePositions, canvasSize, fitToCanvas]);
-
-  const addRecentColors = useCallback((colors) => {
-    clearTimeout(recentHistoryTimerRef.current);
-    recentHistoryTimerRef.current = null;
-    pendingRecentColorsRef.current = [];
-    setRecentColors((previous) => {
-      const next = [...colors, ...previous.filter((color) => !colors.includes(color))];
-      return next.slice(0, 12);
-    });
-  }, []);
-
-  const scheduleRecentColors = useCallback((colors) => {
-    pendingRecentColorsRef.current = colors;
-    clearTimeout(recentHistoryTimerRef.current);
-    recentHistoryTimerRef.current = setTimeout(() => {
-      const settledColors = pendingRecentColorsRef.current;
-      pendingRecentColorsRef.current = [];
-      recentHistoryTimerRef.current = null;
-      addRecentColors(settledColors);
-    }, 650);
-  }, [addRecentColors]);
-
-  useEffect(() => () => clearTimeout(recentHistoryTimerRef.current), []);
-
-  const handleColorChange = useCallback((tableName, color, deferHistory = false) => {
-    setTableColors((prev) => ({ ...prev, [tableName]: color }));
-    if (deferHistory) scheduleRecentColors([color]);
-    else addRecentColors([color]);
-  }, [addRecentColors, scheduleRecentColors]);
-
-  const handleTableSelect = useCallback((tableName, isMulti) => {
-    setSelectedGroupName(null);
-    if (isMulti) {
-      const next = new Set(selectedTablesRef.current);
-      if (next.has(tableName)) next.delete(tableName);
-      else next.add(tableName);
-      selectedTablesRef.current = next;
-      setSelectedTables(next);
-    } else {
-      const next = new Set([tableName]);
-      selectedTablesRef.current = next;
-      setSelectedTables(next);
-    }
-    // Jump to table definition in editor + glow highlight
-    if (jumpToTableOnClick && monacoEditorRef.current) {
-      const editor = monacoEditorRef.current;
-      const model = editor.getModel();
-      if (model) {
-        const tableDefinition = tables.find((table) => table.name === tableName);
-        const text = model.getValue();
-        const lines = text.split("\n");
-        const escapedName = tableName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-        const tableLineRegex = new RegExp(`^\\s*Table\\s+${escapedName}(?:\\s+as\\s+\\S+)?(?:\\s*\\[[^\]]*\])?\\s*\\{`, "i");
-        const startLine = tableDefinition?.sourceStartLine
-          ? tableDefinition.sourceStartLine - 1
-          : lines.findIndex((line) => tableLineRegex.test(line));
-        if (startLine !== -1) {
-          const monacoLine = startLine + 1; // Monaco is 1-indexed
-          // Find closing brace
-          let depth = 1;
-          let endLine = startLine;
-          for (let i = startLine + 1; i < lines.length && depth > 0; i++) {
-            for (const ch of lines[i]) {
-              if (ch === "{") depth++;
-              else if (ch === "}") depth--;
-            }
-            endLine = i;
-            if (depth === 0) break;
-          }
-          const monacoEndLine = endLine + 1;
-          // Scroll to and highlight the range
-          editor.revealLineInCenter(monacoLine);
-          // Glow highlight using decorations
-          clearTimeout(glowTimerRef.current);
-          const monaco = monacoRef.current;
-          if (monaco) {
-            const range = new monaco.Range(monacoLine, 1, monacoEndLine, model.getLineMaxColumn(monacoEndLine));
-            glowDecorationsRef.current = editor.deltaDecorations(glowDecorationsRef.current, [
-              { range, options: { isWholeLine: true, className: "editor-glow-line" } },
-            ]);
-            glowTimerRef.current = setTimeout(() => {
-              glowDecorationsRef.current = editor.deltaDecorations(glowDecorationsRef.current, []);
-            }, 1600);
-          }
-        }
+      if (
+        event.target instanceof Element &&
+        event.target.closest("[data-canvas-wheel-ignore]")
+      ) {
+        return;
       }
+
+      event.preventDefault();
+
+      const size = canvasSizeRef.current;
+      const modeScale =
+        event.deltaMode === 1
+          ? 16
+          : event.deltaMode === 2
+            ? Math.max(size.height, 1)
+            : 1;
+
+      const dx = event.deltaX * modeScale;
+      const dy = event.deltaY * modeScale;
+
+      if (event.ctrlKey || event.metaKey) {
+        const bounds = canvas.getBoundingClientRect();
+
+        setCanvasZoom(
+          viewportRef.current.zoom * Math.exp(-dy * 0.0025),
+          {
+            x: event.clientX - bounds.left,
+            y: event.clientY - bounds.top,
+          },
+        );
+      } else {
+        const panX = event.shiftKey && dx === 0 ? dy : dx;
+        const panY = event.shiftKey && dx === 0 ? 0 : dy;
+
+        applyViewport((current) => ({
+          ...current,
+          offset: {
+            x: current.offset.x - panX,
+            y: current.offset.y - panY,
+          },
+        }));
+      }
+    };
+
+    canvas.addEventListener("wheel", handleWheel, { passive: false });
+
+    return () => canvas.removeEventListener("wheel", handleWheel);
+  }, [applyViewport, setCanvasZoom, canvasSizeRef, viewportRef, dialogRef]);
+
+  /* ---------------------------- Interaction ------------------------------ */
+
+  const interactionRef = useRef(null);
+  const pointerFrameRef = useRef(null);
+  const latestPointerRef = useRef(null);
+  const [interactionActive, setInteractionActive] = useState(false);
+
+  const flushPointer = useCallback(() => {
+    pointerFrameRef.current = null;
+
+    const interaction = interactionRef.current;
+    const pointer = latestPointerRef.current;
+    if (!interaction || !pointer) return;
+
+    const dx = pointer.x - interaction.startX;
+    const dy = pointer.y - interaction.startY;
+
+    if (interaction.type === "pan") {
+      applyViewport({
+        zoom: interaction.zoom,
+        offset: {
+          x: interaction.offset.x + dx,
+          y: interaction.offset.y + dy,
+        },
+      });
+    } else if (interaction.type === "tables") {
+      const positions = dictionary();
+
+      for (const [name, start] of Object.entries(interaction.positions)) {
+        positions[name] = {
+          x: start.x + dx / interaction.zoom,
+          y: start.y + dy / interaction.zoom,
+        };
+      }
+
+      const lineOverrides = dictionary();
+
+      for (const [key, start] of Object.entries(interaction.lineOverrides)) {
+        lineOverrides[key] = start + dx / interaction.zoom;
+      }
+
+      dispatch({ type: "positions", positions, lineOverrides });
+    } else if (interaction.type === "line") {
+      dispatch({
+        type: "line",
+        key: interaction.key,
+        x: interaction.x + dx / interaction.zoom,
+      });
+    } else if (interaction.type === "resize") {
+      patch({
+        editorWidth: clamp(
+          interaction.width + dx,
+          280,
+          Math.min(700, Math.max(280, window.innerWidth - 180)),
+        ),
+      });
     }
-  }, [jumpToTableOnClick, tables]);
+  }, [applyViewport, patch]);
 
-  const handleGroupSelect = useCallback((groupName) => {
-    const emptySelection = new Set();
-    selectedTablesRef.current = emptySelection;
-    setSelectedTables(emptySelection);
-    setSelectedGroupName(groupName);
-  }, []);
-
-  const handleTableContextMenu = useCallback((tableName, event) => {
-    setSelectedGroupName(null);
-    const nextSelection = new Set(selectedTablesRef.current);
-    if (event.ctrlKey || event.metaKey) {
-      nextSelection.add(tableName);
-    } else if (!nextSelection.has(tableName)) {
-      nextSelection.clear();
-      nextSelection.add(tableName);
+  const finishInteraction = useCallback((flush = true) => {
+    if (pointerFrameRef.current) {
+      cancelAnimationFrame(pointerFrameRef.current);
+      pointerFrameRef.current = null;
     }
 
-    selectedTablesRef.current = nextSelection;
-    setSelectedTables(nextSelection);
-    setNewTableGroupName(nextTableGroupName(groups));
-    setTableGroupMenu({
-      x: Math.max(8, Math.min(event.clientX, window.innerWidth - 296)),
-      y: Math.max(8, Math.min(event.clientY, window.innerHeight - 350)),
-      targetTableName: tableName,
-      tableNames: [...nextSelection],
-    });
-  }, [groups]);
+    if (flush) flushPointer();
 
-  const tableGroupNameExists = groups.some((group) => group.name === newTableGroupName.trim());
+    const interaction = interactionRef.current;
+    interactionRef.current = null;
+    latestPointerRef.current = null;
+    setInteractionActive(false);
 
-  const createSelectedTableGroup = useCallback((event) => {
-    event.preventDefault();
-    const groupName = newTableGroupName.trim();
-    const memberTables = tableGroupMenu?.tableNames || [];
-    if (!groupName || memberTables.length === 0
-      || groups.some((group) => group.name === groupName)) return;
+    try {
+      if (
+        interaction &&
+        canvasRef.current?.hasPointerCapture(interaction.pointerId)
+      ) {
+        canvasRef.current.releasePointerCapture(interaction.pointerId);
+      }
+    } catch {
+      // Capture may already have been released by the browser.
+    }
+  }, [flushPointer]);
 
-    const groupBlock = [
-      `TableGroup ${formatDbmlPath(groupName)} {`,
-      ...memberTables.map((tableName) => `  ${formatDbmlPath(tableName)}`),
-      "}",
-    ].join("\n");
-    setDbml((current) => `${current.trimEnd()}\n\n${groupBlock}\n`);
-    setGroupsVisible(true);
-    setTableGroupMenu(null);
-  }, [groups, newTableGroupName, tableGroupMenu]);
-
-  const handlePaletteColorClick = useCallback((color, deferHistory = false) => {
-    if (selectedGroupName) {
-      setGroupColors((previous) => ({ ...previous, [selectedGroupName]: color }));
-      if (deferHistory) scheduleRecentColors([color]);
-      else addRecentColors([color]);
+  const startInteraction = useCallback((interaction, event) => {
+    if (
+      event.button !== 0 ||
+      interactionRef.current ||
+      dialogRef.current
+    ) {
       return;
     }
-    const names = [...selectedTables];
-    if (names.length === 0) return;
-    if (names.length === 1) {
-      handleColorChange(names[0], color, deferHistory);
-    } else {
-      const variants = generateHueFamily(color, names.length);
-      setTableColors((prev) => {
-        const next = { ...prev };
-        names.forEach((name, i) => { next[name] = variants[i]; });
-        return next;
-      });
-      if (deferHistory) scheduleRecentColors(variants);
-      else addRecentColors(variants);
+
+    layoutRequestRef.current += 1;
+    setLayoutRunning(false);
+
+    interactionRef.current = {
+      ...interaction,
+      pointerId: event.pointerId,
+      startX: event.clientX,
+      startY: event.clientY,
+      zoom: viewportRef.current.zoom,
+    };
+
+    latestPointerRef.current = {
+      x: event.clientX,
+      y: event.clientY,
+    };
+
+    setInteractionActive(true);
+
+    try {
+      canvasRef.current?.setPointerCapture(event.pointerId);
+    } catch {
+      // Window listeners still complete the interaction if capture is unavailable.
     }
-  }, [addRecentColors, handleColorChange, scheduleRecentColors, selectedGroupName, selectedTables]);
-
-  const handleContextTableColor = useCallback((color, deferHistory = false) => {
-    const tableName = tableGroupMenu?.targetTableName;
-    if (!tableName) return;
-    handleColorChange(tableName, color, deferHistory);
-    if (!deferHistory) setTableGroupMenu(null);
-  }, [handleColorChange, tableGroupMenu]);
+  }, [dialogRef, viewportRef]);
 
   useEffect(() => {
-    const validGroupNames = new Set(groups.map((group) => group.name));
-    setSelectedGroupName((previous) => previous && validGroupNames.has(previous) ? previous : null);
-  }, [groups]);
+    const onMove = (event) => {
+      if (event.pointerId !== interactionRef.current?.pointerId) return;
 
-  // Close settings dropdown on outside click
-  useEffect(() => {
-    if (!showSettings) return;
-    const handler = (e) => {
-      if (settingsRef.current && !settingsRef.current.contains(e.target)) {
-        setShowSettings(false);
+      latestPointerRef.current = { x: event.clientX, y: event.clientY };
+
+      if (!pointerFrameRef.current) {
+        pointerFrameRef.current = requestAnimationFrame(flushPointer);
       }
     };
-    document.addEventListener("mousedown", handler, true);
-    return () => document.removeEventListener("mousedown", handler, true);
-  }, [showSettings]);
 
-  useEffect(() => {
-    if (!tableGroupMenu) return undefined;
-    const closeMenu = () => setTableGroupMenu(null);
-    const handleKeyDown = (event) => {
-      if (event.key === "Escape") closeMenu();
+    const onUp = (event) => {
+      if (event.pointerId !== interactionRef.current?.pointerId) return;
+
+      latestPointerRef.current = { x: event.clientX, y: event.clientY };
+      finishInteraction(true);
     };
-    document.addEventListener("mousedown", closeMenu);
-    document.addEventListener("keydown", handleKeyDown);
+
+    const onCancel = (event) => {
+      if (event.pointerId === interactionRef.current?.pointerId) {
+        finishInteraction(false);
+      }
+    };
+
+    const onBlur = () => finishInteraction(false);
+
+    window.addEventListener("pointermove", onMove);
+    window.addEventListener("pointerup", onUp);
+    window.addEventListener("pointercancel", onCancel);
+    window.addEventListener("blur", onBlur);
+
     return () => {
-      document.removeEventListener("mousedown", closeMenu);
-      document.removeEventListener("keydown", handleKeyDown);
+      window.removeEventListener("pointermove", onMove);
+      window.removeEventListener("pointerup", onUp);
+      window.removeEventListener("pointercancel", onCancel);
+      window.removeEventListener("blur", onBlur);
+
+      if (pointerFrameRef.current) {
+        cancelAnimationFrame(pointerFrameRef.current);
+      }
     };
-  }, [tableGroupMenu]);
+  }, [flushPointer, finishInteraction]);
 
-  // Surface the official parser's precise diagnostics in Monaco. The canvas
-  // intentionally keeps rendering the last valid model while the user types.
   useEffect(() => {
-    const editor = monacoEditorRef.current;
-    const monaco = monacoRef.current;
-    const model = editor?.getModel();
-    if (!editorMounted || !monaco || !model) return;
-    monaco.editor.setModelMarkers(model, "dbml", [
-      ...parseErrors.map((error) => ({ ...error, severity: monaco.MarkerSeverity.Error, source: "DBML" })),
-      ...parseWarnings.map((warning) => ({ ...warning, severity: monaco.MarkerSeverity.Warning, source: "DBML" })),
-    ]);
-  }, [editorMounted, parseErrors, parseWarnings]);
+    if (!interactionActive) return undefined;
 
-  // Monaco Editor mount handler — register DBML language + themes
-  const handleEditorMount = useCallback((editor, monaco) => {
-    monacoEditorRef.current = editor;
-    monacoRef.current = monaco;
-    setEditorMounted(true);
+    const previous = document.body.style.userSelect;
+    document.body.style.userSelect = "none";
 
-    // Register DBML language if not already registered
-    if (!monaco.languages.getLanguages().some((l) => l.id === "dbml")) {
-      monaco.languages.register({ id: "dbml" });
-      monaco.languages.setMonarchTokensProvider("dbml", dbmlMonarchTokensProvider);
+    return () => {
+      document.body.style.userSelect = previous;
+    };
+  }, [interactionActive]);
 
-      // Comment configuration for Ctrl+/
-      monaco.languages.setLanguageConfiguration("dbml", dbmlLanguageConfig);
+  useEffect(() => {
+    finishInteraction(false);
+    setContextMenu(null);
+  }, [model, state.epoch, finishInteraction]);
+
+  const captureTableMove = useCallback((names) => {
+    const current = stateRef.current;
+    const positions = dictionary();
+    const memberSet = new Set(names);
+
+    for (const name of names) {
+      const position = current.data.tablePositions[name];
+      if (position) positions[name] = { ...position };
     }
 
-    // Light theme
-    monaco.editor.defineTheme("dbml-light", {
-      base: "vs",
-      inherit: true,
-      rules: [
-        { token: "keyword", foreground: "d73a49", fontStyle: "bold" },
-        { token: "type", foreground: "005cc5" },
-        { token: "attribute", foreground: "22863a" },
-        { token: "comment", foreground: "6a737d", fontStyle: "italic" },
-        { token: "string", foreground: "032f62" },
-        { token: "number", foreground: "005cc5" },
-        { token: "delimiter.bracket", foreground: "24292e" },
-        { token: "delimiter.square", foreground: "e36209" },
-        { token: "operator", foreground: "d73a49" },
-        { token: "identifier", foreground: "24292e" },
-      ],
-      colors: {
-        "editor.background": "#f3f3f3",
-        "editor.foreground": "#1e1e1e",
-        "editor.lineHighlightBackground": "#e8e8e8",
-        "editorLineNumber.foreground": "#c0c0c0",
-        "editorCursor.foreground": "#1e1e1e",
-        "editor.selectionBackground": "#10b98130",
-        "editor.findMatchBackground": "#10b98140",
-        "editor.findMatchHighlightBackground": "#10b98120",
-      },
-    });
+    const lineOverrides = dictionary();
 
-    // Dark theme
-    monaco.editor.defineTheme("dbml-dark", {
-      base: "vs-dark",
-      inherit: true,
-      rules: [
-        { token: "keyword", foreground: "f97583", fontStyle: "bold" },
-        { token: "type", foreground: "79b8ff" },
-        { token: "attribute", foreground: "85e89d" },
-        { token: "comment", foreground: "6a737d", fontStyle: "italic" },
-        { token: "string", foreground: "9ecbff" },
-        { token: "number", foreground: "79b8ff" },
-        { token: "delimiter.bracket", foreground: "e1e4e8" },
-        { token: "delimiter.square", foreground: "ffab70" },
-        { token: "operator", foreground: "f97583" },
-        { token: "identifier", foreground: "e1e4e8" },
-      ],
-      colors: {
-        "editor.background": "#252526",
-        "editor.foreground": "#d4d4d4",
-        "editor.lineHighlightBackground": "#2a2a2b",
-        "editorLineNumber.foreground": "#555555",
-        "editorCursor.foreground": "#d4d4d4",
-        "editor.selectionBackground": "#10b98130",
-        "editor.findMatchBackground": "#10b98140",
-        "editor.findMatchHighlightBackground": "#10b98120",
-      },
-    });
+    for (const ref of refsRef.current) {
+      if (
+        memberSet.has(ref.from.table) &&
+        memberSet.has(ref.to.table) &&
+        hasOwn(current.data.lineMidXOverrides, ref.routeKey)
+      ) {
+        lineOverrides[ref.routeKey] =
+          current.data.lineMidXOverrides[ref.routeKey];
+      }
+    }
 
-    // Apply the initial theme
-    monaco.editor.setTheme(isDark ? "dbml-dark" : "dbml-light");
-  }, [isDark]);
+    return { positions, lineOverrides };
+  }, [stateRef, refsRef]);
 
-  const selectedGroupIndex = groups.findIndex((group) => group.name === selectedGroupName);
-  const selectedGroup = selectedGroupIndex >= 0 ? groups[selectedGroupIndex] : null;
-  const hasPaletteSelection = selectedTables.size > 0 || Boolean(selectedGroup);
+  const moveTables = useCallback((names, dx, dy) => {
+    layoutRequestRef.current += 1;
+    setLayoutRunning(false);
+
+    const captured = captureTableMove(names);
+    const positions = dictionary();
+    const lineOverrides = dictionary();
+
+    for (const [name, position] of Object.entries(captured.positions)) {
+      positions[name] = { x: position.x + dx, y: position.y + dy };
+    }
+
+    for (const [key, x] of Object.entries(captured.lineOverrides)) {
+      lineOverrides[key] = x + dx;
+    }
+
+    dispatch({ type: "positions", positions, lineOverrides });
+  }, [captureTableMove]);
+
+  const jumpToTable = useCallback((name) => {
+    const current = stateRef.current;
+
+    if (
+      !current.data.jumpToTableOnClick ||
+      current.parsedSource !== current.data.dbml ||
+      !editorRef.current ||
+      !monacoRef.current
+    ) {
+      return;
+    }
+
+    const table = modelTables(current.model).find((item) => item.name === name);
+    const start = table?.sourceStartLine;
+
+    if (!Number.isInteger(start) || start < 1) return;
+
+    const editor = editorRef.current;
+    const editorModel = editor.getModel();
+    if (!editorModel || start > editorModel.getLineCount()) return;
+
+    const candidateEnd =
+      table.sourceEndLine ||
+      table.sourceRange?.endLineNumber ||
+      start;
+
+    const end = clamp(candidateEnd, start, editorModel.getLineCount());
+
+    editor.revealLineInCenter(start);
+    clearTimeout(glowTimerRef.current);
+
+    glowDecorationsRef.current = editor.deltaDecorations(
+      glowDecorationsRef.current,
+      [{
+        range: new monacoRef.current.Range(
+          start,
+          1,
+          end,
+          editorModel.getLineMaxColumn(end),
+        ),
+        options: {
+          isWholeLine: true,
+          className: "sker-editor-glow-line",
+        },
+      }],
+    );
+
+    glowTimerRef.current = setTimeout(() => {
+      if (editorRef.current !== editor) return;
+
+      glowDecorationsRef.current = editor.deltaDecorations(
+        glowDecorationsRef.current,
+        [],
+      );
+    }, reducedMotion ? 800 : 1600);
+  }, [stateRef, reducedMotion]);
+
+  const selectTable = useCallback((name, multi = false) => {
+    const current = stateRef.current;
+    const selected = new Set(multi ? current.selectedTables : []);
+
+    if (multi && selected.has(name)) selected.delete(name);
+    else selected.add(name);
+
+    dispatch({ type: "select", names: [...selected] });
+    jumpToTable(name);
+  }, [stateRef, jumpToTable]);
+
+  const handleTablePointerDown = useCallback((name, event) => {
+    if (event.ctrlKey || event.metaKey) {
+      selectTable(name, true);
+      return;
+    }
+
+    const current = stateRef.current;
+    const names = current.selectedTables.includes(name)
+      ? current.selectedTables
+      : [name];
+
+    dispatch({ type: "select", names });
+    jumpToTable(name);
+
+    startInteraction({
+      type: "tables",
+      ...captureTableMove(names),
+    }, event);
+  }, [stateRef, selectTable, jumpToTable, startInteraction, captureTableMove]);
+
+  const handleCanvasPointerDown = (event) => {
+    if (event.button !== 0) return;
+
+    event.preventDefault();
+    canvasRef.current?.focus({ preventScroll: true });
+
+    dispatch({ type: "select", names: [] });
+    setContextMenu(null);
+
+    startInteraction({
+      type: "pan",
+      offset: { ...viewportRef.current.offset },
+    }, event);
+  };
+
+  /* ---------------------------- Color state ------------------------------ */
+
+  const recordRecentColors = useCallback((colors, deferred = false) => {
+    clearTimeout(recentTimerRef.current);
+    pendingRecentRef.current = [...new Set(colors)];
+
+    const commit = () => {
+      dispatch({ type: "recent-colors", colors: pendingRecentRef.current });
+      pendingRecentRef.current = [];
+      recentTimerRef.current = null;
+    };
+
+    if (deferred) recentTimerRef.current = setTimeout(commit, 650);
+    else commit();
+  }, []);
+
+  const applyPaletteColor = useCallback((colorValue, deferred = false) => {
+    const color = normalizeColor(colorValue);
+    if (!color) return;
+
+    const current = stateRef.current;
+
+    if (current.selectedGroup) {
+      dispatch({ type: "group-color", name: current.selectedGroup, color });
+      recordRecentColors([color], deferred);
+      return;
+    }
+
+    const names = current.selectedTables;
+    if (!names.length) return;
+
+    const variants =
+      names.length === 1 ? [color] : generateHueFamily(color, names.length);
+
+    const colors = dictionary();
+    names.forEach((name, index) => { colors[name] = variants[index]; });
+
+    dispatch({ type: "table-colors", colors });
+    recordRecentColors(variants, deferred);
+  }, [stateRef, recordRecentColors]);
+
+  const selectedGroup = groups.find((group) => group.name === state.selectedGroup);
+
   const selectedPaletteColor = selectedGroup
-    ? groupColors[selectedGroup.name] || selectedGroup.color || GROUP_ACCENT_COLORS[selectedGroupIndex % GROUP_ACCENT_COLORS.length]
-    : selectedTables.size === 1
-    ? tableColors[[...selectedTables][0]]
-    : null;
-  const customColorValue = /^#[0-9a-f]{6}$/i.test(selectedPaletteColor || "")
-    ? selectedPaletteColor
-    : recentColors.find((color) => /^#[0-9a-f]{6}$/i.test(color)) || "#10b981";
-  const contextTargetColor = tableGroupMenu?.targetTableName
-    ? tableColors[tableGroupMenu.targetTableName] || "#10b981"
-    : "#10b981";
+    ? data.groupColors[selectedGroup.name] ||
+      normalizeColor(selectedGroup.color) ||
+      GROUP_COLORS[groups.indexOf(selectedGroup) % GROUP_COLORS.length]
+    : state.selectedTables.length === 1
+      ? effectiveColors[state.selectedTables[0]]
+      : null;
+
+  /* ---------------------------- Context menu ----------------------------- */
+
+  const openContextMenu = useCallback((name, event) => {
+    const current = stateRef.current;
+    const names = new Set(current.selectedTables);
+
+    if (event.ctrlKey || event.metaKey) names.add(name);
+    else if (!names.has(name)) {
+      names.clear();
+      names.add(name);
+    }
+
+    dispatch({ type: "select", names: [...names] });
+    setNewGroupName(nextGroupName(modelGroups(current.model)));
+
+    setContextMenu({
+      target: name,
+      names: [...names],
+      x: clamp(event.clientX, 8, Math.max(8, window.innerWidth - 306)),
+      y: clamp(event.clientY, 8, Math.max(8, window.innerHeight - 390)),
+      epoch: current.epoch,
+    });
+  }, [stateRef]);
+
+  useEffect(() => {
+    if (!contextMenu) return undefined;
+
+    const onPointer = (event) => {
+      if (!contextRef.current?.contains(event.target)) setContextMenu(null);
+    };
+
+    const onKey = (event) => {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        setContextMenu(null);
+        canvasRef.current?.focus();
+      }
+    };
+
+    document.addEventListener("pointerdown", onPointer, true);
+    document.addEventListener("keydown", onKey);
+
+    return () => {
+      document.removeEventListener("pointerdown", onPointer, true);
+      document.removeEventListener("keydown", onKey);
+    };
+  }, [contextMenu]);
+
+  const createGroup = (event) => {
+    event.preventDefault();
+
+    const current = stateRef.current;
+    const name = newGroupName.trim();
+
+    if (
+      !contextMenu ||
+      contextMenu.epoch !== current.epoch ||
+      !name ||
+      modelGroups(current.model).some((group) => group.name === name)
+    ) {
+      return;
+    }
+
+    if (
+      current.parsedSource !== current.data.dbml ||
+      current.errors.length
+    ) {
+      notify("Resolve DBML errors before creating a group.", "error");
+      return;
+    }
+
+    const tableMap = new Map(
+      modelTables(current.model).map((table) => [table.name, table]),
+    );
+
+    const members = contextMenu.names
+      .map((tableName) => tableMap.get(tableName))
+      .filter(Boolean);
+
+    if (!members.length) return;
+
+    const block = [
+      `TableGroup ${formatDbmlIdentifier(name)} {`,
+      ...members.map((table) => `  ${getTableDbmlPath(table, current.data.dbml)}`),
+      "}",
+    ].join("\n");
+
+    const nextDbml = `${current.data.dbml.trimEnd()}\n\n${block}\n`;
+    const result = parseDocument(nextDbml);
+
+    if (!result.model || result.errors.length) {
+      notify(
+        result.errors[0]?.message || "The selected tables could not be grouped.",
+        "error",
+      );
+      return;
+    }
+
+    dispatch({ type: "edit", dbml: nextDbml });
+    patch({ groupsVisible: true });
+    setContextMenu(null);
+  };
+
+  /* ---------------------------- Layout ----------------------------------- */
+
+  const autoLayout = useCallback(async (mode, direction) => {
+    const current = stateRef.current;
+
+    if (
+      !diagramTables.length ||
+      current.parsedSource !== current.data.dbml ||
+      current.errors.length ||
+      interactionRef.current
+    ) {
+      notify("Finish the current edit or interaction before arranging.", "error");
+      return;
+    }
+
+    const request = ++layoutRequestRef.current;
+    const epoch = current.epoch;
+    const revision = current.geometryRevision;
+
+    setLayoutRunning(true);
+
+    const input = {
+      tables: diagramTables,
+      refs,
+      groups,
+      tableWidths,
+    };
+
+    try {
+      let positions;
+
+      try {
+        positions =
+          mode === "smart"
+            ? await buildSmartLayout(input)
+            : buildHierarchicalLayout({ ...input, direction });
+      } catch (error) {
+        if (mode !== "smart") throw error;
+
+        positions = buildHierarchicalLayout({ ...input, direction });
+
+        if (request === layoutRequestRef.current) {
+          notify("Smart layout failed; a hierarchy layout was used instead.");
+        }
+      }
+
+      const latest = stateRef.current;
+
+      if (
+        !mountedRef.current ||
+        request !== layoutRequestRef.current ||
+        latest.epoch !== epoch ||
+        latest.geometryRevision !== revision
+      ) {
+        return;
+      }
+
+      const validated = readRecord(positions, "layout positions", readPosition);
+
+      for (const table of diagramTables) {
+        if (!validated[table.name]) {
+          throw new Error(`Layout did not provide a position for ${table.name}.`);
+        }
+      }
+
+      dispatch({
+        type: "layout",
+        positions: validated,
+        epoch,
+        revision,
+      });
+
+      setFitRequest((value) => value + 1);
+    } catch (error) {
+      if (mountedRef.current && request === layoutRequestRef.current) {
+        notify(errorMessage(error, "Unable to arrange the diagram."), "error");
+      }
+    } finally {
+      if (mountedRef.current && request === layoutRequestRef.current) {
+        setLayoutRunning(false);
+      }
+    }
+  }, [stateRef, diagramTables, refs, groups, tableWidths, notify]);
+
+  /* ---------------------------- Save / open ------------------------------ */
+
+  const saveToFile = useCallback(() => {
+    try {
+      const current = snapshotRef.current;
+      const name = current.fileName === "Untitled" ? "diagram" : current.fileName;
+
+      const safeName = name.replace(/[<>:"/\\|?*\u0000-\u001f]/g, "_");
+      const downloadName = /\.sker$/i.test(safeName)
+        ? safeName
+        : `${safeName}.sker`;
+
+      const blob = new Blob(
+        [JSON.stringify({ ...current, fileName: name }, null, 2)],
+        { type: "application/json" },
+      );
+
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+
+      link.href = url;
+      link.download = downloadName;
+      document.body.appendChild(link);
+      link.click();
+      link.remove();
+
+      setTimeout(() => URL.revokeObjectURL(url), 1000);
+
+      if (current.fileName === "Untitled") patch({ fileName: "diagram" });
+      flushAutosave();
+      notify("Diagram file downloaded.");
+    } catch (error) {
+      notify(errorMessage(error, "Unable to save the diagram."), "error");
+    }
+  }, [snapshotRef, patch, flushAutosave, notify]);
+
+  const loadFile = useCallback(async (event) => {
+    const file = event.target.files?.[0];
+    event.target.value = "";
+
+    if (!file) return;
+
+    const request = ++loadRequestRef.current;
+    setLoadRunning(true);
+
+    try {
+      if (file.size > MAX_FILE_BYTES) {
+        throw new Error("The selected file exceeds the 10 MB size limit.");
+      }
+
+      const text = await file.text();
+
+      if (!mountedRef.current || request !== loadRequestRef.current) return;
+
+      const imported = normalizeDocument(JSON.parse(text), {
+        requireDbml: true,
+      });
+
+      imported.fileName = file.name.replace(/\.(sker|json)$/i, "") || "diagram";
+
+      const parsed = parseDocument(imported.dbml);
+
+      layoutRequestRef.current += 1;
+      setLayoutRunning(false);
+      finishInteraction(false);
+
+      clearTimeout(recentTimerRef.current);
+      pendingRecentRef.current = [];
+
+      dispatch({ type: "open", data: imported, parsed });
+      setContextMenu(null);
+      setEditingName(false);
+      setNameDraft(imported.fileName);
+
+      applyViewport(
+        imported.viewport || { zoom: 1, offset: { x: 0, y: 0 } },
+      );
+
+      if (!imported.viewport) setFitRequest((value) => value + 1);
+
+      notify(
+        parsed.errors.length
+          ? "File opened with DBML errors. Correct them in the editor."
+          : "Diagram opened.",
+        parsed.errors.length ? "error" : "info",
+      );
+    } catch (error) {
+      if (mountedRef.current && request === loadRequestRef.current) {
+        notify(errorMessage(error, "Unable to open the selected file."), "error");
+      }
+    } finally {
+      if (mountedRef.current && request === loadRequestRef.current) {
+        setLoadRunning(false);
+      }
+    }
+  }, [finishInteraction, applyViewport, notify]);
+
+  /* ---------------------------- Sharing ---------------------------------- */
+
+  const createShareUrl = useCallback(() => {
+    const current = snapshotRef.current;
+
+    return buildShareUrl({
+      ...current,
+      version: DOCUMENT_VERSION,
+    }, window.location);
+  }, [snapshotRef]);
+
+  const copyShareLink = useCallback(async (override) => {
+    const request = ++copyRequestRef.current;
+
+    clearTimeout(copyTimerRef.current);
+    setCopyStatus("idle");
+
+    try {
+      const url = typeof override === "string" ? override : createShareUrl();
+      await copyTextToClipboard(url);
+
+      if (!mountedRef.current || request !== copyRequestRef.current) return;
+
+      setCopyStatus("copied");
+    } catch (error) {
+      if (!mountedRef.current || request !== copyRequestRef.current) return;
+
+      setCopyStatus("error");
+      notify(errorMessage(error, "Unable to copy the shareable link."), "error");
+    }
+
+    copyTimerRef.current = setTimeout(() => {
+      if (mountedRef.current && request === copyRequestRef.current) {
+        setCopyStatus("idle");
+      }
+    }, 2500);
+  }, [createShareUrl, notify]);
+
+  const showQr = useCallback(() => {
+    try {
+      const url = createShareUrl();
+
+      finishInteraction(false);
+      setCopyStatus("idle");
+      setDialog({ type: "qr", url });
+    } catch (error) {
+      notify(errorMessage(error, "Unable to create a shareable link."), "error");
+    }
+  }, [createShareUrl, finishInteraction, notify]);
+
+  const closeDialog = useCallback(() => setDialog(null), []);
+
+  /* ---------------------------- PNG export ------------------------------- */
+
+  const exportPng = useCallback(async () => {
+    if (exportRunning) return;
+
+    const scene = sceneRef.current;
+    if (!scene || !diagramTables.length) return;
+
+    setExportRunning(true);
+
+    try {
+      await document.fonts?.ready;
+
+      const elementMap = new Map(
+        [...scene.querySelectorAll("[data-diagram-table]")].map((node) => [
+          node.getAttribute("data-diagram-table"),
+          node,
+        ]),
+      );
+
+      const htmlNodes = [];
+      const rectangles = [];
+
+      for (const table of diagramTables) {
+        const position = data.tablePositions[table.name];
+        const node = elementMap.get(table.name);
+
+        if (!position || !node) continue;
+
+        htmlNodes.push({ node, x: position.x, y: position.y });
+        rectangles.push({
+          x: position.x,
+          y: position.y,
+          width: node.offsetWidth,
+          height: node.offsetHeight,
+        });
+      }
+
+      const diagramSvg = scene.querySelector("[data-diagram-svg]");
+
+      diagramSvg?.querySelectorAll("[data-export-bounds]").forEach((element) => {
+        try {
+          const box = element.getBBox();
+
+          if (box.width || box.height) {
+            rectangles.push({
+              x: box.x,
+              y: box.y,
+              width: box.width,
+              height: box.height,
+            });
+          }
+        } catch {
+          // An unrendered SVG element contributes no export bounds.
+        }
+      });
+
+      let bounds = calculateExportBounds(rectangles);
+
+      if (!bounds || !diagramSvg || !htmlNodes.length) {
+        throw new Error("The diagram contains no exportable content.");
+      }
+
+      if (data.colorLegendVisible && legendRef.current) {
+        const node = legendRef.current;
+        const items = node.querySelector("[data-color-legend-items]");
+
+        const hiddenHeight = items
+          ? Math.max(0, items.scrollHeight - items.clientHeight)
+          : 0;
+
+        const width = node.offsetWidth;
+        const height = node.offsetHeight + hiddenHeight;
+
+        const placement = placeRightSideExportNode(bounds, { width, height });
+
+        htmlNodes.push({
+          node,
+          x: placement.x,
+          y: placement.y,
+          width,
+          height,
+          expandForExport: true,
+        });
+
+        bounds = placement.bounds;
+      }
+
+      // Conservative guard against excessive raster allocations.
+      if (
+        bounds.width > 16000 ||
+        bounds.height > 16000 ||
+        bounds.width * bounds.height > 40_000_000
+      ) {
+        throw new Error(
+          "This diagram is too large for a safe PNG export. Reduce its spacing or collapse tables.",
+        );
+      }
+
+      const png = await renderDiagramPng({
+        diagramSvg,
+        htmlNodes,
+        bounds,
+        backgroundColor: data.isDark ? "#1e1e1e" : "#f5f5f5",
+      });
+
+      if (!mountedRef.current) return;
+
+      downloadPng(png, data.fileName);
+      notify("PNG exported.");
+    } catch (error) {
+      if (mountedRef.current) {
+        notify(errorMessage(error, "Unable to export the PNG."), "error");
+      }
+    } finally {
+      if (mountedRef.current) setExportRunning(false);
+    }
+  }, [
+    exportRunning,
+    diagramTables,
+    data.tablePositions,
+    data.colorLegendVisible,
+    data.isDark,
+    data.fileName,
+    notify,
+  ]);
+
+  /* ---------------------------- Monaco ----------------------------------- */
+
+  useEffect(() => {
+    const editor = editorRef.current;
+    const monaco = monacoRef.current;
+    const editorModel = editor?.getModel();
+
+    if (!editorMounted || !editorModel || !monaco) return;
+
+    if (state.parsedSource !== data.dbml) {
+      monaco.editor.setModelMarkers(editorModel, "dbml", []);
+      return;
+    }
+
+    monaco.editor.setModelMarkers(editorModel, "dbml", [
+      ...state.errors.map((error) => ({
+        ...error,
+        severity: monaco.MarkerSeverity.Error,
+        source: "DBML",
+      })),
+      ...state.warnings.map((warning) => ({
+        ...warning,
+        severity: monaco.MarkerSeverity.Warning,
+        source: "DBML",
+      })),
+    ]);
+  }, [
+    editorMounted,
+    state.errors,
+    state.warnings,
+    state.parsedSource,
+    data.dbml,
+  ]);
+
+  /* ---------------------------- Render ----------------------------------- */
+
+  const cssVariables = {
+    "--sker-app": theme.appBg,
+    "--sker-editor": theme.editorBg,
+    "--sker-panel": theme.panelBg,
+    "--sker-soft": theme.panelSoft,
+    "--sker-border": theme.border,
+    "--sker-text": theme.text,
+    "--sker-secondary": theme.secondary,
+    "--sker-muted": theme.muted,
+    "--sker-chrome-top": `${topbarSize.height + 24}px`,
+  };
+
+  // Portaled dialogs do not inherit variables from the application root.
+  const portalThemeCss = `
+    .sker-dialog-backdrop {
+      --sker-app: ${theme.appBg};
+      --sker-editor: ${theme.editorBg};
+      --sker-panel: ${theme.panelBg};
+      --sker-soft: ${theme.panelSoft};
+      --sker-border: ${theme.border};
+      --sker-text: ${theme.text};
+      --sker-secondary: ${theme.secondary};
+      --sker-muted: ${theme.muted};
+    }
+  `;
+
+  const gridId = `sker-grid-${useId().replace(/[^A-Za-z0-9_-]/g, "")}`;
+  const groupExists = groups.some((group) => group.name === newGroupName.trim());
+  const parsingPending = state.parsedSource !== data.dbml;
+  const hasPalette = state.selectedTables.length > 0 || Boolean(selectedGroup);
+
+  const relationshipCount = new Set(
+    refs.map((ref) => String(ref.id || ref.routeKey).split(":")[0]),
+  ).size;
 
   return (
-    <div
-      style={{
-        display: "flex",
-        height: "100vh",
-        width: "100vw",
-        background: theme.appBg,
-        fontFamily: "'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif",
-        color: theme.textPrimary,
-        overflow: "hidden",
-      }}
-    >
-      <style>{`
-        .editor-glow-line {
-          background: rgba(16,185,129,0.15) !important;
-          transition: background 0.5s ease-out;
-        }
-        .monaco-editor .find-widget {
-          top: 30px !important;
-        }
-        body:has(.find-widget .codicon-find-selection:hover) .workbench-hover.compact .hover-contents,
-        body:has(.find-widget .codicon-widget-close:hover) .workbench-hover.compact .hover-contents {
-          white-space: nowrap !important;
-        }
-        body:has(.find-widget .codicon-find-selection:hover) .workbench-hover-container:has(> .workbench-hover.compact),
-        body:has(.find-widget .codicon-widget-close:hover) .workbench-hover-container:has(> .workbench-hover.compact) {
-          pointer-events: none !important;
-        }
-      `}</style>
-      {/* ===== Editor Panel ===== */}
-      <div
-        style={{
-          width: isEditorCollapsed ? 0 : editorWidth,
-          minWidth: isEditorCollapsed ? 0 : 460,
-          display: "flex",
-          flexDirection: "column",
-          background: theme.editorPanelBg,
-          borderRight: isEditorCollapsed ? "none" : `1px solid ${theme.border}`,
-          flexShrink: 0,
-          overflow: "hidden",
-          transition: isResizing ? "none" : "width 0.18s ease, min-width 0.18s ease",
-        }}
-      >
-        {/* Logo / Header */}
-        <div
+    <>
+      <style>{STYLES}{portalThemeCss}</style>
+
+      <div ref={rootRef} className="sker-root" style={cssVariables}>
+        <aside
+          ref={editorPanelRef}
+          className="sker-editor"
+          aria-label="DBML editor panel"
+          aria-hidden={data.isEditorCollapsed || undefined}
           style={{
-            padding: "16px 18px",
-            borderBottom: `1px solid ${theme.border}`,
-            display: "flex",
-            alignItems: "center",
-            gap: "10px",
-            background: theme.editorHeaderBg,
+            width: data.isEditorCollapsed ? 0 : data.editorWidth,
+            borderRight: data.isEditorCollapsed ? "none" : undefined,
+            visibility: data.isEditorCollapsed ? "hidden" : "visible",
           }}
         >
-          <svg width="26" height="26" viewBox="0 0 32 32" fill="none">
-            <rect x="2" y="2" width="28" height="28" rx="6" fill="#10b981" />
-            <line x1="2" y1="11" x2="30" y2="11" stroke="white" strokeWidth="2.5" />
-            <line x1="11" y1="11" x2="11" y2="30" stroke="white" strokeWidth="1.8" opacity="0.5" />
-            <circle cx="6.5" cy="6.5" r="1.8" fill="white" opacity="0.8" />
-            <circle cx="16" cy="6.5" r="1.8" fill="white" opacity="0.4" />
-          </svg>
-          <div>
-            <span style={{ fontWeight: 700, fontSize: "17px", letterSpacing: "0.3px", color: theme.textPrimary }}>
-              Sketch<span style={{ color: "#10b981" }}>ER</span>
-            </span>
-            <div style={{ fontSize: "10px", color: theme.textMuted, marginTop: "-1px", letterSpacing: "0.5px" }}>
-              Entity Relationship Diagrams
-            </div>
-          </div>
-          <span
-            style={{
-              marginLeft: "auto",
-              fontSize: "9px",
-              color: "#10b981",
-              background: "#10b98115",
-              padding: "3px 8px",
-              borderRadius: "4px",
-              letterSpacing: "1.2px",
-              textTransform: "uppercase",
-              fontWeight: 600,
-            }}
-          >
-            DBML
-          </span>
-          <button
-            type="button"
-            onClick={() => {
-              setShowSettings(false);
-              setIsEditorCollapsed(true);
-            }}
-            title="Collapse code panel"
-            aria-label="Collapse code panel"
-            style={{
-              background: "none",
-              border: "none",
-              cursor: "pointer",
-              padding: "4px",
-              borderRadius: "4px",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              color: theme.textSecondary,
-            }}
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-              <path d="M8.5 1.8 3.5 6l5 4.2z" fill="currentColor" />
-            </svg>
-          </button>
-          {/* Settings gear */}
-          <div ref={settingsRef} style={{ position: "relative" }}>
-            <button
-              onClick={() => setShowSettings((v) => !v)}
-              title="Settings"
-              style={{
-                background: showSettings ? `${theme.textMuted}22` : "none",
-                border: "none",
-                cursor: "pointer",
-                padding: "4px",
-                borderRadius: "4px",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                color: theme.textSecondary,
-              }}
-            >
-              <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                <circle cx="12" cy="12" r="3"/>
-                <path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83-2.83l.06-.06A1.65 1.65 0 0 0 4.68 15a1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 2.83-2.83l.06.06A1.65 1.65 0 0 0 9 4.68a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 2.83l-.06.06A1.65 1.65 0 0 0 19.4 9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/>
-              </svg>
-            </button>
-            {showSettings && (
-              <div style={{
-                position: "absolute",
-                top: "calc(100% + 8px)",
-                right: 0,
-                background: theme.toolbarBg,
-                border: `1px solid ${theme.toolbarBorder}`,
-                borderRadius: "10px",
-                padding: "14px 16px",
-                zIndex: 50,
-                boxShadow: "0 8px 24px rgba(0,0,0,0.15)",
-                fontFamily: "'DM Sans', sans-serif",
-                fontSize: "12px",
-                color: theme.textPrimary,
-                minWidth: "220px",
-              }}>
-                <div style={{ fontWeight: 700, fontSize: "11px", textTransform: "uppercase", letterSpacing: "0.8px", color: theme.textMuted, marginBottom: "12px" }}>
-                  Settings
-                </div>
-                <label style={{ display: "flex", alignItems: "center", gap: "10px", cursor: "pointer", userSelect: "none" }}>
-                  <ToggleSwitch checked={jumpToTableOnClick} onChange={() => setJumpToTableOnClick((v) => !v)} theme={theme} />
-                  <span style={{ fontSize: "12.5px", fontWeight: 500 }}>Jump to table code on click</span>
-                </label>
-                <div style={{ height: 1, background: theme.toolbarBorder, margin: "12px 0" }} />
-                <div style={{ display: "flex", alignItems: "flex-start", gap: "10px", userSelect: "none" }}>
-                  <ToggleSwitch checked={reverseConnectionFlow} onChange={() => setReverseConnectionFlow((value) => !value)} theme={theme} />
-                  <div>
-                    <div style={{ fontSize: "12.5px", fontWeight: 500 }}>Reverse connection flow</div>
-                    <div style={{ color: theme.textMuted, fontSize: "10px", lineHeight: 1.4, marginTop: "3px" }}>
-                      {reverseConnectionFlow
-                        ? "First DBML endpoint → second endpoint"
-                        : "Second DBML endpoint → first endpoint"}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            )}
-          </div>
-        </div>
+          <header className="sker-editor-header sker-stack">
+            <div className="sker-inline sker-between">
+              <strong className="sker-logo">Sketch<span>ER</span></strong>
 
-        {/* Color palette for the selected table(s) or group */}
-        {hasPaletteSelection && (
-          <div
-            style={{
-              padding: "10px 18px",
-              borderBottom: `1px solid ${theme.border}`,
-              display: "flex",
-              flexDirection: "column",
-              gap: "8px",
-              background: theme.colorPaletteRowBg,
-              fontSize: "11px",
-            }}
-          >
-            <span style={{ color: theme.textSecondary, fontWeight: 600, fontSize: "11.5px" }}>
-              {selectedGroup
-                ? `Group: ${selectedGroup.name}`
-                : selectedTables.size === 1
-                ? [...selectedTables][0]
-                : `${selectedTables.size} tables selected`}
-            </span>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px" }}>
-              <span style={{ width: 42, color: theme.textMuted, fontSize: "9.5px", fontWeight: 600, flexShrink: 0 }}>COMMON</span>
-              <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                {TABLE_COLORS.map((c) => (
-                  <button
-                    type="button"
-                    key={c}
-                    onClick={() => handlePaletteColorClick(c)}
-                    title={selectedTables.size > 1 ? "Apply hue family" : `Apply ${c}`}
-                    aria-label={`Apply color ${c}`}
-                    style={{
-                      width: 19,
-                      height: 19,
-                      padding: 0,
-                      borderRadius: "50%",
-                      background: c,
-                      cursor: "pointer",
-                      border: selectedPaletteColor === c
-                        ? `2.5px solid ${isDark ? "#fff" : "#1e1e1e"}`
-                        : "2.5px solid transparent",
-                      transition: "all 0.15s",
-                      flexShrink: 0,
-                    }}
-                  />
-                ))}
-                <label
-                  title="Choose a custom color"
-                  style={{
-                    position: "relative",
-                    width: 19,
-                    height: 19,
-                    borderRadius: "50%",
-                    cursor: "pointer",
-                    flexShrink: 0,
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    border: selectedPaletteColor && !TABLE_COLORS.includes(selectedPaletteColor)
-                      ? `2.5px solid ${isDark ? "#fff" : "#1e1e1e"}`
-                      : "2.5px solid transparent",
-                    boxSizing: "border-box",
+              <div className="sker-inline">
+                <Popover label="Settings" trigger="Settings">
+                  {() => (
+                    <div className="sker-stack">
+                      <ToggleSwitch
+                        label="Jump to table code on selection"
+                        checked={data.jumpToTableOnClick}
+                        onChange={(checked) => patch({ jumpToTableOnClick: checked })}
+                      />
+                      <ToggleSwitch
+                        label="Reverse connection flow"
+                        checked={data.reverseConnectionFlow}
+                        onChange={(checked) => patch({ reverseConnectionFlow: checked })}
+                      />
+                      <p className="sker-muted">
+                        {data.reverseConnectionFlow
+                          ? "First DBML endpoint → second endpoint"
+                          : "Second DBML endpoint → first endpoint"}
+                      </p>
+                    </div>
+                  )}
+                </Popover>
+
+                <ToolButton
+                  label="Collapse code panel"
+                  onClick={() => patch({ isEditorCollapsed: true })}
+                >
+                  ◀
+                </ToolButton>
+              </div>
+            </div>
+
+            <span className="sker-muted">Entity relationship diagrams · DBML</span>
+          </header>
+
+          {hasPalette && (
+            <section className="sker-palette sker-stack" aria-label="Selection colors">
+              <strong>
+                {selectedGroup
+                  ? `Group: ${selectedGroup.name}`
+                  : state.selectedTables.length === 1
+                    ? state.selectedTables[0]
+                    : `${state.selectedTables.length} tables selected`}
+              </strong>
+
+              <ColorPalette
+                label="Common colors"
+                colors={TABLE_COLORS}
+                selected={selectedPaletteColor}
+                onChoose={(color) => applyPaletteColor(color)}
+              />
+
+              <div className="sker-inline">
+                <ColorPicker
+                  value={selectedPaletteColor || data.recentColors[0]}
+                  onChange={(color) => applyPaletteColor(color, true)}
+                />
+                <span className="sker-muted">Custom color</span>
+              </div>
+
+              {data.recentColors.length > 0 && (
+                <ColorPalette
+                  label="Recent colors"
+                  colors={data.recentColors}
+                  selected={selectedPaletteColor}
+                  onChoose={(color) => applyPaletteColor(color)}
+                />
+              )}
+
+              {state.selectedTables.length > 0 && (
+                <ToolButton
+                  label="Remove selected table color overrides"
+                  onClick={() => {
+                    const colors = dictionary();
+                    state.selectedTables.forEach((name) => { colors[name] = null; });
+                    dispatch({ type: "table-colors", colors });
                   }}
                 >
-                  <ColorWheelIcon lit />
-                  <input
-                    type="color"
-                    value={customColorValue}
-                    aria-label="Choose a custom color"
-                    onChange={(event) => handlePaletteColorClick(event.target.value, true)}
-                    style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", border: 0, padding: 0 }}
-                  />
-                </label>
-              </div>
-            </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "8px", minHeight: 19 }}>
-              <span style={{ width: 42, color: theme.textMuted, fontSize: "9.5px", fontWeight: 600, flexShrink: 0 }}>RECENT</span>
-              {recentColors.length > 0 ? (
-                <div style={{ display: "flex", gap: "6px", flexWrap: "wrap" }}>
-                  {recentColors.map((c) => (
-                    <button
-                      type="button"
-                      key={c}
-                      onClick={() => handlePaletteColorClick(c)}
-                      title={`Apply recent color ${c}`}
-                      aria-label={`Apply recent color ${c}`}
-                      style={{
-                        width: 19,
-                        height: 19,
-                        padding: 0,
-                        borderRadius: "50%",
-                        background: c,
-                        cursor: "pointer",
-                        border: selectedPaletteColor === c
-                          ? `2.5px solid ${isDark ? "#fff" : "#1e1e1e"}`
-                          : `2.5px solid ${theme.toolbarBorder}`,
-                        transition: "all 0.15s",
-                        flexShrink: 0,
-                      }}
-                    />
-                  ))}
-                </div>
-              ) : (
-                <span style={{ color: theme.textMuted, fontSize: "10px" }}>Colors you use will appear here</span>
+                  Use DBML/default color
+                </ToolButton>
               )}
+            </section>
+          )}
+
+          <div className="sker-editor-stats sker-stack">
+            <div className="sker-inline">
+              <span>{tables.length} tables</span>
+              <span>{relationshipCount} refs</span>
+              <span>{(model.enums || []).length} enums</span>
+              <span>{tables.reduce((sum, table) => sum + table.columns.length, 0)} cols</span>
             </div>
+
+            {parsingPending ? (
+              <span className="sker-muted" role="status">Updating diagram…</span>
+            ) : state.errors.length ? (
+              <span role="status" style={{ color: "#dc2626" }}>
+                {state.errors.length} DBML error(s) · showing last valid model
+              </span>
+            ) : state.warnings.length ? (
+              <span role="status" style={{ color: "#b45309" }}>
+                {state.warnings.length} warning(s)
+              </span>
+            ) : null}
           </div>
-        )}
 
-        {/* Stats */}
-        <div
-          style={{
-            padding: "8px 18px",
-            borderBottom: `1px solid ${theme.border}`,
-            display: "flex",
-            gap: "6px 14px",
-            flexWrap: "wrap",
-            fontSize: "11px",
-            color: theme.statText,
-            fontWeight: 500,
-          }}
-        >
-          <span><span style={{ color: "#10b981", fontWeight: 700 }}>{tables.length}</span> tables</span>
-          <span><span style={{ color: "#8b5cf6", fontWeight: 700 }}>{relationshipCount}</span> refs</span>
-          <span><span style={{ color: "#f59e0b", fontWeight: 700 }}>{enums.length}</span> enums</span>
-          <span>
-            <span style={{ color: "#3b82f6", fontWeight: 700 }}>
-              {tables.reduce((s, t) => s + t.columns.length, 0)}
-            </span> cols
-          </span>
-          {parseErrors.length > 0 && (
-            <span title={parseErrors.map((error) => error.message).join("\n")}
-              style={{ marginLeft: "auto", color: "#ef4444", fontWeight: 700 }}>
-              {parseErrors.length} {parseErrors.length === 1 ? "error" : "errors"} · showing last valid
-            </span>
-          )}
-          {parseErrors.length === 0 && parseWarnings.length > 0 && (
-            <span title={parseWarnings.map((warning) => warning.message).join("\n")}
-              style={{ marginLeft: "auto", color: "#f59e0b", fontWeight: 700 }}>
-              {parseWarnings.length} {parseWarnings.length === 1 ? "warning" : "warnings"}
-            </span>
-          )}
-        </div>
+          <div className="sker-editor-content">
+            <MonacoEditor
+              height="100%"
+              language="dbml"
+              theme={data.isDark ? "dbml-dark" : "dbml-light"}
+              value={data.dbml}
+              beforeMount={configureMonaco}
+              onMount={(editor, monaco) => {
+                editorRef.current = editor;
+                monacoRef.current = monaco;
+                setEditorMounted(true);
+              }}
+              onChange={(value) => {
+                const next = value || "";
 
-        {/* Monaco Editor */}
-        <div style={{ flex: 1, overflow: "hidden" }}>
-          <MonacoEditor
-            height="100%"
-            language="dbml"
-            theme={isDark ? "dbml-dark" : "dbml-light"}
-            value={dbml}
-            onChange={(val) => setDbml(val || "")}
-            onMount={handleEditorMount}
-            options={{
-              fontSize: 12.5,
-              fontFamily: "'JetBrains Mono', 'Fira Code', monospace",
-              fontLigatures: true,
-              lineHeight: 20,
-              letterSpacing: 0.3,
-              minimap: { enabled: false },
-              scrollBeyondLastLine: false,
-              renderLineHighlight: "line",
-              lineNumbers: "on",
-              lineNumbersMinChars: 3,
-              glyphMargin: false,
-              folding: true,
-              automaticLayout: true,
-              tabSize: 2,
-              insertSpaces: true,
-              wordWrap: "on",
-              find: { addExtraSpaceOnTop: true },
-              padding: { top: 10 },
-              overviewRulerLanes: 0,
-              hideCursorInOverviewRuler: true,
-              overviewRulerBorder: false,
-              scrollbar: {
-                verticalScrollbarSize: 8,
-                horizontalScrollbarSize: 8,
-              },
-              contextmenu: false,
+                if (next.length > MAX_DBML_LENGTH) {
+                  notify("The DBML document exceeds the supported size limit.", "error");
+                  return;
+                }
+
+                layoutRequestRef.current += 1;
+                setLayoutRunning(false);
+                dispatch({ type: "edit", dbml: next });
+              }}
+              options={MONACO_OPTIONS}
+            />
+          </div>
+
+          <footer className="sker-editor-footer sker-stack">
+            <span className="sker-muted">
+              Pinch to zoom · Scroll or drag to pan · Ctrl/Cmd-click to select
+            </span>
+            <div className="sker-inline sker-between">
+              <span role="status" aria-live="polite">
+                {saveStatus === "saved"
+                  ? "Saved locally"
+                  : saveStatus === "pending"
+                    ? "Unsaved changes"
+                    : "Autosave failed — download a backup"}
+              </span>
+              <a
+                href="https://github.com/Puru-Singh"
+                target="_blank"
+                rel="noopener noreferrer"
+              >
+                Puru Singh
+              </a>
+            </div>
+          </footer>
+        </aside>
+
+        {!data.isEditorCollapsed && (
+          <div
+            className="sker-resizer"
+            role="separator"
+            aria-label="Resize code panel"
+            aria-orientation="vertical"
+            aria-valuemin={280}
+            aria-valuemax={700}
+            aria-valuenow={Math.round(data.editorWidth)}
+            tabIndex={0}
+            onPointerDown={(event) => {
+              if (event.button !== 0) return;
+              event.preventDefault();
+
+              startInteraction({
+                type: "resize",
+                width: data.editorWidth,
+              }, event);
+            }}
+            onKeyDown={(event) => {
+              if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
+
+              event.preventDefault();
+              patch({
+                editorWidth: clamp(
+                  data.editorWidth + (event.key === "ArrowLeft" ? -20 : 20),
+                  280,
+                  700,
+                ),
+              });
             }}
           />
-        </div>
-
-        {/* Help footer */}
-        <div
-          style={{
-            padding: "10px 18px",
-            borderTop: `1px solid ${theme.border}`,
-            fontSize: "10px",
-            color: theme.textMuted,
-            lineHeight: "1.7",
-            background: theme.footerBg,
-          }}
-        >
-          <strong style={{ color: theme.textSecondary }}>Syntax:</strong>{" "}
-          Table name {"{ "}col type [pk] [ref: {">"} table.col]{" }"}
-          <br />
-          Pinch to zoom · Two-finger swipe or drag canvas to pan · Hover table to highlight
-          <div style={{ marginTop: "8px", borderTop: `1px solid ${theme.border}`, paddingTop: "8px", display: "flex", alignItems: "center", gap: "5px" }}>
-            <span>Made by</span>
-            <a
-              href="https://github.com/Puru-Singh"
-              target="_blank"
-              rel="noopener noreferrer"
-              style={{ color: "#10b981", textDecoration: "none", fontWeight: 600 }}
-            >
-              Puru Singh
-            </a>
-            <svg width="10" height="10" viewBox="0 0 24 24" fill={theme.textMuted} style={{ flexShrink: 0 }}>
-              <path d="M12 0C5.37 0 0 5.37 0 12c0 5.31 3.435 9.795 8.205 11.385.6.105.825-.255.825-.57 0-.285-.015-1.23-.015-2.235-3.015.555-3.795-.735-4.035-1.41-.135-.345-.72-1.41-1.23-1.695-.42-.225-1.02-.78-.015-.795.945-.015 1.62.87 1.845 1.23 1.08 1.815 2.805 1.305 3.495.99.105-.78.42-1.305.765-1.605-2.67-.3-5.46-1.335-5.46-5.925 0-1.305.465-2.385 1.23-3.225-.12-.3-.54-1.53.12-3.18 0 0 1.005-.315 3.3 1.23.96-.27 1.98-.405 3-.405s2.04.135 3 .405c2.295-1.56 3.3-1.23 3.3-1.23.66 1.65.24 2.88.12 3.18.765.84 1.23 1.905 1.23 3.225 0 4.605-2.805 5.625-5.475 5.925.435.375.81 1.095.81 2.22 0 1.605-.015 2.895-.015 3.3 0 .315.225.69.825.57A12.02 12.02 0 0 0 24 12c0-6.63-5.37-12-12-12z"/>
-            </svg>
-          </div>
-        </div>
-      </div>
-
-      {/* ===== Resize Handle ===== */}
-      <div
-        onMouseDown={(e) => { e.preventDefault(); setIsResizing(true); }}
-        style={{
-          width: isEditorCollapsed ? 0 : "5px",
-          cursor: "col-resize",
-          background: isResizing ? "#10b981" : "transparent",
-          transition: "background 0.15s",
-          flexShrink: 0,
-          zIndex: 30,
-          overflow: "hidden",
-        }}
-        onMouseEnter={(e) => (e.target.style.background = theme.resizeHandleHover)}
-        onMouseLeave={(e) => { if (!isResizing) e.target.style.background = "transparent"; }}
-      />
-
-      {/* ===== Canvas ===== */}
-      <div
-        ref={canvasRef}
-        onMouseDown={handleCanvasMouseDown}
-        style={{
-          flex: 1,
-          position: "relative",
-          overflow: "hidden",
-          touchAction: "none",
-          overscrollBehavior: "none",
-          cursor: isPanning ? "move" : "default",
-          background: theme.canvasBg,
-        }}
-      >
-        {/* Dot grid */}
-        <svg style={{ position: "absolute", inset: 0, width: "100%", height: "100%", pointerEvents: "none" }}>
-          <defs>
-            <pattern
-              id="grid"
-              width={28 * zoom}
-              height={28 * zoom}
-              patternUnits="userSpaceOnUse"
-              x={canvasOffset.x % (28 * zoom)}
-              y={canvasOffset.y % (28 * zoom)}
-            >
-              <circle cx="1" cy="1" r="0.7" fill={theme.dotColor} />
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#grid)" />
-        </svg>
-
-        {isEditorCollapsed && (
-          <button
-            type="button"
-            data-export-hide="1"
-            onMouseDown={(e) => e.stopPropagation()}
-            onClick={() => setIsEditorCollapsed(false)}
-            title="Expand code panel"
-            aria-label="Expand code panel"
-            style={{
-              position: "absolute",
-              top: 12,
-              left: 12,
-              width: 34,
-              height: 32,
-              padding: 0,
-              borderRadius: "8px",
-              border: `1px solid ${theme.toolbarBorder}`,
-              background: theme.toolbarBg,
-              color: theme.toolbarText,
-              cursor: "pointer",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              zIndex: 20,
-              boxShadow: "0 2px 8px rgba(0,0,0,0.08)",
-            }}
-          >
-            <svg width="12" height="12" viewBox="0 0 12 12" aria-hidden="true">
-              <path d="M3.5 1.8 8.5 6l-5 4.2z" fill="currentColor" />
-            </svg>
-          </button>
         )}
 
-        {/* Filename display / edit */}
-        <div
-          data-export-hide="1"
-          onMouseDown={(e) => e.stopPropagation()}
-          style={{
-            position: "absolute",
-            top: 12,
-            left: isEditorCollapsed ? 54 : 12,
-            display: "flex",
-            alignItems: "center",
-            gap: "6px",
-            background: theme.toolbarBg,
-            border: `1px solid ${editingFileName ? "#10b981" : theme.toolbarBorder}`,
-            borderRadius: "8px",
-            padding: "7px 12px",
-            zIndex: 20,
-            fontSize: "12px",
-            color: theme.toolbarText,
-            fontFamily: "'DM Sans', sans-serif",
-            fontWeight: 500,
-            userSelect: "none",
-            transition: "border-color 0.15s",
+        <main
+          ref={canvasRef}
+          className="sker-canvas"
+          tabIndex={0}
+          aria-label="Diagram canvas"
+          onPointerDown={handleCanvasPointerDown}
+          onLostPointerCapture={() => {
+            if (interactionRef.current) finishInteraction(false);
           }}
-        >
-          <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-            <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/>
-            <polyline points="14 2 14 8 20 8"/>
-          </svg>
-          {editingFileName ? (
-            <input
-              ref={fileNameInputRef}
-              defaultValue={fileName}
-              onBlur={(e) => {
-                const v = e.target.value.trim();
-                if (v) setFileName(v);
-                setEditingFileName(false);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === "Enter") e.target.blur();
-                if (e.key === "Escape") { setEditingFileName(false); }
-              }}
-              style={{
-                background: "transparent",
-                border: "none",
-                outline: "none",
-                color: theme.toolbarText,
-                fontSize: "12px",
-                fontFamily: "'DM Sans', sans-serif",
-                fontWeight: 500,
-                width: `${Math.max(60, fileName.length * 7.5)}px`,
-                padding: 0,
-              }}
-            />
-          ) : (
-            <span
-              onClick={() => {
-                setEditingFileName(true);
-                setTimeout(() => {
-                  fileNameInputRef.current?.select();
-                }, 0);
-              }}
-              title="Click to rename"
-              style={{ cursor: "text" }}
-            >
-              {fileName}
-            </span>
-          )}
-        </div>
+          onKeyDown={(event) => {
+            if (event.target !== event.currentTarget) return;
 
-        <Toolbar
-          onAutoLayout={autoLayout}
-          isAutoLayoutRunning={isAutoLayoutRunning}
-          onResetView={resetView}
-          onFit={fitToCanvas}
-          onZoomIn={() => setCanvasZoom(zoomRef.current + 0.1)}
-          onZoomOut={() => setCanvasZoom(zoomRef.current - 0.1)}
-          onZoomSet={setCanvasZoom}
-          zoom={zoom}
-          isDark={isDark}
-          onToggleTheme={() => setIsDark((d) => !d)}
-          theme={theme}
-          onExport={exportToPng}
-          onSave={saveToFile}
-          onLoad={() => loadInputRef.current?.click()}
-          onCopyShareLink={copyShareLink}
-          onShowShareQr={showShareQr}
-          shareCopyStatus={shareCopyStatus}
-          shareTriggerRef={shareTriggerRef}
-          onShowHelp={() => setShowHelp(true)}
-          allTablesCollapsed={allTablesCollapsed}
-          onToggleAllTables={toggleAllTablesCollapsed}
-        />
+            const directions = {
+              ArrowLeft: [40, 0],
+              ArrowRight: [-40, 0],
+              ArrowUp: [0, 40],
+              ArrowDown: [0, -40],
+            };
 
-        {/* Transform container */}
-        <div
-          ref={transformRef}
-          data-transform-container="1"
+            if (directions[event.key]) {
+              event.preventDefault();
+              const [dx, dy] = directions[event.key];
+
+              applyViewport((current) => ({
+                ...current,
+                offset: {
+                  x: current.offset.x + dx,
+                  y: current.offset.y + dy,
+                },
+              }));
+            } else if (event.key === "+" || event.key === "=") {
+              event.preventDefault();
+              setCanvasZoom(viewportRef.current.zoom * 1.1);
+            } else if (event.key === "-") {
+              event.preventDefault();
+              setCanvasZoom(viewportRef.current.zoom / 1.1);
+            } else if (event.key.toLowerCase() === "f") {
+              event.preventDefault();
+              fitToCanvas();
+            } else if (event.key === "0") {
+              event.preventDefault();
+              resetView();
+            }
+          }}
           style={{
-            position: "absolute",
-            inset: 0,
-            transform: `translate(${canvasOffset.x}px, ${canvasOffset.y}px) scale(${zoom})`,
-            transformOrigin: "0 0",
+            background: theme.canvasBg,
+            cursor: interactionActive ? "grabbing" : "default",
           }}
         >
           <svg
-            data-diagram-svg="1"
-            style={{
-              position: "absolute",
-              top: 0, left: 0,
-              width: "6000px", height: "6000px",
-              pointerEvents: "none",
-              overflow: "visible",
-            }}
-          >
-            <GroupOverlay
-              groups={groups}
-              groupColors={groupColors}
-              selectedGroupName={selectedGroupName}
-              tablePositions={tablePositions}
-              tableWidths={tableWidths}
-              tableData={diagramTables}
-              groupsVisible={groupsVisible}
-              onGroupDragStart={handleGroupDragStart}
-              onGroupSelect={handleGroupSelect}
-            />
-            <RelationshipLines
-              refs={refs}
-              tablePositions={tablePositions}
-              tableData={diagramTables}
-              theme={theme}
-              hoveredTable={hoveredTable}
-              selectedTables={selectedTables}
-              showAllConnections={showAllConnections}
-              tableColors={tableColors}
-              tableWidths={tableWidths}
-              lineMidXOverrides={lineMidXOverrides}
-              onLineDragStart={handleLineDragStart}
-              reverseConnectionFlow={reverseConnectionFlow}
-            />
-          </svg>
-
-          {diagramTables.map((table) =>
-            tablePositions[table.name] ? (
-              <TableNode
-                key={table.name}
-                table={table}
-                position={tablePositions[table.name]}
-                color={tableColors[table.name] || "#10b981"}
-                onDragStart={handleDragStart}
-                isSelected={selectedTables.has(table.name)}
-                onSelect={handleTableSelect}
-                onTableContextMenu={handleTableContextMenu}
-                theme={theme}
-                fkColumns={fkMap[table.name]}
-                activeColumns={activeColumns[table.name]}
-                onHover={setHoveredTable}
-                width={tableWidths[table.name]}
-                isDimmed={!showAllConnections && connectedToHovered !== null && !connectedToHovered.has(table.name)}
-                isCollapsed={table.isCollapsed}
-                onToggleCollapse={toggleTableCollapsed}
-              />
-            ) : null
-          )}
-        </div>
-
-        <MiniMap
-          tablePositions={tablePositions}
-          tableData={diagramTables}
-          colors={tableColors}
-          canvasOffset={canvasOffset}
-          zoom={zoom}
-          canvasWidth={canvasSize.w}
-          canvasHeight={canvasSize.h}
-          theme={theme}
-          tableWidths={tableWidths}
-        />
-
-        {colorLegendVisible && (
-          <ColorLegend
-            entries={colorLegendEntries}
-            descriptions={colorLegendDescriptions}
-            onDescriptionChange={handleLegendDescriptionChange}
-            theme={theme}
-            legendRef={colorLegendRef}
-          />
-        )}
-
-        {/* Empty state */}
-        {tables.length === 0 && (
-          <div
+            aria-hidden="true"
             style={{
               position: "absolute",
               inset: 0,
-              display: "flex",
-              flexDirection: "column",
-              alignItems: "center",
-              justifyContent: "center",
-              color: theme.emptyStateColor,
-              gap: "14px",
+              width: "100%",
+              height: "100%",
               pointerEvents: "none",
             }}
           >
-            <svg width="52" height="52" viewBox="0 0 32 32" fill="none">
-              <rect x="2" y="2" width="28" height="28" rx="6" stroke="currentColor" strokeWidth="1.5" />
-              <line x1="2" y1="11" x2="30" y2="11" stroke="currentColor" strokeWidth="1.5" />
-              <line x1="11" y1="11" x2="11" y2="30" stroke="currentColor" strokeWidth="1" opacity="0.5" />
-            </svg>
-            <span style={{ fontSize: "14px", fontWeight: 500 }}>
-              Write DBML in the editor to create tables
-            </span>
-          </div>
-        )}
+            <defs>
+              <pattern
+                id={gridId}
+                width={28 * viewport.zoom}
+                height={28 * viewport.zoom}
+                patternUnits="userSpaceOnUse"
+                x={viewport.offset.x % (28 * viewport.zoom)}
+                y={viewport.offset.y % (28 * viewport.zoom)}
+              >
+                <circle cx={1} cy={1} r={0.7} fill={theme.dot} />
+              </pattern>
+            </defs>
+            <rect width="100%" height="100%" fill={`url(#${gridId})`} />
+          </svg>
 
-        <BottomGroupPane
-          groupsVisible={groupsVisible}
-          onToggle={() => setGroupsVisible((v) => !v)}
-          showAllConnections={showAllConnections}
-          onToggleConnections={() => setShowAllConnections((v) => !v)}
-          legendVisible={colorLegendVisible}
-          onToggleLegend={() => setColorLegendVisible((visible) => !visible)}
-          theme={theme}
-        />
-
-        {tableGroupMenu && (
-          <form
-            onSubmit={createSelectedTableGroup}
-            onMouseDown={(event) => event.stopPropagation()}
-            onContextMenu={(event) => event.preventDefault()}
-            style={{
-              position: "fixed",
-              left: tableGroupMenu.x,
-              top: tableGroupMenu.y,
-              zIndex: 500,
-              width: 272,
-              padding: "12px",
-              borderRadius: "10px",
-              border: `1px solid ${theme.toolbarBorder}`,
-              background: theme.toolbarBg,
-              boxShadow: "0 12px 34px rgba(0,0,0,0.22)",
-              color: theme.textPrimary,
-              fontFamily: "'DM Sans', sans-serif",
-            }}
+          <div
+            ref={topbarRef}
+            className="sker-topbar"
+            data-export-hide="1"
+            data-canvas-wheel-ignore="1"
+            onPointerDown={(event) => event.stopPropagation()}
           >
-            <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "2px" }}>
-              {tableGroupMenu.targetTableName}
-            </div>
-            <div style={{ fontSize: "9.5px", color: theme.textMuted, textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: "7px" }}>
-              Quick color
-            </div>
-            <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "7px", minHeight: 25 }}>
-              {colorLegendEntries.length > 0 ? colorLegendEntries.map(({ color }) => (
-                <button
-                  type="button"
-                  key={color}
-                  onClick={() => handleContextTableColor(color)}
-                  title={`Apply legend color ${color}`}
-                  aria-label={`Apply legend color ${color}`}
-                  style={{
-                    width: 23,
-                    height: 23,
-                    padding: 0,
-                    borderRadius: "50%",
-                    background: color,
-                    border: contextTargetColor === color
-                      ? `2.5px solid ${isDark ? "#fff" : "#1e1e1e"}`
-                      : `2px solid ${theme.toolbarBorder}`,
-                    cursor: "pointer",
-                    flexShrink: 0,
+            <div className="sker-inline">
+              {data.isEditorCollapsed && (
+                <ToolButton
+                  label="Expand code panel"
+                  onClick={() => patch({ isEditorCollapsed: false })}
+                >
+                  ▶ Code
+                </ToolButton>
+              )}
+
+              {editingName ? (
+                <input
+                  ref={nameInputRef}
+                  className="sker-filename"
+                  aria-label="Diagram filename"
+                  value={nameDraft}
+                  maxLength={500}
+                  onChange={(event) => setNameDraft(event.target.value)}
+                  onBlur={() => {
+                    const value = nameDraft.trim();
+                    if (value) patch({ fileName: value });
+                    setEditingName(false);
+                  }}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter") event.currentTarget.blur();
+
+                    if (event.key === "Escape") {
+                      event.preventDefault();
+                      setNameDraft(data.fileName);
+                      setEditingName(false);
+                    }
                   }}
                 />
-              )) : (
-                <span style={{ color: theme.textMuted, fontSize: "10px", flex: 1 }}>No legend colors yet</span>
+              ) : (
+                <ToolButton
+                  label="Rename diagram"
+                  className="sker-filename sker-truncate"
+                  onClick={() => {
+                    setNameDraft(data.fileName);
+                    setEditingName(true);
+                  }}
+                >
+                  {data.fileName}
+                </ToolButton>
               )}
-              <label
-                title="Choose a custom table color"
-                style={{
-                  position: "relative",
-                  width: 25,
-                  height: 25,
-                  marginLeft: colorLegendEntries.length > 0 ? 2 : "auto",
-                  borderRadius: "50%",
-                  border: `1px solid ${theme.toolbarBorder}`,
-                  background: theme.editorPanelBg,
-                  cursor: "pointer",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  flexShrink: 0,
+            </div>
+
+            <div className="sker-toolbar" role="group" aria-label="Diagram tools">
+              <ToolButton
+                label={data.isDark ? "Switch to light mode" : "Switch to dark mode"}
+                onClick={() => patch({ isDark: !data.isDark })}
+              >
+                {data.isDark ? "☀" : "☾"}
+              </ToolButton>
+
+              <ToolButton
+                label="Zoom out"
+                onClick={() => setCanvasZoom(viewportRef.current.zoom / 1.1)}
+              >
+                −
+              </ToolButton>
+
+              <ZoomControl zoom={viewport.zoom} onChange={setCanvasZoom} />
+
+              <ToolButton
+                label="Zoom in"
+                onClick={() => setCanvasZoom(viewportRef.current.zoom * 1.1)}
+              >
+                +
+              </ToolButton>
+
+              <ToolButton label="Fit diagram in view" onClick={fitToCanvas}>
+                Fit
+              </ToolButton>
+
+              <Popover
+                label="Layout options"
+                trigger={layoutRunning ? "Arranging…" : "Layout"}
+                disabled={layoutRunning || !tables.length || parsingPending}
+              >
+                {(close) => (
+                  <div className="sker-stack">
+                    <ToolButton
+                      label="Smart grouped layout"
+                      onClick={() => {
+                        close(true);
+                        void autoLayout("smart", HIERARCHY_LEAVES_LEFT);
+                      }}
+                    >
+                      Smart grouped
+                    </ToolButton>
+
+                    <ToolButton
+                      label="Hierarchy layout, leaves on the left"
+                      onClick={() => {
+                        close(true);
+                        void autoLayout("hierarchical", HIERARCHY_LEAVES_LEFT);
+                      }}
+                    >
+                      Hierarchy: leaves → roots
+                    </ToolButton>
+
+                    <ToolButton
+                      label="Hierarchy layout, roots on the left"
+                      onClick={() => {
+                        close(true);
+                        void autoLayout("hierarchical", HIERARCHY_ROOTS_LEFT);
+                      }}
+                    >
+                      Hierarchy: roots → leaves
+                    </ToolButton>
+                  </div>
+                )}
+              </Popover>
+
+              <Popover label="View options" trigger="View">
+                {(close) => (
+                  <div className="sker-stack">
+                    <ToolButton
+                      label={allCollapsed ? "Expand every table" : "Collapse every table to keys"}
+                      onClick={() => {
+                        patch({
+                          collapsedTables: allCollapsed
+                            ? []
+                            : tables.map((table) => table.name),
+                        }, true);
+                        close(true);
+                      }}
+                    >
+                      {allCollapsed ? "Expand all tables" : "Collapse all tables"}
+                    </ToolButton>
+
+                    <ToolButton
+                      label="Reset canvas view"
+                      onClick={() => {
+                        resetView();
+                        close(true);
+                      }}
+                    >
+                      Reset view
+                    </ToolButton>
+                  </div>
+                )}
+              </Popover>
+
+              <ToolButton label="Save diagram file" onClick={saveToFile}>
+                Save
+              </ToolButton>
+
+              <ToolButton
+                label="Open diagram file"
+                disabled={loadRunning}
+                onClick={() => loadInputRef.current?.click()}
+              >
+                {loadRunning ? "Opening…" : "Open"}
+              </ToolButton>
+
+              <ToolButton
+                label="Export diagram as PNG"
+                disabled={exportRunning || !tables.length}
+                onClick={() => void exportPng()}
+              >
+                {exportRunning ? "Exporting…" : "Export"}
+              </ToolButton>
+
+              <Popover
+                label="Share diagram"
+                trigger="Share"
+                triggerRef={shareTriggerRef}
+              >
+                {(close) => (
+                  <div className="sker-stack">
+                    <ToolButton
+                      label="Copy shareable link"
+                      onClick={() => {
+                        close(true);
+                        void copyShareLink();
+                      }}
+                    >
+                      Copy shareable link
+                    </ToolButton>
+
+                    <ToolButton
+                      label="Show QR code"
+                      onClick={() => {
+                        close();
+                        showQr();
+                      }}
+                    >
+                      Show QR code
+                    </ToolButton>
+                  </div>
+                )}
+              </Popover>
+
+              <ToolButton
+                buttonRef={helpTriggerRef}
+                label="Help and reference"
+                onClick={() => {
+                  finishInteraction(false);
+                  setDialog({ type: "help" });
                 }}
               >
-                <ColorWheelIcon lit />
-                <input
-                  type="color"
-                  value={contextTargetColor}
-                  aria-label="Choose a custom table color"
-                  onChange={(event) => handleContextTableColor(event.target.value, true)}
-                  style={{ position: "absolute", inset: 0, width: "100%", height: "100%", opacity: 0, cursor: "pointer", padding: 0, border: 0 }}
-                />
-              </label>
+                Help
+              </ToolButton>
             </div>
-            <div style={{ height: 1, background: theme.toolbarBorder, margin: "10px 0" }} />
-            <div style={{ fontSize: "12px", fontWeight: 700, marginBottom: "3px" }}>
-              Create table group
+          </div>
+
+          {notice && (
+            <div
+              className={`sker-notice ${notice.kind === "error" ? "sker-notice-error" : ""}`}
+              data-export-hide="1"
+              data-canvas-wheel-ignore="1"
+              role={notice.kind === "error" ? "alert" : "status"}
+              onPointerDown={(event) => event.stopPropagation()}
+            >
+              <span>{notice.text}</span>
+              <ToolButton label="Dismiss notification" onClick={() => setNotice(null)}>
+                ×
+              </ToolButton>
             </div>
-            <div style={{ fontSize: "10.5px", color: theme.textMuted, marginBottom: "9px" }}>
-              {tableGroupMenu.tableNames.length} {tableGroupMenu.tableNames.length === 1 ? "table" : "tables"} selected
-            </div>
-            <input
-              autoFocus
-              value={newTableGroupName}
-              onChange={(event) => setNewTableGroupName(event.target.value)}
-              aria-label="New table group name"
-              spellCheck={false}
+          )}
+
+          <div
+            ref={sceneRef}
+            data-transform-container="1"
+            style={{
+              position: "absolute",
+              inset: 0,
+              transform:
+                `translate(${viewport.offset.x}px, ${viewport.offset.y}px) ` +
+                `scale(${viewport.zoom})`,
+              transformOrigin: "0 0",
+            }}
+          >
+            <svg
+              data-diagram-svg="1"
               style={{
-                width: "100%",
-                height: 32,
-                boxSizing: "border-box",
-                padding: "0 9px",
-                borderRadius: "6px",
-                border: `1px solid ${tableGroupNameExists ? "#ef4444" : theme.toolbarBorder}`,
-                outline: "none",
-                background: theme.editorPanelBg,
-                color: theme.textPrimary,
-                fontSize: "12px",
-                fontFamily: "'JetBrains Mono', monospace",
-              }}
-            />
-            <div style={{ minHeight: 20, paddingTop: "4px", fontSize: "10px", color: tableGroupNameExists ? "#ef4444" : theme.textMuted }}>
-              {tableGroupNameExists ? "A group with this name already exists." : "This adds a TableGroup block to the DBML."}
-            </div>
-            <button
-              type="submit"
-              disabled={!newTableGroupName.trim() || tableGroupNameExists}
-              style={{
-                width: "100%",
-                height: 32,
-                boxSizing: "border-box",
-                border: "none",
-                borderRadius: "6px",
-                background: "#10b981",
-                color: "#fff",
-                fontSize: "11.5px",
-                fontWeight: 700,
-                cursor: !newTableGroupName.trim() || tableGroupNameExists ? "not-allowed" : "pointer",
-                opacity: !newTableGroupName.trim() || tableGroupNameExists ? 0.5 : 1,
+                position: "absolute",
+                top: 0,
+                left: 0,
+                width: 1,
+                height: 1,
+                overflow: "visible",
+                pointerEvents: "none",
               }}
             >
-              Create group
-            </button>
-          </form>
-        )}
+              <GroupOverlay
+                groups={groups}
+                visible={data.groupsVisible}
+                positions={data.tablePositions}
+                tablesByName={diagramTablesByName}
+                widths={tableWidths}
+                colors={data.groupColors}
+                selectedGroup={state.selectedGroup}
+                onSelect={(name) => dispatch({ type: "select-group", name })}
+                onDragStart={(names, event) => {
+                  startInteraction({
+                    type: "tables",
+                    ...captureTableMove(names),
+                  }, event);
+                }}
+                onMove={moveTables}
+              />
 
-        {/* Hidden file input for Open */}
-        <input
-          ref={loadInputRef}
-          type="file"
-          accept=".sker,.json"
-          onChange={handleLoadFile}
-          style={{ display: "none" }}
-        />
+              <RelationshipLines
+                refs={refs}
+                tables={diagramTables}
+                positions={data.tablePositions}
+                widths={tableWidths}
+                colors={effectiveColors}
+                overrides={data.lineMidXOverrides}
+                hoveredTable={state.hoveredTable}
+                selectedTables={state.selectedTables}
+                showAll={data.showAllConnections}
+                reverseFlow={data.reverseConnectionFlow}
+                theme={theme}
+                reducedMotion={reducedMotion}
+                onDragStart={(key, x, event) => {
+                  startInteraction({ type: "line", key, x }, event);
+                }}
+                onMoveLine={(key, x) => {
+                  dispatch({ type: "line", key, x });
+                }}
+              />
+            </svg>
+
+            {diagramTables.map((table) => {
+              const position = data.tablePositions[table.name];
+              if (!position) return null;
+
+              return (
+                <TableNode
+                  key={data.tableIds[table.name] || table.name}
+                  table={table}
+                  position={position}
+                  width={tableWidths[table.name] || TABLE_WIDTH}
+                  color={effectiveColors[table.name]}
+                  theme={theme}
+                  selected={selectedSet.has(table.name)}
+                  dimmed={
+                    !data.showAllConnections &&
+                    connectedTables !== null &&
+                    !connectedTables.has(table.name)
+                  }
+                  relationshipColumns={relationshipColumns.get(table.name)}
+                  activeColumns={activeColumns.get(table.name)}
+                  onPointerDown={handleTablePointerDown}
+                  onSelect={selectTable}
+                  onMove={(name, dx, dy) => {
+                    const names = selectedSet.has(name)
+                      ? state.selectedTables
+                      : [name];
+                    moveTables(names, dx, dy);
+                  }}
+                  onContextMenu={openContextMenu}
+                  onHover={(name) => dispatch({ type: "hover", name })}
+                  onToggleCollapse={(name) => dispatch({ type: "collapse", name })}
+                />
+              );
+            })}
+          </div>
+
+          <MiniMap
+            tables={diagramTables}
+            positions={data.tablePositions}
+            widths={tableWidths}
+            colors={effectiveColors}
+            viewport={viewport}
+            canvasSize={canvasSize}
+            theme={theme}
+          />
+
+          {data.colorLegendVisible && (
+            <ColorLegend
+              legendRef={legendRef}
+              entries={legendEntries}
+              descriptions={data.colorLegendDescriptions}
+              theme={theme}
+              onNotify={notify}
+              onChange={(color, description) => {
+                dispatch({ type: "legend-description", color, description });
+              }}
+            />
+          )}
+
+          {!tables.length && (
+            <div className="sker-empty">
+              {state.errors.length
+                ? "Correct the DBML errors to display this diagram."
+                : "Write DBML in the editor to create tables."}
+            </div>
+          )}
+
+          <div
+            className="sker-bottom-controls"
+            data-export-hide="1"
+            data-canvas-wheel-ignore="1"
+            onPointerDown={(event) => event.stopPropagation()}
+          >
+            <ToggleSwitch
+              label="Groups"
+              checked={data.groupsVisible}
+              onChange={(checked) => patch({ groupsVisible: checked })}
+            />
+            <ToggleSwitch
+              label="Highlight links"
+              checked={data.showAllConnections}
+              onChange={(checked) => patch({ showAllConnections: checked })}
+            />
+            <ToggleSwitch
+              label="Color legend"
+              checked={data.colorLegendVisible}
+              onChange={(checked) => patch({ colorLegendVisible: checked })}
+            />
+          </div>
+
+          {contextMenu && (
+            <form
+              ref={contextRef}
+              className="sker-context sker-stack"
+              data-canvas-wheel-ignore="1"
+              aria-label="Table options"
+              style={{ left: contextMenu.x, top: contextMenu.y }}
+              onSubmit={createGroup}
+              onPointerDown={(event) => event.stopPropagation()}
+              onContextMenu={(event) => event.preventDefault()}
+            >
+              <strong>{contextMenu.target}</strong>
+
+              <ColorPalette
+                label="Diagram colors"
+                colors={legendEntries.map((entry) => entry.color)}
+                selected={effectiveColors[contextMenu.target]}
+                onChoose={(color) => {
+                  dispatch({
+                    type: "table-colors",
+                    colors: { [contextMenu.target]: color },
+                  });
+                  recordRecentColors([color]);
+                  setContextMenu(null);
+                }}
+              />
+
+              <ColorPicker
+                value={effectiveColors[contextMenu.target]}
+                label="Choose a custom table color"
+                onChange={(color) => {
+                  dispatch({
+                    type: "table-colors",
+                    colors: { [contextMenu.target]: color },
+                  });
+                  recordRecentColors([color], true);
+                }}
+              />
+
+              <hr style={{ width: "100%", border: 0, borderTop: `1px solid ${theme.border}` }} />
+
+              <strong>Create table group</strong>
+              <span className="sker-muted">
+                {contextMenu.names.length} table(s) selected
+              </span>
+
+              <input
+                autoFocus
+                aria-label="New table group name"
+                value={newGroupName}
+                maxLength={500}
+                onChange={(event) => setNewGroupName(event.target.value)}
+                aria-invalid={groupExists || undefined}
+              />
+
+              {groupExists && (
+                <span role="status" style={{ color: "#dc2626" }}>
+                  A group with this name already exists.
+                </span>
+              )}
+
+              <button
+                type="submit"
+                className="sker-button sker-primary"
+                disabled={
+                  !newGroupName.trim() ||
+                  groupExists ||
+                  parsingPending ||
+                  state.errors.length > 0
+                }
+              >
+                Create group
+              </button>
+
+              <ToolButton
+                label="Close table options"
+                onClick={() => {
+                  setContextMenu(null);
+                  canvasRef.current?.focus();
+                }}
+              >
+                Close
+              </ToolButton>
+            </form>
+          )}
+
+          <input
+            ref={loadInputRef}
+            type="file"
+            accept=".sker,.json"
+            aria-label="Open diagram file"
+            onChange={(event) => void loadFile(event)}
+            hidden
+          />
+
+          <span className="sker-sr-only" role="status" aria-live="polite">
+            {copyStatus === "copied"
+              ? "Shareable link copied."
+              : copyStatus === "error"
+                ? "Unable to copy the shareable link."
+                : ""}
+          </span>
+        </main>
       </div>
 
-      {showHelp && <InfoModal theme={theme} onClose={() => setShowHelp(false)} />}
-      {shareQrUrl && (
-        <ShareQrModal
-          url={shareQrUrl}
-          fileName={fileName}
-          theme={theme}
-          copyStatus={shareCopyStatus}
-          onCopy={copyShareLink}
-          onClose={closeShareQr}
+      {dialog?.type === "help" && (
+        <HelpDialog
+          onClose={closeDialog}
+          restoreFocusRef={helpTriggerRef}
         />
       )}
-    </div>
+
+      {dialog?.type === "qr" && (
+        <ShareQrDialog
+          url={dialog.url}
+          fileName={data.fileName}
+          copyStatus={copyStatus}
+          onCopy={copyShareLink}
+          onClose={closeDialog}
+          restoreFocusRef={shareTriggerRef}
+        />
+      )}
+    </>
   );
 }
