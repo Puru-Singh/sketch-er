@@ -2,6 +2,7 @@
 // Licensed under the MIT License — see LICENSE for details.
 
 import {
+  cloneElement,
   useCallback,
   useDeferredValue,
   useEffect,
@@ -1330,6 +1331,38 @@ function useTableWidths(tables, relationshipColumns) {
 /* Reusable UI                                                                */
 /* -------------------------------------------------------------------------- */
 
+// Retain the last panel briefly so dismissal can animate before unmounting.
+function AnimatedPanel({ children }) {
+  const reducedMotion = useReducedMotion();
+  const previous = useRef(null);
+  const visible = Boolean(children);
+  const [retained, setRetained] = useState(visible);
+
+  useLayoutEffect(() => {
+    if (visible) {
+      previous.current = children;
+      setRetained(true);
+    }
+  }, [children, visible]);
+
+  useEffect(() => {
+    if (visible) return undefined;
+    if (reducedMotion) {
+      setRetained(false);
+      return undefined;
+    }
+    const timer = window.setTimeout(() => setRetained(false), 140);
+    return () => window.clearTimeout(timer);
+  }, [visible, reducedMotion]);
+
+  const panel = visible ? children : retained && !reducedMotion ? previous.current : null;
+  return panel ? cloneElement(panel, {
+    "data-motion": visible ? "open" : "closed",
+    "aria-hidden": visible ? undefined : true,
+    inert: visible ? undefined : "",
+  }) : null;
+}
+
 function ToolButton({
   children,
   label,
@@ -1451,7 +1484,7 @@ function Popover({
         {trigger} <span aria-hidden="true">▾</span>
       </ToolButton>
 
-      {open && (
+      <AnimatedPanel>{open && (
         <div
           id={id}
           data-popover-panel="1"
@@ -1462,7 +1495,7 @@ function Popover({
         >
           {children(close)}
         </div>
-      )}
+      )}</AnimatedPanel>
     </div>
   );
 }
@@ -3488,6 +3521,47 @@ body:has(.find-widget .codicon-widget-close:hover) .workbench-hover-container:ha
   border: 0;
 }
 
+/* Keep movement small and avoid transitions on draggable canvas geometry. */
+.sker-button, .sker-color-dot, .sker-color-picker,
+.sker-collapse-button, .sker-legend-swatch {
+  transition: background-color 160ms ease, border-color 160ms ease,
+    box-shadow 160ms ease, color 160ms ease, transform 160ms ease;
+}
+.sker-toggle-track { transition: background-color 160ms ease, box-shadow 160ms ease; }
+.sker-resizer { transition: background-color 160ms ease; }
+.sker-button[aria-expanded="true"] {
+  border-color: #10b98180;
+  box-shadow: 0 0 0 1px #10b98112, 0 0 12px #10b98112;
+}
+.sker-button > span[aria-hidden="true"] { transition: transform 160ms ease; }
+.sker-button[aria-expanded="true"] > span[aria-hidden="true"] { transform: rotate(180deg); }
+@media (hover: hover) {
+  .sker-button:hover:not(:disabled), .sker-collapse-button:hover,
+  .sker-color-picker:hover, .sker-legend-swatch:hover {
+    border-color: #10b98180;
+    box-shadow: 0 0 0 1px #10b98118, 0 0 12px #10b98124;
+  }
+  .sker-color-dot:hover { transform: scale(1.08); box-shadow: 0 0 10px #10b98135; }
+  .sker-toggle-label:hover .sker-toggle-track { box-shadow: 0 0 10px #10b98124; }
+}
+.sker-button:active:not(:disabled) { transform: translateY(1px); }
+.sker-popover { transform-origin: top right; }
+.sker-popover-left, .sker-context { transform-origin: top left; }
+[data-motion="open"] { animation: sker-panel-in 180ms cubic-bezier(.2,.8,.2,1) both; }
+[data-motion="closed"] { animation: sker-panel-out 140ms ease-in both; pointer-events: none; }
+.sker-dialog-backdrop { animation: sker-fade-in 180ms ease-out both; }
+.sker-dialog { animation: sker-panel-in 180ms cubic-bezier(.2,.8,.2,1) both; }
+.sker-notice { animation: sker-panel-in 180ms ease-out both; }
+@keyframes sker-panel-in {
+  from { opacity: 0; transform: translateY(-4px) scale(.985); }
+  to { opacity: 1; transform: translateY(0) scale(1); }
+}
+@keyframes sker-panel-out {
+  from { opacity: 1; transform: translateY(0) scale(1); }
+  to { opacity: 0; transform: translateY(-3px) scale(.99); }
+}
+@keyframes sker-fade-in { from { opacity: 0; } to { opacity: 1; } }
+
 @media (max-width: 760px) {
   .sker-editor { position: absolute; z-index: 80; top: 0; bottom: 0; left: 0; max-width: 92vw; box-shadow: 8px 0 30px #0003; }
   .sker-resizer { display: none; }
@@ -3498,7 +3572,7 @@ body:has(.find-widget .codicon-widget-close:hover) .workbench-hover-container:ha
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .sker-root *, .sker-dialog * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
+  .sker-root *, .sker-dialog-backdrop, .sker-dialog-backdrop * { scroll-behavior: auto !important; transition: none !important; animation: none !important; }
 }
 `;
 
@@ -5584,7 +5658,7 @@ export default function SketchER() {
             />
           </div>
 
-          {contextMenu && (
+          <AnimatedPanel>{contextMenu && (
             <form
               ref={contextRef}
               className="sker-context sker-stack"
@@ -5668,7 +5742,7 @@ export default function SketchER() {
                 Close
               </ToolButton>
             </form>
-          )}
+          )}</AnimatedPanel>
 
           <input
             ref={loadInputRef}
