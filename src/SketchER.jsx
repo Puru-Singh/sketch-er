@@ -21,6 +21,7 @@ import { detectTableRenames } from "./tableIdentity.js";
 import { calculateExportBounds, downloadPng, placeRightSideExportNode, renderDiagramPng } from "./diagramExport.js";
 import { buildColorLegendEntries } from "./colorLegend.js";
 import { copyTextToClipboard } from "./clipboard.js";
+import { clampCanvasZoom, zoomCanvasAroundPoint } from "./canvasViewport.js";
 import { buildShareUrl, decodeShareHash } from "./shareLink.js";
 import { generateShareQrDataUrl, SHARE_QR_TOO_LARGE } from "./shareQr.js";
 
@@ -859,6 +860,8 @@ function ZoomControl({ zoom, onZoomSet, theme }) {
     <div ref={ref} style={{ position: "relative" }}>
       <button
         onClick={() => setOpen((o) => !o)}
+        title="Canvas zoom"
+        aria-label={`Canvas zoom ${Math.round(zoom * 100)}%`}
         style={{
           padding: "7px 12px",
           background: open ? "#10b98122" : theme.toolbarBg,
@@ -1876,7 +1879,7 @@ Table core.items {
               icon={<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5"><path d="M5 9l-3 3 3 3M9 5l3-3 3 3M15 19l-3 3-3-3M19 9l3 3-3 3M2 12h20M12 2v20"/></svg>}>
               <Row label="Trackpad pinch">Zoom around the pointer (Ctrl/Cmd + scroll also works)</Row>
               <Row label="Two-finger swipe">Pan horizontally and vertically across the canvas</Row>
-              <Row label="Click zoom %">Opens a slider + typeable zoom control</Row>
+              <Row label="Click zoom %">Scales canvas tables and text with a slider or typeable zoom level</Row>
               <Row label="Drag canvas">Pan the diagram (click and drag any empty area)</Row>
               <Row label="Collapse editor">Use the triangle in the code header to give the canvas the full window; the right-pointing triangle restores it</Row>
               <Row label="Drag table">Reposition any individual table</Row>
@@ -2800,6 +2803,23 @@ export default function SketchER() {
     return () => obs.disconnect();
   }, []);
 
+  const setCanvasZoom = useCallback((requestedZoom, focalPoint) => {
+    const focus = focalPoint || {
+      x: canvasSize.w / 2,
+      y: canvasSize.h / 2,
+    };
+    const nextViewport = zoomCanvasAroundPoint({
+      currentZoom: zoomRef.current,
+      requestedZoom,
+      offset: canvasOffsetRef.current,
+      focalPoint: focus,
+    });
+    zoomRef.current = nextViewport.zoom;
+    canvasOffsetRef.current = nextViewport.offset;
+    setZoom(nextViewport.zoom);
+    setCanvasOffset(nextViewport.offset);
+  }, [canvasSize.h, canvasSize.w]);
+
   const handleDragStart = useCallback((tableName, clientX, clientY) => {
     const pos = tablePositions[tableName];
     if (!pos) return;
@@ -2885,7 +2905,9 @@ export default function SketchER() {
         },
       }));
     } else if (isPanning && panStart) {
-      setCanvasOffset({ x: e.clientX - panStart.x, y: e.clientY - panStart.y });
+      const nextOffset = { x: e.clientX - panStart.x, y: e.clientY - panStart.y };
+      canvasOffsetRef.current = nextOffset;
+      setCanvasOffset(nextOffset);
     } else if (isResizing) {
       setEditorWidth(Math.max(460, Math.min(600, e.clientX)));
     }
@@ -2940,18 +2962,9 @@ export default function SketchER() {
       const pointerX = rect ? e.clientX - rect.left : canvasSize.w / 2;
       const pointerY = rect ? e.clientY - rect.top : canvasSize.h / 2;
       const currentZoom = zoomRef.current;
-      const currentOffset = canvasOffsetRef.current;
-      const nextZoom = Math.max(0.25, Math.min(2, currentZoom * Math.exp(-deltaY * 0.0025)));
+      const nextZoom = clampCanvasZoom(currentZoom * Math.exp(-deltaY * 0.0025));
       if (nextZoom === currentZoom) return;
-      const scale = nextZoom / currentZoom;
-      const nextOffset = {
-        x: pointerX - (pointerX - currentOffset.x) * scale,
-        y: pointerY - (pointerY - currentOffset.y) * scale,
-      };
-      zoomRef.current = nextZoom;
-      canvasOffsetRef.current = nextOffset;
-      setZoom(nextZoom);
-      setCanvasOffset(nextOffset);
+      setCanvasZoom(nextZoom, { x: pointerX, y: pointerY });
     } else {
       // Two-finger trackpad scrolling pans in both axes. Shift+wheel is a
       // horizontal fallback for conventional mice.
@@ -2962,7 +2975,7 @@ export default function SketchER() {
       canvasOffsetRef.current = nextOffset;
       setCanvasOffset(nextOffset);
     }
-  }, [canvasSize.h, canvasSize.w]);
+  }, [canvasSize.h, canvasSize.w, setCanvasZoom]);
 
   // A non-passive native listener is required so trackpad gestures stay in
   // the canvas instead of scrolling or zooming the browser page.
@@ -3004,7 +3017,10 @@ export default function SketchER() {
   }, [diagramTables, groups, isAutoLayoutRunning, refs, tableWidths, tables.length]);
 
   const resetView = () => {
-    setCanvasOffset({ x: 0, y: 0 });
+    const nextOffset = { x: 0, y: 0 };
+    canvasOffsetRef.current = nextOffset;
+    zoomRef.current = 1;
+    setCanvasOffset(nextOffset);
     setZoom(1);
   };
 
@@ -3025,12 +3041,15 @@ export default function SketchER() {
     const PAD = 60;
     const contentW = maxX - minX + PAD * 2;
     const contentH = maxY - minY + PAD * 2;
-    const newZoom = Math.max(0.25, Math.min(2, Math.min(canvasSize.w / contentW, canvasSize.h / contentH)));
-    setZoom(newZoom);
-    setCanvasOffset({
+    const newZoom = clampCanvasZoom(Math.min(canvasSize.w / contentW, canvasSize.h / contentH));
+    const nextOffset = {
       x: (canvasSize.w - contentW * newZoom) / 2 - (minX - PAD) * newZoom,
       y: (canvasSize.h - contentH * newZoom) / 2 - (minY - PAD) * newZoom,
-    });
+    };
+    zoomRef.current = newZoom;
+    canvasOffsetRef.current = nextOffset;
+    setZoom(newZoom);
+    setCanvasOffset(nextOffset);
   }, [tablePositions, diagramTables, tableWidths, canvasSize]);
 
   // Auto-fit on initial load and after file load
@@ -3882,9 +3901,9 @@ export default function SketchER() {
           isAutoLayoutRunning={isAutoLayoutRunning}
           onResetView={resetView}
           onFit={fitToCanvas}
-          onZoomIn={() => setZoom((z) => Math.min(2, z + 0.1))}
-          onZoomOut={() => setZoom((z) => Math.max(0.25, z - 0.1))}
-          onZoomSet={(v) => setZoom(Math.max(0.25, Math.min(2, v)))}
+          onZoomIn={() => setCanvasZoom(zoomRef.current + 0.1)}
+          onZoomOut={() => setCanvasZoom(zoomRef.current - 0.1)}
+          onZoomSet={setCanvasZoom}
           zoom={zoom}
           isDark={isDark}
           onToggleTheme={() => setIsDark((d) => !d)}
