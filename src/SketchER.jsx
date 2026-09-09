@@ -221,6 +221,21 @@ function clamp(value, min, max) {
   return Math.max(min, Math.min(max, value));
 }
 
+let textMeasurementContext = null;
+
+function measureTextWidth(value, font) {
+  const text = String(value || "");
+
+  if (!textMeasurementContext && typeof document !== "undefined") {
+    textMeasurementContext = document.createElement("canvas").getContext("2d");
+  }
+
+  if (!textMeasurementContext) return text.length * 7;
+
+  textMeasurementContext.font = font;
+  return textMeasurementContext.measureText(text).width;
+}
+
 function clampZoom(value) {
   return clamp(value, MIN_ZOOM, MAX_ZOOM);
 }
@@ -2667,6 +2682,17 @@ function ColorLegend({
   legendRef,
   theme,
 }) {
+  const longestTextWidth = Math.max(
+    measureTextWidth("Table colors will appear here.", "400 12px 'DM Sans', sans-serif"),
+    ...entries.map(({ color }) =>
+      measureTextWidth(
+        descriptions[color] || "Add description…",
+        "400 12px 'DM Sans', sans-serif",
+      ),
+    ),
+  );
+  const legendWidth = clamp(Math.ceil(longestTextWidth + 78), 226, 480);
+
   return (
     <section
       ref={legendRef}
@@ -2674,7 +2700,10 @@ function ColorLegend({
       data-color-legend="1"
       data-canvas-wheel-ignore="1"
       aria-label="Color legend"
-      style={{ background: theme.legendBg }}
+      style={{
+        background: theme.legendBg,
+        width: `min(${legendWidth}px, calc(100% - 24px))`,
+      }}
       onPointerDown={(event) => event.stopPropagation()}
       onContextMenu={(event) => event.stopPropagation()}
     >
@@ -3140,7 +3169,13 @@ const STYLES = `
   border-bottom: 1px solid var(--sker-border);
 }
 
-.sker-logo { font-size: 18px; letter-spacing: .2px; }
+.sker-logo {
+  font-family: "DM Sans", sans-serif;
+  font-size: 19px;
+  font-weight: 700;
+  line-height: 1;
+  letter-spacing: -.35px;
+}
 .sker-logo span { color: #10b981; }
 
 .sker-editor-content { flex: 1; min-height: 0; overflow: hidden; }
@@ -3216,7 +3251,10 @@ const STYLES = `
 }
 .sker-topbar > * { pointer-events: auto; }
 .sker-toolbar { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 6px; }
-.sker-filename { max-width: min(230px, 65vw); }
+.sker-filename {
+  max-width: min(440px, 65vw);
+  transition: width .12s ease;
+}
 
 .sker-popover-container { position: relative; }
 .sker-popover {
@@ -4860,6 +4898,18 @@ export default function SketchER() {
   const groupExists = groups.some((group) => group.name === newGroupName.trim());
   const parsingPending = state.parsedSource !== data.dbml;
   const hasPalette = state.selectedTables.length > 0 || Boolean(selectedGroup);
+  const visibleFileName = editingName ? nameDraft : data.fileName;
+  const fileNameWidth = clamp(
+    Math.ceil(
+      measureTextWidth(
+        visibleFileName || "Untitled",
+        "500 12px 'DM Sans', sans-serif",
+      ) + 30,
+    ),
+    86,
+    440,
+  );
+  const fileNameStyle = { width: `min(${fileNameWidth}px, 65vw)` };
 
   const relationshipCount = new Set(
     refs.map((ref) => String(ref.id || ref.routeKey).split(":")[0]),
@@ -5172,6 +5222,7 @@ export default function SketchER() {
                   className="sker-filename"
                   aria-label="Diagram filename"
                   value={nameDraft}
+                  style={fileNameStyle}
                   maxLength={500}
                   onChange={(event) => setNameDraft(event.target.value)}
                   onBlur={() => {
@@ -5193,6 +5244,7 @@ export default function SketchER() {
                 <ToolButton
                   label="Rename diagram"
                   className="sker-filename sker-truncate"
+                  style={fileNameStyle}
                   onClick={() => {
                     setNameDraft(data.fileName);
                     setEditingName(true);
