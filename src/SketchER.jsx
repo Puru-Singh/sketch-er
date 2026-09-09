@@ -13,6 +13,7 @@ import {
 } from "./autoLayout.js";
 import {
   longestVerticalSegment,
+  orderSharedColumnArrivals,
   orthogonalPointsToPath,
   routeOrthogonalConnection,
 } from "./relationshipRouting.js";
@@ -340,7 +341,13 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
         crowDir = (fromPos.x + fromW / 2) <= (toPos.x + toW / 2) ? "right" : "left";
       }
 
-      result.push({ ref, fromColIdx, toColIdx, crowDir });
+      result.push({
+        ref,
+        fromColIdx,
+        toColIdx,
+        crowDir,
+        sourceEndpointY: getColumnY(fromPos, fromColIdx),
+      });
     }
     return result;
   }, [refs, tablePositions, tableData, tableWidths]);
@@ -372,9 +379,9 @@ function RelationshipLines({ refs, tablePositions, tableData, theme, hoveredTabl
       (toGroups[key] ??= []).push(item);
     });
     Object.values(toGroups).forEach((group) => {
-      // Sort by fromTable name for a consistent, deterministic order
-      group.sort((a, b) => a.ref.from.table.localeCompare(b.ref.from.table));
-      group.forEach((item, i) => {
+      // Match shared-column endpoints to the live vertical order of their
+      // source columns so connections re-fan automatically as tables move.
+      orderSharedColumnArrivals(group).forEach((item, i) => {
         item.toLane      = i;
         item.toLaneCount = group.length;
       });
@@ -4050,14 +4057,14 @@ export default function SketchER() {
             <div style={{ fontSize: "9.5px", color: theme.textMuted, textTransform: "uppercase", letterSpacing: "0.6px", marginBottom: "7px" }}>
               Quick color
             </div>
-            <div style={{ display: "flex", alignItems: "center", gap: "7px", minHeight: 25 }}>
-              {recentColors.length > 0 ? recentColors.slice(0, 5).map((color) => (
+            <div style={{ display: "flex", alignItems: "center", flexWrap: "wrap", gap: "7px", minHeight: 25 }}>
+              {colorLegendEntries.length > 0 ? colorLegendEntries.map(({ color }) => (
                 <button
                   type="button"
                   key={color}
                   onClick={() => handleContextTableColor(color)}
-                  title={`Apply recent color ${color}`}
-                  aria-label={`Apply recent color ${color}`}
+                  title={`Apply legend color ${color}`}
+                  aria-label={`Apply legend color ${color}`}
                   style={{
                     width: 23,
                     height: 23,
@@ -4072,7 +4079,7 @@ export default function SketchER() {
                   }}
                 />
               )) : (
-                <span style={{ color: theme.textMuted, fontSize: "10px", flex: 1 }}>No recent colors yet</span>
+                <span style={{ color: theme.textMuted, fontSize: "10px", flex: 1 }}>No legend colors yet</span>
               )}
               <label
                 title="Choose a custom table color"
@@ -4080,7 +4087,7 @@ export default function SketchER() {
                   position: "relative",
                   width: 25,
                   height: 25,
-                  marginLeft: recentColors.length > 0 ? 2 : "auto",
+                  marginLeft: colorLegendEntries.length > 0 ? 2 : "auto",
                   borderRadius: "50%",
                   border: `1px solid ${theme.toolbarBorder}`,
                   background: theme.editorPanelBg,

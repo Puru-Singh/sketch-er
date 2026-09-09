@@ -2,6 +2,7 @@ import test from "node:test";
 import assert from "node:assert/strict";
 import {
   longestVerticalSegment,
+  orderSharedColumnArrivals,
   orthogonalPointsToPath,
   routeOrthogonalConnection,
 } from "../src/relationshipRouting.js";
@@ -74,4 +75,20 @@ test("manual corridor positions remain authoritative", () => {
     { x: 50, y: 80 },
     { x: 100, y: 80 },
   ]);
+});
+
+test("orders shared-column arrivals by the live vertical position of their source columns", () => {
+  const above = {
+    ref: { id: "z", from: { table: "zebra", column: "target_id" } },
+    sourceEndpointY: 120,
+  };
+  const below = {
+    ref: { id: "a", from: { table: "alpha", column: "target_id" } },
+    sourceEndpointY: 420,
+  };
+
+  assert.deepEqual(orderSharedColumnArrivals([below, above]), [above, below]);
+
+  above.sourceEndpointY = 520;
+  assert.deepEqual(orderSharedColumnArrivals([below, above]), [below, above]);
 });

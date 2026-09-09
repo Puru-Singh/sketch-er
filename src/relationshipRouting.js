@@ -61,6 +61,22 @@ function isOnExitSide(candidateX, portX, direction) {
   return direction > 0 ? candidateX >= portX : candidateX <= portX;
 }
 
+function connectionIdentity(item) {
+  return [
+    item.ref?.from?.table,
+    item.ref?.from?.column,
+    item.ref?.id,
+  ].filter(Boolean).join("\u0000");
+}
+
+export function orderSharedColumnArrivals(items) {
+  return [...items].sort((left, right) => {
+    const verticalOrder = left.sourceEndpointY - right.sourceEndpointY;
+    if (verticalOrder) return verticalOrder;
+    return connectionIdentity(left).localeCompare(connectionIdentity(right));
+  });
+}
+
 export function routeOrthogonalConnection({
   start,
   end,
