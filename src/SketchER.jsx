@@ -3872,10 +3872,17 @@ const STYLES = `
 .sker-editor-footer a { color: #059669; }
 
 .sker-palette { padding: 10px 14px; border-bottom: 1px solid var(--sker-border); }
-.sker-color-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; }
+.sker-color-row { display: flex; flex-wrap: wrap; align-items: center; gap: 7px; flex-shrink: 0; }
 .sker-color-dot {
   width: 23px;
   height: 23px;
+  min-width: 23px;
+  min-height: 23px;
+  max-width: 23px;
+  max-height: 23px;
+  aspect-ratio: 1 / 1;
+  flex-shrink: 0;
+  box-sizing: border-box;
   padding: 0;
   border: 2px solid transparent;
   border-radius: 50%;
@@ -3888,14 +3895,22 @@ const STYLES = `
   display: inline-flex;
   width: 28px;
   height: 28px;
+  min-width: 28px;
+  min-height: 28px;
+  max-width: 28px;
+  max-height: 28px;
+  aspect-ratio: 1 / 1;
+  flex-shrink: 0;
+  align-self: flex-start;
   align-items: center;
   justify-content: center;
+  box-sizing: border-box;
   border: 1px solid var(--sker-border);
   border-radius: 50%;
   background: conic-gradient(#f87171,#fbbf24,#34d399,#22d3ee,#818cf8,#f472b6,#f87171);
   cursor: pointer;
 }
-.sker-color-picker span { color: white; }
+.sker-color-picker span { color: white; display: flex; align-items: center; justify-content: center; line-height: 1; }
 .sker-color-picker input {
   position: absolute;
   inset: 0;
@@ -6518,17 +6533,20 @@ export default function SketchER() {
                 }}
               />
 
-              <ColorPicker
-                value={effectiveColors[contextMenu.target]}
-                label="Choose a custom table color"
-                onChange={(color) => {
-                  dispatch({
-                    type: "table-colors",
-                    colors: { [contextMenu.target]: color },
-                  });
-                  recordRecentColors([color], true);
-                }}
-              />
+              <div className="sker-inline">
+                <ColorPicker
+                  value={effectiveColors[contextMenu.target]}
+                  label="Choose a custom table color"
+                  onChange={(color) => {
+                    dispatch({
+                      type: "table-colors",
+                      colors: { [contextMenu.target]: color },
+                    });
+                    recordRecentColors([color], true);
+                  }}
+                />
+                <span className="sker-muted">Custom color</span>
+              </div>
 
               <hr style={{ width: "100%", border: 0, borderTop: `1px solid ${theme.border}` }} />
 
