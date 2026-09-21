@@ -1626,6 +1626,294 @@ const DEFAULT_POPULAR_TYPES = [
   "serial",
 ];
 
+const COLUMN_TYPE_RULES = [
+  {
+    category: "flag",
+    match: (name, tokens) =>
+      name.startsWith("is_") ||
+      name.startsWith("has_") ||
+      name.startsWith("can_") ||
+      name.startsWith("should_") ||
+      name.startsWith("will_") ||
+      name.startsWith("was_") ||
+      name.endsWith("_flag") ||
+      name.endsWith("_yn") ||
+      name === "flag" ||
+      tokens.some((t) =>
+        [
+          "boolean",
+          "bool",
+          "active",
+          "enabled",
+          "disabled",
+          "archived",
+          "verified",
+          "published",
+          "visible",
+          "hidden",
+          "valid",
+          "flag",
+        ].includes(t),
+      ),
+    types: ["boolean", "bool", "tinyint(1)", "smallint"],
+  },
+  {
+    category: "date",
+    match: (name, tokens) =>
+      name.endsWith("_at") ||
+      name.endsWith("_date") ||
+      name.endsWith("_dt") ||
+      name.endsWith("_time") ||
+      name.endsWith("_timestamp") ||
+      name.startsWith("date_") ||
+      name.startsWith("time_") ||
+      name === "date" ||
+      name === "dt" ||
+      name === "time" ||
+      tokens.some((t) =>
+        [
+          "date",
+          "dt",
+          "time",
+          "datetime",
+          "timestamp",
+          "timestamptz",
+          "year",
+          "dob",
+          "month",
+          "day",
+          "hour",
+          "minute",
+          "schedule",
+          "expired",
+          "expires",
+        ].includes(t),
+      ),
+    types: ["timestamp", "timestamptz", "datetime", "date", "time"],
+  },
+  {
+    category: "integer",
+    match: (name, tokens) =>
+      name === "id" ||
+      name.endsWith("_id") ||
+      name.startsWith("id_") ||
+      tokens.some((t) =>
+        [
+          "id",
+          "count",
+          "qty",
+          "quantity",
+          "num",
+          "number",
+          "total",
+          "order",
+          "pos",
+          "position",
+          "rank",
+          "index",
+          "seq",
+          "sequence",
+          "priority",
+          "level",
+          "version",
+          "ver",
+          "attempts",
+          "retries",
+          "age",
+          "duration",
+          "limit",
+          "offset",
+          "step",
+          "score",
+          "points",
+        ].includes(t),
+      ),
+    types: ["int", "bigint", "integer", "smallint", "serial", "bigserial", "uuid"],
+  },
+  {
+    category: "decimal",
+    match: (name, tokens) =>
+      tokens.some((t) =>
+        [
+          "price",
+          "cost",
+          "fee",
+          "rate",
+          "salary",
+          "revenue",
+          "tax",
+          "discount",
+          "balance",
+          "budget",
+          "credit",
+          "debit",
+          "amount",
+          "percent",
+          "percentage",
+          "pct",
+          "ratio",
+          "latitude",
+          "lat",
+          "longitude",
+          "lng",
+          "lon",
+          "weight",
+          "margin",
+          "float",
+        ].includes(t),
+      ),
+    types: ["decimal(10,2)", "decimal", "numeric", "float", "double precision"],
+  },
+  {
+    category: "json",
+    match: (name, tokens) =>
+      tokens.some((t) =>
+        [
+          "data",
+          "metadata",
+          "meta",
+          "config",
+          "configuration",
+          "settings",
+          "payload",
+          "properties",
+          "props",
+          "extra",
+          "json",
+          "attributes",
+          "params",
+          "parameters",
+          "options",
+          "preferences",
+        ].includes(t),
+      ),
+    types: ["jsonb", "json", "text"],
+  },
+  {
+    category: "uuid",
+    match: (name, tokens) => tokens.some((t) => ["uuid", "guid"].includes(t)),
+    types: ["uuid", "varchar(36)"],
+  },
+  {
+    category: "string",
+    match: (name, tokens) =>
+      name.endsWith("_name") ||
+      name.endsWith("_code") ||
+      name.endsWith("_url") ||
+      name.endsWith("_type") ||
+      tokens.some((t) =>
+        [
+          "name",
+          "title",
+          "description",
+          "desc",
+          "comment",
+          "note",
+          "notes",
+          "text",
+          "body",
+          "content",
+          "summary",
+          "message",
+          "msg",
+          "label",
+          "code",
+          "slug",
+          "key",
+          "token",
+          "hash",
+          "email",
+          "mail",
+          "phone",
+          "mobile",
+          "tel",
+          "address",
+          "city",
+          "state",
+          "country",
+          "zip",
+          "postal",
+          "street",
+          "url",
+          "link",
+          "path",
+          "uri",
+          "avatar",
+          "image",
+          "photo",
+          "icon",
+          "type",
+          "role",
+          "status",
+          "category",
+          "genre",
+          "tag",
+          "tags",
+          "locale",
+          "lang",
+          "language",
+          "username",
+          "password",
+          "bio",
+          "author",
+        ].includes(t),
+      ),
+    types: ["varchar(255)", "text", "varchar", "string", "char"],
+  },
+];
+
+function getRecommendedTypes(columnName, popularDbmlTypes, typeCounts) {
+  const raw = (columnName || "").trim();
+  const lower = raw.toLowerCase();
+  const tokens = raw
+    ? raw
+        .replace(/([a-z0-9])([A-Z])/g, "$1_$2")
+        .toLowerCase()
+        .split(/[^a-z0-9]+/)
+        .filter(Boolean)
+    : [];
+
+  const matchedRule = COLUMN_TYPE_RULES.find((rule) =>
+    rule.match(lower, tokens),
+  );
+
+  // Unable to map: show the top 4 datatypes by usage from the dbml as the default case
+  if (!matchedRule) {
+    return popularDbmlTypes.slice(0, 4);
+  }
+
+  const candidates = [];
+  const seen = new Set();
+
+  // 1. Prioritize any matching types used in the DBML diagram
+  for (const item of popularDbmlTypes) {
+    const itemLower = item.type.toLowerCase();
+    const matchesCategory = matchedRule.types.some(
+      (t) =>
+        itemLower.startsWith(t) ||
+        t.startsWith(itemLower) ||
+        itemLower.includes(t),
+    );
+    if (matchesCategory && item.count > 0 && !seen.has(item.type)) {
+      seen.add(item.type);
+      candidates.push(item);
+    }
+  }
+
+  // 2. Add standard types for this rule
+  for (const type of matchedRule.types) {
+    if (!seen.has(type)) {
+      seen.add(type);
+      candidates.push({
+        type,
+        count: typeCounts.get(type) || 0,
+      });
+    }
+  }
+
+  return candidates.slice(0, 4);
+}
+
 function ColumnEditor({
   table,
   tables = [],
@@ -1645,6 +1933,7 @@ function ColumnEditor({
   const [draggedIndex, setDraggedIndex] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
   const [activeTypeIndex, setActiveTypeIndex] = useState(null);
+  const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState("");
 
   const update = (index, key, value) => {
@@ -1663,6 +1952,27 @@ function ColumnEditor({
       next.splice(toIndex, 0, moved);
       return next;
     });
+  };
+
+  const addColumn = () => {
+    setError("");
+    setColumns((items) => [
+      ...items,
+      {
+        originalName: null,
+        name: `column_${items.length + 1}`,
+        type: "varchar",
+      },
+    ]);
+  };
+
+  const removeColumn = (index) => {
+    setError("");
+    setColumns((items) => items.filter((_, i) => i !== index));
+    if (activeTypeIndex === index) {
+      setActiveTypeIndex(null);
+      setIsTyping(false);
+    }
   };
 
   const typeCounts = useMemo(() => {
@@ -1704,15 +2014,17 @@ function ColumnEditor({
     return result;
   }, [typeCounts]);
 
-  const getSuggestions = (currentVal) => {
-    const query = (currentVal || "").trim().toLowerCase();
-    if (!query) return popularDbmlTypes.slice(0, 8);
-    const matched = popularDbmlTypes.filter((item) =>
-      item.type.toLowerCase().includes(query),
-    );
-    return matched.length > 0
-      ? matched.slice(0, 8)
-      : popularDbmlTypes.slice(0, 8);
+  const getSuggestions = (columnName, currentVal) => {
+    if (isTyping) {
+      const query = (currentVal || "").trim().toLowerCase();
+      if (query) {
+        const matched = popularDbmlTypes.filter((item) =>
+          item.type.toLowerCase().includes(query),
+        );
+        if (matched.length > 0) return matched.slice(0, 5);
+      }
+    }
+    return getRecommendedTypes(columnName, popularDbmlTypes, typeCounts);
   };
 
   useEffect(() => {
@@ -1724,6 +2036,7 @@ function ColumnEditor({
         container.dataset.columnIndex !== String(activeTypeIndex)
       ) {
         setActiveTypeIndex(null);
+        setIsTyping(false);
       }
     };
     document.addEventListener("pointerdown", handlePointerDown, true);
@@ -1746,7 +2059,7 @@ function ColumnEditor({
       )}
       <div className="sker-column-list">
         {columns.map((column, index) => {
-          const suggestions = getSuggestions(column.type);
+          const suggestions = getSuggestions(column.name, column.type);
           return (
             <div
               className={`sker-column-editor ${dragOverIndex === index ? "is-drag-over" : ""} ${draggedIndex === index ? "is-dragging" : ""}`}
@@ -1850,12 +2163,20 @@ function ColumnEditor({
                       onChange={(event) => {
                         update(index, "type", event.target.value);
                         setActiveTypeIndex(index);
+                        setIsTyping(true);
                       }}
-                      onFocus={() => setActiveTypeIndex(index)}
-                      onClick={() => setActiveTypeIndex(index)}
+                      onFocus={() => {
+                        setActiveTypeIndex(index);
+                        setIsTyping(false);
+                      }}
+                      onClick={() => {
+                        setActiveTypeIndex(index);
+                        setIsTyping(false);
+                      }}
                       onKeyDown={(event) => {
                         if (event.key === "Escape") {
                           setActiveTypeIndex(null);
+                          setIsTyping(false);
                         }
                       }}
                     />
@@ -1875,6 +2196,7 @@ function ColumnEditor({
                             event.preventDefault();
                             update(index, "type", type);
                             setActiveTypeIndex(null);
+                            setIsTyping(false);
                           }}
                         >
                           <span>{type}</span>
