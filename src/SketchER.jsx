@@ -1611,47 +1611,292 @@ function Dialog({ title, onClose, restoreFocusRef, children, wide = false }) {
   );
 }
 
-function ColumnEditor({ table, source, onApply, disabled }) {
+const COMMON_DATA_TYPES = [
+  {
+    group: "Numeric",
+    types: [
+      "int",
+      "integer",
+      "bigint",
+      "smallint",
+      "tinyint",
+      "serial",
+      "bigserial",
+      "decimal",
+      "numeric",
+      "float",
+      "double",
+      "real",
+    ],
+  },
+  {
+    group: "String & Text",
+    types: [
+      "varchar",
+      "varchar(255)",
+      "text",
+      "char",
+      "character varying",
+      "tinytext",
+      "mediumtext",
+      "longtext",
+    ],
+  },
+  {
+    group: "Boolean",
+    types: ["boolean", "bool"],
+  },
+  {
+    group: "Date & Time",
+    types: [
+      "timestamp",
+      "timestamptz",
+      "date",
+      "time",
+      "timetz",
+      "datetime",
+      "interval",
+    ],
+  },
+  {
+    group: "Document & Binary",
+    types: [
+      "uuid",
+      "json",
+      "jsonb",
+      "blob",
+      "bytea",
+      "binary",
+      "varbinary",
+    ],
+  },
+];
+
+function ColumnEditor({ table, source, enums = [], onApply, disabled }) {
   const [originalSource] = useState(source);
-  const [columns, setColumns] = useState(() => table.columns.map((column) => ({
-    originalName: column.name, name: column.name, type: column.type,
-  })));
+  const [columns, setColumns] = useState(() =>
+    table.columns.map((column) => ({
+      originalName: column.name,
+      name: column.name,
+      type: column.type,
+    })),
+  );
+  const [draggedIndex, setDraggedIndex] = useState(null);
+  const [dragOverIndex, setDragOverIndex] = useState(null);
+  const [dragHandleActive, setDragHandleActive] = useState(null);
   const [error, setError] = useState("");
+
   const update = (index, key, value) => {
     setError("");
-    setColumns((items) => items.map((item, i) => i === index ? { ...item, [key]: value } : item));
+    setColumns((items) =>
+      items.map((item, i) => (i === index ? { ...item, [key]: value } : item)),
+    );
   };
-  const move = (index, direction) => setColumns((items) => {
-    const next = [...items];
-    [next[index], next[index + direction]] = [next[index + direction], next[index]];
-    return next;
-  });
+
+  const reorder = (fromIndex, toIndex) => {
+    if (fromIndex === toIndex) return;
+    setError("");
+    setColumns((items) => {
+      const next = [...items];
+      const [moved] = next.splice(fromIndex, 1);
+      next.splice(toIndex, 0, moved);
+      return next;
+    });
+  };
+
+  const knownTypeSet = useMemo(() => {
+    const set = new Set();
+    COMMON_DATA_TYPES.forEach(({ types }) => types.forEach((t) => set.add(t)));
+    (enums || []).forEach((e) => set.add(e.name));
+    return set;
+  }, [enums]);
+
+  const handleTypeChange = (index, val) => {
+    if (val === "__custom__") {
+      const custom = window.prompt(
+        "Enter custom data type (e.g. varchar(50)):",
+        columns[index]?.type || "",
+      );
+      if (custom && custom.trim()) {
+        update(index, "type", custom.trim());
+      }
+      return;
+    }
+    update(index, "type", val);
+  };
+
   return (
     <section className="sker-stack" aria-label="Edit table columns">
-      <strong>Columns <span className="sker-muted">({columns.length})</span></strong>
-      {table.partials?.length > 0 && <span className="sker-muted">This table uses TablePartial. Edit its columns in the DBML editor.</span>}
+      <strong>
+        Columns <span className="sker-muted">({columns.length})</span>
+      </strong>
+      {table.partials?.length > 0 && (
+        <span className="sker-muted">
+          This table uses TablePartial. Edit its columns in the DBML editor.
+        </span>
+      )}
       <div className="sker-column-list">
-        {columns.map((column, index) => (
-          <div className="sker-column-editor" key={column.originalName}>
-            <label>Name<input aria-label={`Column ${index + 1} name`} value={column.name}
-              onChange={(event) => update(index, "name", event.target.value)} /></label>
-            <label>Type<input aria-label={`Column ${index + 1} type`} value={column.type}
-              onChange={(event) => update(index, "type", event.target.value)} /></label>
-            <div className="sker-inline">
-              <ToolButton label={`Move ${column.name} up`} disabled={index === 0} onClick={() => move(index, -1)}>↑</ToolButton>
-              <ToolButton label={`Move ${column.name} down`} disabled={index === columns.length - 1} onClick={() => move(index, 1)}>↓</ToolButton>
+        {columns.map((column, index) => {
+          const isCustom = column.type && !knownTypeSet.has(column.type);
+          return (
+            <div
+              className={`sker-column-editor ${dragOverIndex === index ? "is-drag-over" : ""} ${draggedIndex === index ? "is-dragging" : ""}`}
+              key={column.originalName}
+              draggable={!disabled && dragHandleActive === index}
+              onDragStart={(event) => {
+                event.dataTransfer.effectAllowed = "move";
+                event.dataTransfer.setData("text/plain", String(index));
+                setDraggedIndex(index);
+              }}
+              onDragEnd={() => {
+                setDraggedIndex(null);
+                setDragOverIndex(null);
+                setDragHandleActive(null);
+              }}
+              onDragOver={(event) => {
+                event.preventDefault();
+                event.dataTransfer.dropEffect = "move";
+                if (draggedIndex !== null && dragOverIndex !== index) {
+                  setDragOverIndex(index);
+                }
+              }}
+              onDragLeave={(event) => {
+                if (event.currentTarget.contains(event.relatedTarget)) return;
+                if (dragOverIndex === index) {
+                  setDragOverIndex(null);
+                }
+              }}
+              onDrop={(event) => {
+                event.preventDefault();
+                const fromStr = event.dataTransfer.getData("text/plain");
+                const fromIndex =
+                  fromStr !== "" ? parseInt(fromStr, 10) : draggedIndex;
+                if (
+                  fromIndex !== null &&
+                  !isNaN(fromIndex) &&
+                  fromIndex !== index
+                ) {
+                  reorder(fromIndex, index);
+                }
+                setDraggedIndex(null);
+                setDragOverIndex(null);
+                setDragHandleActive(null);
+              }}
+            >
+              <div
+                className="sker-drag-handle"
+                tabIndex={0}
+                role="button"
+                title="Drag to reorder column or use arrow keys"
+                aria-label={`Reorder ${column.name}. Drag or use up and down arrow keys.`}
+                onPointerDown={() => setDragHandleActive(index)}
+                onPointerUp={() => setDragHandleActive(null)}
+                onKeyDown={(event) => {
+                  if (event.key === "ArrowUp" && index > 0) {
+                    event.preventDefault();
+                    reorder(index, index - 1);
+                  } else if (
+                    event.key === "ArrowDown" &&
+                    index < columns.length - 1
+                  ) {
+                    event.preventDefault();
+                    reorder(index, index + 1);
+                  }
+                }}
+              >
+                <svg
+                  width="10"
+                  height="16"
+                  viewBox="0 0 10 16"
+                  fill="currentColor"
+                  aria-hidden="true"
+                >
+                  <circle cx="2.5" cy="3" r="1.5" />
+                  <circle cx="7.5" cy="3" r="1.5" />
+                  <circle cx="2.5" cy="8" r="1.5" />
+                  <circle cx="7.5" cy="8" r="1.5" />
+                  <circle cx="2.5" cy="13" r="1.5" />
+                  <circle cx="7.5" cy="13" r="1.5" />
+                </svg>
+              </div>
+
+              <div className="sker-column-fields">
+                <label>
+                  Name
+                  <input
+                    aria-label={`Column ${index + 1} name`}
+                    value={column.name}
+                    onChange={(event) =>
+                      update(index, "name", event.target.value)
+                    }
+                  />
+                </label>
+                <label>
+                  Type
+                  <select
+                    aria-label={`Column ${index + 1} type`}
+                    value={column.type}
+                    onChange={(event) =>
+                      handleTypeChange(index, event.target.value)
+                    }
+                  >
+                    {isCustom && (
+                      <optgroup label="Current Type">
+                        <option value={column.type}>{column.type}</option>
+                      </optgroup>
+                    )}
+                    {enums && enums.length > 0 && (
+                      <optgroup label="Enums">
+                        {enums.map((e) => (
+                          <option key={e.name} value={e.name}>
+                            {e.name}
+                          </option>
+                        ))}
+                      </optgroup>
+                    )}
+                    {COMMON_DATA_TYPES.map(({ group, types }) => (
+                      <optgroup key={group} label={group}>
+                        {types.map((t) => (
+                          <option key={t} value={t}>
+                            {t}
+                          </option>
+                        ))}
+                      </optgroup>
+                    ))}
+                    <optgroup label="Other">
+                      <option value="__custom__">Custom type…</option>
+                    </optgroup>
+                  </select>
+                </label>
+              </div>
             </div>
-          </div>
-        ))}
+          );
+        })}
       </div>
-      {error && <span role="alert" style={{ color: "#dc2626" }}>{error}</span>}
-      <ToolButton label="Apply column changes" className="sker-primary" disabled={disabled || table.partials?.length > 0} onClick={() => {
-        try {
-          if (source !== originalSource) throw new Error("The DBML changed. Reopen the column editor.");
-          onApply(editTableColumns(source, table.name, columns), source);
-        }
-        catch (cause) { setError(cause.message); }
-      }}>Apply changes</ToolButton>
+      {error && (
+        <span role="alert" style={{ color: "#dc2626" }}>
+          {error}
+        </span>
+      )}
+      <ToolButton
+        label="Apply column changes"
+        className="sker-primary"
+        disabled={disabled || table.partials?.length > 0}
+        onClick={() => {
+          try {
+            if (source !== originalSource) {
+              throw new Error(
+                "The DBML changed. Reopen the column editor.",
+              );
+            }
+            onApply(editTableColumns(source, table.name, columns), source);
+          } catch (cause) {
+            setError(cause.message);
+          }
+        }}
+      >
+        Apply changes
+      </ToolButton>
     </section>
   );
 }
@@ -3524,16 +3769,81 @@ const STYLES = `
     box-shadow: var(--sker-table-shadow), 0 0 14px color-mix(in srgb, var(--sker-table-color) 25%, transparent);
   }
 }
-.sker-column-list { display: flex; flex-direction: column; gap: 10px; }
-.sker-column-editor { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; padding-bottom: 10px; border-bottom: 1px solid var(--sker-border); }
-.sker-column-editor label { min-width: 0; color: var(--sker-muted); font-size: 10px; }
-.sker-column-editor input { margin-top: 4px; }
-.sker-column-editor .sker-inline { grid-column: 1 / -1; justify-content: flex-end; }
-.sker-column-editor .sker-button { min-height: 24px; padding: 2px 8px; }
+.sker-column-list { display: flex; flex-direction: column; gap: 8px; }
+.sker-column-editor {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 4px 10px;
+  border-bottom: 1px solid var(--sker-border);
+  transition: background 0.15s, border-color 0.15s, opacity 0.15s;
+}
+.sker-column-editor.is-dragging {
+  opacity: 0.4;
+}
+.sker-column-editor.is-drag-over {
+  border-bottom-color: #10b981;
+  background: color-mix(in srgb, #10b981 12%, transparent);
+  border-radius: 6px;
+}
+.sker-drag-handle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 18px;
+  height: 28px;
+  color: var(--sker-muted);
+  cursor: grab;
+  user-select: none;
+  flex-shrink: 0;
+  border-radius: 4px;
+  transition: color 0.15s, background 0.15s;
+}
+.sker-drag-handle:hover {
+  color: var(--sker-text);
+  background: color-mix(in srgb, var(--sker-text) 10%, transparent);
+}
+.sker-drag-handle:active {
+  cursor: grabbing;
+}
+.sker-drag-handle:focus-visible {
+  outline: 2px solid #10b981;
+  outline-offset: 1px;
+}
+.sker-column-fields {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  flex: 1;
+  min-width: 0;
+}
+.sker-column-editor label {
+  min-width: 0;
+  color: var(--sker-muted);
+  font-size: 10px;
+  display: flex;
+  flex-direction: column;
+}
+.sker-column-editor input,
+.sker-column-editor select {
+  margin-top: 4px;
+}
+.sker-column-editor select {
+  min-width: 0;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--sker-border);
+  border-radius: 6px;
+  color: var(--sker-text);
+  background: var(--sker-editor);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
 .sker-context {
   position: fixed;
   z-index: 100;
-  width: min(290px, calc(100vw - 16px));
+  width: min(320px, calc(100vw - 16px));
   max-height: calc(100dvh - 16px);
   overflow: auto;
   padding: 12px;
@@ -5833,6 +6143,7 @@ export default function SketchER() {
                   key={`${contextMenu.epoch}:${contextMenu.target}`}
                   table={tables.find((table) => table.name === contextMenu.target)}
                   source={data.dbml}
+                  enums={model.enums}
                   disabled={parsingPending || state.errors.length > 0}
                   onApply={(dbml, source) => {
                     if (stateRef.current.data.dbml !== source) throw new Error("The DBML changed. Reopen the column editor.");
