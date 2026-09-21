@@ -84,6 +84,7 @@ const GROUP_LABEL_HEIGHT = 26;
 const LANE_SPACING = 24;
 const ARRIVAL_SPACING = 8;
 const ROUTING_CLEARANCE = 12;
+const RELATIONSHIP_LINE_WIDTH = 1.8;
 
 const TABLE_COLORS = [
   "#ef4444",
@@ -501,6 +502,14 @@ function readBoolean(value, name, fallback) {
   return value;
 }
 
+function readNumber(value, name, fallback, min, max) {
+  if (value === undefined) return fallback;
+  if (typeof value !== "number" || !Number.isFinite(value)) {
+    throw new Error(`${name} must be a finite number.`);
+  }
+  return clamp(value, min, max);
+}
+
 function readRecord(value, name, validateValue) {
   if (value === undefined) return dictionary();
 
@@ -647,6 +656,13 @@ function normalizeDocument(raw, { requireDbml = false } = {}) {
       raw.reverseConnectionFlow,
       "reverseConnectionFlow",
       false,
+    ),
+    connectionLineWidth: readNumber(
+      raw.connectionLineWidth,
+      "connectionLineWidth",
+      RELATIONSHIP_LINE_WIDTH,
+      1.5,
+      2.0,
     ),
     isEditorCollapsed: readBoolean(
       raw.isEditorCollapsed,
@@ -1754,7 +1770,7 @@ function ZoomControl({ zoom, onChange }) {
 /* Relationship rendering                                                     */
 /* -------------------------------------------------------------------------- */
 
-function CardinalityEnd({ x, y, direction, cardinality, color }) {
+function CardinalityEnd({ x, y, direction, cardinality, color, lineWidth = RELATIONSHIP_LINE_WIDTH }) {
   const relation = cardinality || "1";
   const optional = relation.startsWith("0") || relation === "?";
   const many = relation.includes("*");
@@ -1769,7 +1785,7 @@ function CardinalityEnd({ x, y, direction, cardinality, color }) {
           r={3.2}
           fill="none"
           stroke={color}
-          strokeWidth={1.3}
+          strokeWidth={lineWidth}
         />
       )}
 
@@ -1780,7 +1796,7 @@ function CardinalityEnd({ x, y, direction, cardinality, color }) {
           x2={x + direction * 10}
           y2={y + 5}
           stroke={color}
-          strokeWidth={1.3}
+          strokeWidth={lineWidth}
           strokeLinecap="round"
         />
       )}
@@ -1788,13 +1804,13 @@ function CardinalityEnd({ x, y, direction, cardinality, color }) {
   );
 }
 
-function FlowArrow({ x, y, direction, color }) {
+function FlowArrow({ x, y, direction, color, lineWidth = RELATIONSHIP_LINE_WIDTH }) {
   return (
     <polyline
       points={`${x - direction * 6},${y - 4} ${x},${y} ${x - direction * 6},${y + 4}`}
       fill="none"
       stroke={color}
-      strokeWidth={1.5}
+      strokeWidth={lineWidth}
       strokeLinecap="round"
       strokeLinejoin="round"
       style={{ pointerEvents: "none" }}
@@ -1815,6 +1831,7 @@ function RelationshipLines({
   reverseFlow,
   theme,
   reducedMotion,
+  lineWidth = RELATIONSHIP_LINE_WIDTH,
   onDragStart,
   onMoveLine,
 }) {
@@ -2086,7 +2103,9 @@ function RelationshipLines({
           d={path}
           fill="none"
           stroke={color}
-          strokeWidth={1.3}
+          strokeWidth={lineWidth}
+          strokeLinecap="round"
+          strokeLinejoin="round"
           strokeDasharray={ref.inactive ? "6 5" : undefined}
         />
 
@@ -2145,6 +2164,7 @@ function RelationshipLines({
           direction={fromSide}
           cardinality={ref.from.cardinality}
           color={color}
+          lineWidth={lineWidth}
         />
         <CardinalityEnd
           x={x2}
@@ -2152,6 +2172,7 @@ function RelationshipLines({
           direction={toSide}
           cardinality={ref.to.cardinality}
           color={color}
+          lineWidth={lineWidth}
         />
 
         <FlowArrow
@@ -2159,6 +2180,7 @@ function RelationshipLines({
           y={reverseFlow ? y2 : y1}
           direction={reverseFlow ? -toSide : -fromSide}
           color={color}
+          lineWidth={lineWidth}
         />
 
         <text
@@ -5092,6 +5114,45 @@ export default function SketchER() {
                           ? "First DBML endpoint → second endpoint"
                           : "Second DBML endpoint → first endpoint"}
                       </p>
+
+                      <div className="sker-stack" style={{ gap: 6, paddingTop: 4 }}>
+                        <div className="sker-inline sker-between">
+                          <label
+                            htmlFor="sker-line-width-slider"
+                            style={{ fontSize: 13, fontWeight: 500 }}
+                          >
+                            Line width
+                          </label>
+                          <span className="sker-muted" style={{ fontSize: 12 }}>
+                            {Number(data.connectionLineWidth).toFixed(1)}px
+                          </span>
+                        </div>
+                        <input
+                          id="sker-line-width-slider"
+                          type="range"
+                          min="1.5"
+                          max="2.0"
+                          step="0.1"
+                          value={data.connectionLineWidth}
+                          onChange={(event) =>
+                            patch({
+                              connectionLineWidth: parseFloat(event.target.value),
+                            })
+                          }
+                          aria-label="Relationship line width"
+                        />
+                        <div
+                          className="sker-inline sker-between sker-muted"
+                          style={{ fontSize: 11 }}
+                        >
+                          <span>1.5</span>
+                          <span>1.6</span>
+                          <span>1.7</span>
+                          <span>1.8</span>
+                          <span>1.9</span>
+                          <span>2.0</span>
+                        </div>
+                      </div>
                     </div>
                   )}
                 </Popover>
@@ -5622,6 +5683,7 @@ export default function SketchER() {
                 selectedTables={state.selectedTables}
                 showAll={data.showAllConnections}
                 reverseFlow={data.reverseConnectionFlow}
+                lineWidth={data.connectionLineWidth}
                 theme={theme}
                 reducedMotion={reducedMotion}
                 onDragStart={(key, x, event) => {
