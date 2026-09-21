@@ -1634,7 +1634,6 @@ function ColumnEditor({
   onApply,
   disabled,
 }) {
-  const editorRef = useRef(null);
   const [originalSource] = useState(source);
   const [columns, setColumns] = useState(() =>
     table.columns.map((column) => ({
@@ -1719,18 +1718,21 @@ function ColumnEditor({
   useEffect(() => {
     if (activeTypeIndex === null) return;
     const handlePointerDown = (event) => {
-      if (!editorRef.current?.contains(event.target)) {
+      const container = event.target.closest?.(".sker-type-container");
+      if (
+        !container ||
+        container.dataset.columnIndex !== String(activeTypeIndex)
+      ) {
         setActiveTypeIndex(null);
       }
     };
-    document.addEventListener("pointerdown", handlePointerDown);
+    document.addEventListener("pointerdown", handlePointerDown, true);
     return () =>
-      document.removeEventListener("pointerdown", handlePointerDown);
+      document.removeEventListener("pointerdown", handlePointerDown, true);
   }, [activeTypeIndex]);
 
   return (
     <section
-      ref={editorRef}
       className="sker-stack"
       aria-label="Edit table columns"
     >
@@ -1838,7 +1840,7 @@ function ColumnEditor({
                     }
                   />
                 </label>
-                <div className="sker-type-container">
+                <div className="sker-type-container" data-column-index={index}>
                   <label>
                     Type
                     <input
