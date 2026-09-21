@@ -2323,6 +2323,13 @@ function ColumnEditor({
               type="button"
               className="sker-action-btn sker-apply-btn"
               disabled={disabled || table.partials?.length > 0}
+              title={
+                table.partials?.length > 0
+                  ? "Cannot edit tables constructed with TablePartials"
+                  : disabled
+                    ? "No changes to apply"
+                    : undefined
+              }
               onClick={handleApply}
             >
               Apply changes
@@ -6867,6 +6874,13 @@ export default function SketchER() {
                   groupExists ||
                   parsingPending ||
                   state.errors.length > 0
+                }
+                title={
+                  !newGroupName.trim() ? "Enter a group name" :
+                  groupExists ? "A group with this name already exists" :
+                  parsingPending ? "Waiting for code to parse..." :
+                  state.errors.length > 0 ? "Fix code errors before grouping" :
+                  undefined
                 }
               >
                 Create group
