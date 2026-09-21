@@ -1936,6 +1936,61 @@ function ColumnEditor({
   const [isTyping, setIsTyping] = useState(false);
   const [error, setError] = useState("");
 
+  const initialColumns = useMemo(
+    () =>
+      (table.columns || []).map((column) => ({
+        originalName: column.name,
+        name: column.name,
+        type: column.type,
+      })),
+    [table],
+  );
+
+  const isDirty = useMemo(() => {
+    if (columns.length !== initialColumns.length) return true;
+    return columns.some(
+      (c, i) =>
+        c.name !== initialColumns[i]?.name ||
+        c.type !== initialColumns[i]?.type ||
+        c.originalName !== initialColumns[i]?.originalName,
+    );
+  }, [columns, initialColumns]);
+
+  const [showActions, setShowActions] = useState(false);
+
+  useEffect(() => {
+    if (isDirty) {
+      const timer = setTimeout(() => setShowActions(true), 250);
+      return () => clearTimeout(timer);
+    } else {
+      setShowActions(false);
+    }
+  }, [isDirty]);
+
+  const handleCancel = () => {
+    setError("");
+    setColumns(
+      (table.columns || []).map((column) => ({
+        originalName: column.name,
+        name: column.name,
+        type: column.type,
+      })),
+    );
+    setActiveTypeIndex(null);
+    setIsTyping(false);
+  };
+
+  const handleApply = () => {
+    try {
+      if (source !== originalSource) {
+        throw new Error("The DBML changed. Reopen the column editor.");
+      }
+      onApply(editTableColumns(source, table.name, columns), source);
+    } catch (cause) {
+      setError(cause.message);
+    }
+  };
+
   const update = (index, key, value) => {
     setError("");
     setColumns((items) =>
@@ -2213,30 +2268,36 @@ function ColumnEditor({
           );
         })}
       </div>
-      {error && (
-        <span role="alert" style={{ color: "#dc2626" }}>
-          {error}
-        </span>
+      {showActions && (
+        <div className="sker-column-actions-bar">
+          <div className="sker-column-actions-header">
+            <span className="sker-unsaved-dot" />
+            <span className="sker-unsaved-text">Unsaved changes</span>
+          </div>
+          {error && (
+            <span role="alert" className="sker-actions-error">
+              {error}
+            </span>
+          )}
+          <div className="sker-column-actions">
+            <button
+              type="button"
+              className="sker-action-btn sker-cancel-btn"
+              onClick={handleCancel}
+            >
+              Cancel
+            </button>
+            <button
+              type="button"
+              className="sker-action-btn sker-apply-btn"
+              disabled={disabled || table.partials?.length > 0}
+              onClick={handleApply}
+            >
+              Apply changes
+            </button>
+          </div>
+        </div>
       )}
-      <ToolButton
-        label="Apply column changes"
-        className="sker-primary"
-        disabled={disabled || table.partials?.length > 0}
-        onClick={() => {
-          try {
-            if (source !== originalSource) {
-              throw new Error(
-                "The DBML changed. Reopen the column editor.",
-              );
-            }
-            onApply(editTableColumns(source, table.name, columns), source);
-          } catch (cause) {
-            setError(cause.message);
-          }
-        }}
-      >
-        Apply changes
-      </ToolButton>
     </section>
   );
 }
@@ -4248,6 +4309,138 @@ const STYLES = `
   background: color-mix(in srgb, var(--sker-text) 10%, transparent);
   color: var(--sker-muted);
   font-family: 'DM Sans', sans-serif;
+}
+@keyframes sker-prompt-vibrate {
+  0% {
+    transform: translateY(10px) scale(0.96);
+    opacity: 0;
+  }
+  20% {
+    transform: translateY(-2px) scale(1.02);
+    opacity: 1;
+  }
+  40% {
+    transform: translateY(1px) scale(0.99) rotate(-0.6deg);
+  }
+  60% {
+    transform: translateY(-1px) scale(1.01) rotate(0.6deg);
+  }
+  80% {
+    transform: translateY(0.5px) rotate(-0.2deg);
+  }
+  100% {
+    transform: translateY(0) scale(1) rotate(0);
+    opacity: 1;
+  }
+}
+@keyframes sker-amber-glow {
+  0%, 100% {
+    box-shadow: 0 0 0 1px rgba(245, 158, 11, 0.45), 0 0 12px rgba(245, 158, 11, 0.45);
+    border-color: #f59e0b;
+  }
+  50% {
+    box-shadow: 0 0 0 3px rgba(251, 191, 36, 0.65), 0 0 24px rgba(245, 158, 11, 0.85);
+    border-color: #fbbf24;
+  }
+}
+@keyframes sker-bar-glow {
+  0%, 100% {
+    border-top-color: rgba(245, 158, 11, 0.5);
+    box-shadow: 0 -8px 24px rgba(245, 158, 11, 0.2), 0 -2px 8px rgba(0, 0, 0, 0.4);
+  }
+  50% {
+    border-top-color: rgba(251, 191, 36, 0.9);
+    box-shadow: 0 -10px 30px rgba(245, 158, 11, 0.4), 0 -2px 10px rgba(0, 0, 0, 0.5);
+  }
+}
+@keyframes sker-dot-pulse {
+  0%, 100% { transform: scale(1); opacity: 0.85; }
+  50% { transform: scale(1.35); opacity: 1; }
+}
+.sker-column-actions-bar {
+  position: sticky;
+  bottom: -12px;
+  margin: 10px -12px -12px -12px;
+  padding: 10px 12px 12px;
+  background: color-mix(in srgb, var(--sker-panel) 94%, #000 6%);
+  backdrop-filter: blur(14px);
+  -webkit-backdrop-filter: blur(14px);
+  border-top: 1px solid rgba(245, 158, 11, 0.5);
+  border-bottom-left-radius: 9px;
+  border-bottom-right-radius: 9px;
+  z-index: 95;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  animation: sker-prompt-vibrate 0.45s cubic-bezier(0.34, 1.56, 0.64, 1) forwards, sker-bar-glow 2.5s infinite ease-in-out;
+}
+.sker-column-actions-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 11px;
+  font-weight: 600;
+  color: #fbbf24;
+  letter-spacing: 0.2px;
+}
+.sker-unsaved-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #f59e0b;
+  box-shadow: 0 0 8px #fbbf24;
+  display: inline-block;
+  animation: sker-dot-pulse 1.8s infinite ease-in-out;
+}
+.sker-unsaved-text {
+  font-size: 11px;
+  color: #fbbf24;
+}
+.sker-actions-error {
+  color: #ef4444;
+  font-size: 11.5px;
+  font-weight: 500;
+  line-height: 1.3;
+}
+.sker-column-actions {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  width: 100%;
+}
+.sker-action-btn {
+  font-family: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
+  font-size: 12px;
+  padding: 7px 14px;
+  border-radius: 6px;
+  cursor: pointer;
+  transition: background 0.15s, border-color 0.15s, color 0.15s, transform 0.1s, box-shadow 0.15s;
+}
+.sker-cancel-btn {
+  background: color-mix(in srgb, var(--sker-text) 8%, transparent);
+  color: var(--sker-text);
+  border: 1px solid var(--sker-border);
+}
+.sker-cancel-btn:hover {
+  background: color-mix(in srgb, var(--sker-text) 14%, transparent);
+  border-color: var(--sker-muted);
+}
+.sker-apply-btn {
+  background: linear-gradient(135deg, #f59e0b, #d97706);
+  color: #ffffff;
+  border: 1px solid #fbbf24;
+  font-weight: 600;
+  animation: sker-amber-glow 2s infinite ease-in-out;
+}
+.sker-apply-btn:hover:not(:disabled) {
+  filter: brightness(1.12);
+  transform: translateY(-1px);
+}
+.sker-apply-btn:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+  animation: none;
 }
 .sker-context {
   position: fixed;
