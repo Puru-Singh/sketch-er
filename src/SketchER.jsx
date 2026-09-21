@@ -1611,68 +1611,30 @@ function Dialog({ title, onClose, restoreFocusRef, children, wide = false }) {
   );
 }
 
-const COMMON_DATA_TYPES = [
-  {
-    group: "Numeric",
-    types: [
-      "int",
-      "integer",
-      "bigint",
-      "smallint",
-      "tinyint",
-      "serial",
-      "bigserial",
-      "decimal",
-      "numeric",
-      "float",
-      "double",
-      "real",
-    ],
-  },
-  {
-    group: "String & Text",
-    types: [
-      "varchar",
-      "varchar(255)",
-      "text",
-      "char",
-      "character varying",
-      "tinytext",
-      "mediumtext",
-      "longtext",
-    ],
-  },
-  {
-    group: "Boolean",
-    types: ["boolean", "bool"],
-  },
-  {
-    group: "Date & Time",
-    types: [
-      "timestamp",
-      "timestamptz",
-      "date",
-      "time",
-      "timetz",
-      "datetime",
-      "interval",
-    ],
-  },
-  {
-    group: "Document & Binary",
-    types: [
-      "uuid",
-      "json",
-      "jsonb",
-      "blob",
-      "bytea",
-      "binary",
-      "varbinary",
-    ],
-  },
+const DEFAULT_POPULAR_TYPES = [
+  "int",
+  "varchar(255)",
+  "text",
+  "boolean",
+  "timestamp",
+  "uuid",
+  "bigint",
+  "json",
+  "date",
+  "decimal",
+  "timestamptz",
+  "serial",
 ];
 
-function ColumnEditor({ table, source, enums = [], onApply, disabled }) {
+function ColumnEditor({
+  table,
+  tables = [],
+  source,
+  enums = [],
+  onApply,
+  disabled,
+}) {
+  const editorRef = useRef(null);
   const [originalSource] = useState(source);
   const [columns, setColumns] = useState(() =>
     table.columns.map((column) => ({
@@ -1683,7 +1645,7 @@ function ColumnEditor({ table, source, enums = [], onApply, disabled }) {
   );
   const [draggedIndex, setDraggedIndex] = useState(null);
   const [dragOverIndex, setDragOverIndex] = useState(null);
-  const [dragHandleActive, setDragHandleActive] = useState(null);
+  const [activeTypeIndex, setActiveTypeIndex] = useState(null);
   const [error, setError] = useState("");
 
   const update = (index, key, value) => {
@@ -1704,29 +1666,74 @@ function ColumnEditor({ table, source, enums = [], onApply, disabled }) {
     });
   };
 
-  const knownTypeSet = useMemo(() => {
-    const set = new Set();
-    COMMON_DATA_TYPES.forEach(({ types }) => types.forEach((t) => set.add(t)));
-    (enums || []).forEach((e) => set.add(e.name));
-    return set;
-  }, [enums]);
-
-  const handleTypeChange = (index, val) => {
-    if (val === "__custom__") {
-      const custom = window.prompt(
-        "Enter custom data type (e.g. varchar(50)):",
-        columns[index]?.type || "",
-      );
-      if (custom && custom.trim()) {
-        update(index, "type", custom.trim());
+  const typeCounts = useMemo(() => {
+    const counts = new Map();
+    for (const t of tables || []) {
+      for (const c of t.columns || []) {
+        const typeName = c.type?.trim();
+        if (typeName) {
+          counts.set(typeName, (counts.get(typeName) || 0) + 1);
+        }
       }
-      return;
     }
-    update(index, "type", val);
+    for (const e of enums || []) {
+      if (e.name && !counts.has(e.name)) {
+        counts.set(e.name, 1);
+      }
+    }
+    return counts;
+  }, [tables, enums]);
+
+  const popularDbmlTypes = useMemo(() => {
+    const sortedFromDbml = [...typeCounts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([type]) => type);
+
+    const seen = new Set(sortedFromDbml);
+    const result = sortedFromDbml.map((type) => ({
+      type,
+      count: typeCounts.get(type) || 0,
+    }));
+
+    for (const type of DEFAULT_POPULAR_TYPES) {
+      if (!seen.has(type)) {
+        seen.add(type);
+        result.push({ type, count: 0 });
+      }
+    }
+
+    return result;
+  }, [typeCounts]);
+
+  const getSuggestions = (currentVal) => {
+    const query = (currentVal || "").trim().toLowerCase();
+    if (!query) return popularDbmlTypes.slice(0, 8);
+    const matched = popularDbmlTypes.filter((item) =>
+      item.type.toLowerCase().includes(query),
+    );
+    return matched.length > 0
+      ? matched.slice(0, 8)
+      : popularDbmlTypes.slice(0, 8);
   };
 
+  useEffect(() => {
+    if (activeTypeIndex === null) return;
+    const handlePointerDown = (event) => {
+      if (!editorRef.current?.contains(event.target)) {
+        setActiveTypeIndex(null);
+      }
+    };
+    document.addEventListener("pointerdown", handlePointerDown);
+    return () =>
+      document.removeEventListener("pointerdown", handlePointerDown);
+  }, [activeTypeIndex]);
+
   return (
-    <section className="sker-stack" aria-label="Edit table columns">
+    <section
+      ref={editorRef}
+      className="sker-stack"
+      aria-label="Edit table columns"
+    >
       <strong>
         Columns <span className="sker-muted">({columns.length})</span>
       </strong>
@@ -1737,22 +1744,11 @@ function ColumnEditor({ table, source, enums = [], onApply, disabled }) {
       )}
       <div className="sker-column-list">
         {columns.map((column, index) => {
-          const isCustom = column.type && !knownTypeSet.has(column.type);
+          const suggestions = getSuggestions(column.type);
           return (
             <div
               className={`sker-column-editor ${dragOverIndex === index ? "is-drag-over" : ""} ${draggedIndex === index ? "is-dragging" : ""}`}
               key={column.originalName}
-              draggable={!disabled && dragHandleActive === index}
-              onDragStart={(event) => {
-                event.dataTransfer.effectAllowed = "move";
-                event.dataTransfer.setData("text/plain", String(index));
-                setDraggedIndex(index);
-              }}
-              onDragEnd={() => {
-                setDraggedIndex(null);
-                setDragOverIndex(null);
-                setDragHandleActive(null);
-              }}
               onDragOver={(event) => {
                 event.preventDefault();
                 event.dataTransfer.dropEffect = "move";
@@ -1780,17 +1776,28 @@ function ColumnEditor({ table, source, enums = [], onApply, disabled }) {
                 }
                 setDraggedIndex(null);
                 setDragOverIndex(null);
-                setDragHandleActive(null);
               }}
             >
               <div
                 className="sker-drag-handle"
+                draggable={!disabled}
                 tabIndex={0}
                 role="button"
-                title="Drag to reorder column or use arrow keys"
-                aria-label={`Reorder ${column.name}. Drag or use up and down arrow keys.`}
-                onPointerDown={() => setDragHandleActive(index)}
-                onPointerUp={() => setDragHandleActive(null)}
+                title="Hold and drag to reorder column or use arrow keys"
+                aria-label={`Reorder ${column.name}. Hold and drag or use up and down arrow keys.`}
+                onDragStart={(event) => {
+                  event.dataTransfer.effectAllowed = "move";
+                  event.dataTransfer.setData("text/plain", String(index));
+                  setDraggedIndex(index);
+                  const row = event.currentTarget.closest(".sker-column-editor");
+                  if (row && event.dataTransfer.setDragImage) {
+                    event.dataTransfer.setDragImage(row, 16, row.offsetHeight / 2);
+                  }
+                }}
+                onDragEnd={() => {
+                  setDraggedIndex(null);
+                  setDragOverIndex(null);
+                }}
                 onKeyDown={(event) => {
                   if (event.key === "ArrowUp" && index > 0) {
                     event.preventDefault();
@@ -1805,18 +1812,18 @@ function ColumnEditor({ table, source, enums = [], onApply, disabled }) {
                 }}
               >
                 <svg
-                  width="10"
-                  height="16"
-                  viewBox="0 0 10 16"
+                  width="12"
+                  height="18"
+                  viewBox="0 0 12 18"
                   fill="currentColor"
                   aria-hidden="true"
                 >
-                  <circle cx="2.5" cy="3" r="1.5" />
-                  <circle cx="7.5" cy="3" r="1.5" />
-                  <circle cx="2.5" cy="8" r="1.5" />
-                  <circle cx="7.5" cy="8" r="1.5" />
-                  <circle cx="2.5" cy="13" r="1.5" />
-                  <circle cx="7.5" cy="13" r="1.5" />
+                  <circle cx="3.5" cy="3.5" r="1.5" />
+                  <circle cx="8.5" cy="3.5" r="1.5" />
+                  <circle cx="3.5" cy="9" r="1.5" />
+                  <circle cx="8.5" cy="9" r="1.5" />
+                  <circle cx="3.5" cy="14.5" r="1.5" />
+                  <circle cx="8.5" cy="14.5" r="1.5" />
                 </svg>
               </div>
 
@@ -1831,43 +1838,52 @@ function ColumnEditor({ table, source, enums = [], onApply, disabled }) {
                     }
                   />
                 </label>
-                <label>
-                  Type
-                  <select
-                    aria-label={`Column ${index + 1} type`}
-                    value={column.type}
-                    onChange={(event) =>
-                      handleTypeChange(index, event.target.value)
-                    }
-                  >
-                    {isCustom && (
-                      <optgroup label="Current Type">
-                        <option value={column.type}>{column.type}</option>
-                      </optgroup>
-                    )}
-                    {enums && enums.length > 0 && (
-                      <optgroup label="Enums">
-                        {enums.map((e) => (
-                          <option key={e.name} value={e.name}>
-                            {e.name}
-                          </option>
-                        ))}
-                      </optgroup>
-                    )}
-                    {COMMON_DATA_TYPES.map(({ group, types }) => (
-                      <optgroup key={group} label={group}>
-                        {types.map((t) => (
-                          <option key={t} value={t}>
-                            {t}
-                          </option>
-                        ))}
-                      </optgroup>
-                    ))}
-                    <optgroup label="Other">
-                      <option value="__custom__">Custom type…</option>
-                    </optgroup>
-                  </select>
-                </label>
+                <div className="sker-type-container">
+                  <label>
+                    Type
+                    <input
+                      aria-label={`Column ${index + 1} type`}
+                      value={column.type}
+                      autoComplete="off"
+                      onChange={(event) => {
+                        update(index, "type", event.target.value);
+                        setActiveTypeIndex(index);
+                      }}
+                      onFocus={() => setActiveTypeIndex(index)}
+                      onClick={() => setActiveTypeIndex(index)}
+                      onKeyDown={(event) => {
+                        if (event.key === "Escape") {
+                          setActiveTypeIndex(null);
+                        }
+                      }}
+                    />
+                  </label>
+                  {activeTypeIndex === index && suggestions.length > 0 && (
+                    <div
+                      className="sker-type-suggestions"
+                      role="listbox"
+                      aria-label="Suggested datatypes"
+                    >
+                      {suggestions.map(({ type, count }) => (
+                        <button
+                          key={type}
+                          type="button"
+                          className={`sker-type-option ${type === column.type ? "is-selected" : ""}`}
+                          onMouseDown={(event) => {
+                            event.preventDefault();
+                            update(index, "type", type);
+                            setActiveTypeIndex(null);
+                          }}
+                        >
+                          <span>{type}</span>
+                          {count > 0 && (
+                            <span className="sker-type-badge">{count}×</span>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+                  )}
+                </div>
               </div>
             </div>
           );
@@ -3771,40 +3787,50 @@ const STYLES = `
 }
 .sker-column-list { display: flex; flex-direction: column; gap: 8px; }
 .sker-column-editor {
+  position: relative;
   display: flex;
-  align-items: center;
+  align-items: stretch;
   gap: 8px;
   padding: 6px 4px 10px;
   border-bottom: 1px solid var(--sker-border);
   transition: background 0.15s, border-color 0.15s, opacity 0.15s;
 }
 .sker-column-editor.is-dragging {
-  opacity: 0.4;
+  opacity: 0.35;
+  background: color-mix(in srgb, var(--sker-editor) 50%, transparent);
 }
 .sker-column-editor.is-drag-over {
   border-bottom-color: #10b981;
-  background: color-mix(in srgb, #10b981 12%, transparent);
+  background: color-mix(in srgb, #10b981 14%, transparent);
+  box-shadow: 0 2px 0 0 #10b981;
   border-radius: 6px;
 }
 .sker-drag-handle {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 18px;
-  height: 28px;
+  align-self: stretch;
+  width: 30px;
+  min-width: 30px;
+  margin: -2px 0 -6px -2px;
   color: var(--sker-muted);
+  background: color-mix(in srgb, var(--sker-text) 6%, transparent);
+  border: 1px solid transparent;
+  border-radius: 6px;
   cursor: grab;
   user-select: none;
+  -webkit-user-select: none;
   flex-shrink: 0;
-  border-radius: 4px;
-  transition: color 0.15s, background 0.15s;
+  transition: color 0.15s, background 0.15s, border-color 0.15s;
 }
 .sker-drag-handle:hover {
-  color: var(--sker-text);
-  background: color-mix(in srgb, var(--sker-text) 10%, transparent);
+  color: #10b981;
+  background: color-mix(in srgb, #10b981 15%, transparent);
+  border-color: color-mix(in srgb, #10b981 30%, transparent);
 }
 .sker-drag-handle:active {
   cursor: grabbing;
+  background: color-mix(in srgb, #10b981 25%, transparent);
 }
 .sker-drag-handle:focus-visible {
   outline: 2px solid #10b981;
@@ -3824,21 +3850,65 @@ const STYLES = `
   display: flex;
   flex-direction: column;
 }
-.sker-column-editor input,
-.sker-column-editor select {
+.sker-column-editor input {
   margin-top: 4px;
 }
-.sker-column-editor select {
+.sker-type-container {
+  position: relative;
+  display: flex;
+  flex-direction: column;
   min-width: 0;
-  width: 100%;
-  padding: 6px 8px;
+}
+.sker-type-suggestions {
+  position: absolute;
+  top: calc(100% + 3px);
+  left: 0;
+  right: 0;
+  z-index: 120;
+  max-height: 180px;
+  overflow-y: auto;
+  padding: 4px;
   border: 1px solid var(--sker-border);
-  border-radius: 6px;
+  border-radius: 8px;
+  background: var(--sker-panel);
+  box-shadow: 0 10px 28px #0006, 0 2px 6px #0003;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+.sker-type-option {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  width: 100%;
+  padding: 5px 8px;
+  border: 0;
+  border-radius: 5px;
+  background: transparent;
   color: var(--sker-text);
-  background: var(--sker-editor);
-  font: inherit;
-  font-size: 12px;
+  font-family: 'DM Mono', monospace, sans-serif;
+  font-size: 11.5px;
+  text-align: left;
   cursor: pointer;
+  transition: background 0.1s, color 0.1s;
+}
+.sker-type-option:hover,
+.sker-type-option:focus-visible {
+  background: color-mix(in srgb, #10b981 18%, transparent);
+  color: #10b981;
+  outline: none;
+}
+.sker-type-option.is-selected {
+  font-weight: 700;
+  color: #10b981;
+}
+.sker-type-badge {
+  font-size: 10px;
+  padding: 1px 5px;
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--sker-text) 10%, transparent);
+  color: var(--sker-muted);
+  font-family: 'DM Sans', sans-serif;
 }
 .sker-context {
   position: fixed;
@@ -6142,6 +6212,7 @@ export default function SketchER() {
                 <ColumnEditor
                   key={`${contextMenu.epoch}:${contextMenu.target}`}
                   table={tables.find((table) => table.name === contextMenu.target)}
+                  tables={tables}
                   source={data.dbml}
                   enums={model.enums}
                   disabled={parsingPending || state.errors.length > 0}
