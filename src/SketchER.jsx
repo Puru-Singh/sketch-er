@@ -1920,6 +1920,8 @@ function ColumnEditor({
   source,
   enums = [],
   onApply,
+  onCancel,
+  onRegisterGuard,
   disabled,
 }) {
   const [originalSource] = useState(source);
@@ -1957,6 +1959,31 @@ function ColumnEditor({
   }, [columns, initialColumns]);
 
   const [showActions, setShowActions] = useState(false);
+  const [vibrateKey, setVibrateKey] = useState(0);
+
+  const triggerVibrate = useCallback(() => {
+    setVibrateKey((prev) => prev + 1);
+    if (typeof navigator !== "undefined" && navigator.vibrate) {
+      try {
+        navigator.vibrate([40, 60, 40]);
+      } catch {
+        // ignore
+      }
+    }
+  }, []);
+
+  useEffect(() => {
+    if (onRegisterGuard) {
+      if (isDirty) {
+        onRegisterGuard(triggerVibrate);
+      } else {
+        onRegisterGuard(null);
+      }
+    }
+    return () => {
+      if (onRegisterGuard) onRegisterGuard(null);
+    };
+  }, [isDirty, onRegisterGuard, triggerVibrate]);
 
   useEffect(() => {
     if (isDirty) {
@@ -1978,6 +2005,8 @@ function ColumnEditor({
     );
     setActiveTypeIndex(null);
     setIsTyping(false);
+    if (onRegisterGuard) onRegisterGuard(null);
+    if (onCancel) onCancel();
   };
 
   const handleApply = () => {
@@ -2269,7 +2298,10 @@ function ColumnEditor({
         })}
       </div>
       {showActions && (
-        <div className="sker-column-actions-bar">
+        <div
+          key={vibrateKey}
+          className={`sker-column-actions-bar ${vibrateKey > 0 ? "is-vibrating" : ""}`}
+        >
           <div className="sker-column-actions-header">
             <span className="sker-unsaved-dot" />
             <span className="sker-unsaved-text">Unsaved changes</span>
@@ -4357,6 +4389,22 @@ const STYLES = `
   0%, 100% { transform: scale(1); opacity: 0.85; }
   50% { transform: scale(1.35); opacity: 1; }
 }
+@keyframes sker-vibrate-attention {
+  0% { transform: translate3d(0, 0, 0); }
+  12% { transform: translate3d(-7px, 0, 0) rotate(-1.2deg); }
+  25% { transform: translate3d(7px, 0, 0) rotate(1.2deg); }
+  37% { transform: translate3d(-5px, 0, 0) rotate(-0.8deg); }
+  50% { transform: translate3d(5px, 0, 0) rotate(0.8deg); }
+  65% { transform: translate3d(-3px, 0, 0) rotate(-0.4deg); }
+  80% { transform: translate3d(2px, 0, 0) rotate(0.2deg); }
+  100% { transform: translate3d(0, 0, 0) rotate(0); }
+}
+.sker-column-actions-bar.is-vibrating {
+  animation: sker-vibrate-attention 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97) both, sker-bar-glow 1.5s infinite ease-in-out;
+}
+.sker-column-actions-bar.is-vibrating .sker-apply-btn {
+  animation: sker-vibrate-attention 0.45s cubic-bezier(0.36, 0.07, 0.19, 0.97) both, sker-amber-glow 0.8s infinite ease-in-out;
+}
 .sker-column-actions-bar {
   position: sticky;
   bottom: -12px;
@@ -5443,7 +5491,13 @@ export default function SketchER() {
 
   /* ---------------------------- Context menu ----------------------------- */
 
+  const unsavedGuardRef = useRef(null);
+
   const openContextMenu = useCallback((name, event) => {
+    if (unsavedGuardRef.current) {
+      unsavedGuardRef.current();
+      return;
+    }
     const current = stateRef.current;
     const names = new Set(current.selectedTables);
 
@@ -5466,15 +5520,30 @@ export default function SketchER() {
   }, [stateRef]);
 
   useEffect(() => {
-    if (!contextMenu) return undefined;
+    if (!contextMenu) {
+      unsavedGuardRef.current = null;
+      return undefined;
+    }
 
     const onPointer = (event) => {
-      if (!contextRef.current?.contains(event.target)) setContextMenu(null);
+      if (!contextRef.current?.contains(event.target)) {
+        if (unsavedGuardRef.current) {
+          event.preventDefault();
+          event.stopPropagation();
+          unsavedGuardRef.current();
+          return;
+        }
+        setContextMenu(null);
+      }
     };
 
     const onKey = (event) => {
       if (event.key === "Escape") {
         event.preventDefault();
+        if (unsavedGuardRef.current) {
+          unsavedGuardRef.current();
+          return;
+        }
         setContextMenu(null);
         canvasRef.current?.focus();
       }
@@ -6717,6 +6786,10 @@ export default function SketchER() {
                 colors={legendEntries.map((entry) => entry.color)}
                 selected={effectiveColors[contextMenu.target]}
                 onChoose={(color) => {
+                  if (unsavedGuardRef.current) {
+                    unsavedGuardRef.current();
+                    return;
+                  }
                   dispatch({
                     type: "table-colors",
                     colors: { [contextMenu.target]: color },
@@ -6751,8 +6824,16 @@ export default function SketchER() {
                   source={data.dbml}
                   enums={model.enums}
                   disabled={parsingPending || state.errors.length > 0}
+                  onRegisterGuard={(guardFn) => {
+                    unsavedGuardRef.current = guardFn;
+                  }}
+                  onCancel={() => {
+                    unsavedGuardRef.current = null;
+                    setContextMenu(null);
+                  }}
                   onApply={(dbml, source) => {
                     if (stateRef.current.data.dbml !== source) throw new Error("The DBML changed. Reopen the column editor.");
+                    unsavedGuardRef.current = null;
                     dispatch({ type: "edit", dbml });
                     setContextMenu(null);
                   }}
