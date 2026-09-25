@@ -1,0 +1,3 @@
+## 2026-09-25 - Surfacing Keyboard Shortcuts and Interactive State
+**Learning:** Adding keyboard shortcuts to `title` tooltips and using `aria-keyshortcuts` creates an easily discoverable and accessible experience for power users. Toggle buttons, such as those in a color palette, need `aria-pressed` rather than just visual classes to correctly broadcast their active state to screen readers.
+**Action:** Always surface existing keyboard shortcuts via tooltips and ARIA attributes in custom toolbars, and ensure custom toggle components (like color swatches) utilize `aria-pressed` for semantic state.
