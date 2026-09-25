@@ -104,7 +104,7 @@ async function drawVectorLayer(context, diagramSvg, bounds, pixelWidth, pixelHei
   }
 }
 
-async function captureHtmlLayer({ htmlNodes, bounds, scale, html2canvas }) {
+async function captureHtmlLayer({ htmlNodes, bounds, scale, html2canvas, hostElement }) {
   const stage = document.createElement("div");
   const stageId = `sketcher-export-${Date.now()}-${Math.random().toString(36).slice(2)}`;
   stage.dataset.exportTableStage = stageId;
@@ -151,7 +151,12 @@ async function captureHtmlLayer({ htmlNodes, bounds, scale, html2canvas }) {
     stage.appendChild(clone);
   });
 
-  document.body.appendChild(stage);
+  // The stage must stay inside the app root so clones inherit its theme CSS
+  // variables (e.g. --sker-border) and descendant rules like `.sker-root
+  // input`. Clones appended to document.body lose that scope, and
+  // `var(--sker-border)` falls back to currentColor, drawing a text-colored
+  // border around the exported legend.
+  (hostElement ?? document.body).appendChild(stage);
   try {
     if (document.fonts?.ready) await document.fonts.ready;
     await nextPaint();
@@ -199,6 +204,7 @@ export async function renderDiagramPng({
   htmlNodes,
   bounds,
   backgroundColor,
+  hostElement,
 }) {
   if (!diagramSvg || !bounds || htmlNodes.length === 0) {
     throw new Error("The diagram has no renderable content.");
@@ -225,7 +231,7 @@ export async function renderDiagramPng({
   // diagram annotations are captured without the canvas pan/zoom transform,
   // then composited using the exact same world bounds.
   await drawVectorLayer(context, diagramSvg, bounds, pixelWidth, pixelHeight);
-  const htmlLayer = await captureHtmlLayer({ htmlNodes, bounds, scale, html2canvas });
+  const htmlLayer = await captureHtmlLayer({ htmlNodes, bounds, scale, html2canvas, hostElement });
   context.drawImage(htmlLayer, 0, 0);
   htmlLayer.width = 1;
   htmlLayer.height = 1;

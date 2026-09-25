@@ -5950,6 +5950,9 @@ export default function SketchER() {
         htmlNodes,
         bounds,
         backgroundColor: data.isDark ? "#1e1e1e" : "#f5f5f5",
+        // Keep the HTML capture stage inside the app root so the legend
+        // clone inherits the theme's CSS variables and scoped rules.
+        hostElement: rootRef.current ?? undefined,
       });
 
       if (!mountedRef.current) return;
