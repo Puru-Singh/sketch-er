@@ -1401,6 +1401,7 @@ function ToolButton({
   disabled = false,
   buttonRef,
   className = "",
+  shortcut,
   ...rest
 }) {
   return (
@@ -1409,7 +1410,8 @@ function ToolButton({
       type="button"
       className={`sker-button ${className}`}
       aria-label={label}
-      title={label}
+      title={shortcut ? `${label} (${shortcut})` : label}
+      aria-keyshortcuts={shortcut}
       onClick={onClick}
       disabled={disabled}
       {...rest}
@@ -1613,7 +1615,7 @@ function Dialog({ title, onClose, restoreFocusRef, children, wide = false }) {
       >
         <header className="sker-dialog-header">
           <h2 id={titleId}>{title}</h2>
-          <ToolButton buttonRef={closeRef} label="Close dialog" onClick={onClose}>
+          <ToolButton buttonRef={closeRef} label="Close dialog" shortcut="Escape" onClick={onClose}>
             ×
           </ToolButton>
         </header>
@@ -2372,6 +2374,7 @@ function ColorPalette({ colors, selected, onChoose, label }) {
           style={{ background: color }}
           aria-label={`Apply color ${color}`}
           title={color}
+          aria-pressed={selected === color}
           onClick={() => onChoose(color)}
         />
       ))}
@@ -6479,6 +6482,7 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom out"
+                shortcut="-"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom / 1.1)}
               >
                 −
@@ -6488,12 +6492,13 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom in"
+                shortcut="+"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom * 1.1)}
               >
                 +
               </ToolButton>
 
-              <ToolButton label="Fit diagram in view" onClick={fitToCanvas}>
+              <ToolButton label="Fit diagram in view" shortcut="f" onClick={fitToCanvas}>
                 Fit
               </ToolButton>
 
@@ -6556,6 +6561,7 @@ export default function SketchER() {
 
                     <ToolButton
                       label="Reset canvas view"
+                      shortcut="0"
                       onClick={() => {
                         resetView();
                         close(true);
