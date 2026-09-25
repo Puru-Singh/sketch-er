@@ -6479,6 +6479,8 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom out"
+                title="Zoom out (-)"
+                aria-keyshortcuts="-"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom / 1.1)}
               >
                 −
@@ -6488,12 +6490,19 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom in"
+                title="Zoom in (+)"
+                aria-keyshortcuts="+"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom * 1.1)}
               >
                 +
               </ToolButton>
 
-              <ToolButton label="Fit diagram in view" onClick={fitToCanvas}>
+              <ToolButton
+                label="Fit diagram in view"
+                title="Fit diagram in view (F)"
+                aria-keyshortcuts="f"
+                onClick={fitToCanvas}
+              >
                 Fit
               </ToolButton>
 
@@ -6556,6 +6565,8 @@ export default function SketchER() {
 
                     <ToolButton
                       label="Reset canvas view"
+                      title="Reset canvas view (0)"
+                      aria-keyshortcuts="0"
                       onClick={() => {
                         resetView();
                         close(true);
