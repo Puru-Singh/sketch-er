@@ -56,6 +56,15 @@ import {
   SHARE_QR_TOO_LARGE,
 } from "./shareQr.js";
 
+import {
+  createColResizeCursor,
+  createGrabCursor,
+  createGrabbingCursor,
+  createMoveCursor,
+  getThemeCursorVariables,
+  handCursorCss,
+} from "./cursors.js";
+
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -205,33 +214,9 @@ const DARK_THEME = {
   legendBg: "rgba(30,30,30,0.7)",
 };
 
-// Named grab/grabbing cursors are drawn by the OS as a white hand, which
-// reads poorly against the light canvas. Custom hand cursors keep the
-// pointer legible in both themes.
-const HAND_CURSOR_FINGERS = [
-  { x: 7, width: 5 },
-  { x: 12, width: 5 },
-  { x: 18, width: 5 },
-  { x: 23, width: 4.5 },
-];
-
-function handCursorCss(fill, open) {
-  const fingerHeights = open ? [15, 17, 15, 11] : [8, 8, 8, 8];
-  const fingers = HAND_CURSOR_FINGERS.map(
-    ({ x, width }, index) => {
-      const height = fingerHeights[index];
-      return `<rect x="${x}" y="${17 - height}" width="${width}" height="${height}" rx="${width / 2}"/>`;
-    },
-  ).join("");
-  const svg =
-    `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">` +
-    `<g fill="${fill}">` +
-    `<rect x="7" y="13" width="20" height="16" rx="5"/>${fingers}` +
-    `<rect x="24" y="14" width="5" height="11" rx="2.5" transform="rotate(15 26.5 19.5)"/>` +
-    `</g></svg>`;
-  const hotspot = open ? "9 2" : "9 9";
-  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${hotspot}, ${open ? "grab" : "grabbing"}`;
-}
+// Custom high-contrast cursor suite (grab, grabbing, col-resize, move)
+// imported from ./cursors.js. Provides dual-tone silhouettes, natural ergonomics,
+// and ambient drop shadows for 100% legibility across light and dark themes.
 
 /* -------------------------------------------------------------------------- */
 /* General utilities                                                          */
@@ -2829,7 +2814,7 @@ function RelationshipLines({
               role="button"
               aria-label={`Reroute ${description}. Use left and right arrow keys.`}
               className="sker-line-handle"
-              style={{ pointerEvents: "stroke", cursor: "col-resize" }}
+              style={{ pointerEvents: "stroke", cursor: "var(--sker-cursor-col-resize)" }}
               onPointerDown={(event) => {
                 event.stopPropagation();
                 if (event.button !== 0) return;
@@ -2944,6 +2929,7 @@ function TableNode({
   dimmed,
   relationshipColumns,
   activeColumns,
+  interactionActive = false,
   onPointerDown,
   onSelect,
   onMove,
@@ -2961,7 +2947,7 @@ function TableNode({
   return (
     <div
       data-diagram-table={table.name}
-      className="sker-table"
+      className={`sker-table ${interactionActive && selected ? "is-dragging" : ""}`}
       role="group"
       tabIndex={0}
       aria-label={`${table.name}${selected ? ", selected" : ""}. Enter to select. Arrow keys to move. Shift F10 for options.`}
@@ -3045,7 +3031,9 @@ function TableNode({
         "--sker-table-shadow": selected
           ? `0 0 0 2px ${color}, 0 8px 24px rgba(0,0,0,0.12)`
           : "0 2px 8px rgba(0,0,0,0.09)",
-        cursor: "var(--sker-cursor-grab)",
+        cursor: (interactionActive && selected)
+          ? "var(--sker-cursor-grabbing)"
+          : "var(--sker-cursor-grab)",
         userSelect: "none",
         fontFamily: "'DM Sans', sans-serif",
       }}
@@ -3277,7 +3265,7 @@ function GroupOverlay({
           tabIndex={0}
           aria-label={`Group ${group.name}. Enter to select; arrow keys to move.`}
           className="sker-group-handle"
-          style={{ pointerEvents: "all", cursor: "move" }}
+          style={{ pointerEvents: "all", cursor: "var(--sker-cursor-grab)" }}
           onPointerDown={(event) => {
             event.stopPropagation();
             if (event.button !== 0) return;
@@ -4045,7 +4033,7 @@ const STYLES = `
 .sker-resizer {
   flex-shrink: 0;
   width: 5px;
-  cursor: col-resize;
+  cursor: var(--sker-cursor-col-resize);
   touch-action: none;
 }
 .sker-resizer:hover,
@@ -4108,7 +4096,10 @@ const STYLES = `
   cursor: pointer;
 }
 
+.sker-line-handle { cursor: var(--sker-cursor-col-resize); }
 .sker-line-handle:focus { stroke: #10b98166; }
+.sker-group-handle { cursor: var(--sker-cursor-grab); }
+.sker-group-handle:active { cursor: var(--sker-cursor-grabbing); }
 .sker-group-handle:focus { stroke: #10b981; stroke-width: 2; }
 
 .sker-bottom-controls {
@@ -4238,6 +4229,11 @@ const STYLES = `
 .sker-table {
   box-shadow: var(--sker-table-shadow);
   transition: box-shadow 160ms ease, border-color 160ms ease;
+  cursor: var(--sker-cursor-grab);
+}
+.sker-table:active,
+.sker-table.is-dragging {
+  cursor: var(--sker-cursor-grabbing);
 }
 @media (hover: hover) {
   .sker-table:hover {
@@ -5146,7 +5142,8 @@ export default function SketchER() {
   const interactionRef = useRef(null);
   const pointerFrameRef = useRef(null);
   const latestPointerRef = useRef(null);
-  const [interactionActive, setInteractionActive] = useState(false);
+  const [activeInteractionType, setActiveInteractionType] = useState(null);
+  const interactionActive = Boolean(activeInteractionType);
 
   const flushPointer = useCallback(() => {
     pointerFrameRef.current = null;
@@ -5211,7 +5208,7 @@ export default function SketchER() {
     const interaction = interactionRef.current;
     interactionRef.current = null;
     latestPointerRef.current = null;
-    setInteractionActive(false);
+    setActiveInteractionType(null);
 
     try {
       if (
@@ -5250,7 +5247,7 @@ export default function SketchER() {
       y: event.clientY,
     };
 
-    setInteractionActive(true);
+    setActiveInteractionType(interaction.type);
 
     try {
       canvasRef.current?.setPointerCapture(event.pointerId);
@@ -6050,8 +6047,7 @@ export default function SketchER() {
     "--sker-secondary": theme.secondary,
     "--sker-muted": theme.muted,
     "--sker-chrome-top": `${topbarSize.height + 24}px`,
-    "--sker-cursor-grab": handCursorCss(data.isDark ? "#ffffff" : "#000000", true),
-    "--sker-cursor-grabbing": handCursorCss(data.isDark ? "#ffffff" : "#000000", false),
+    ...getThemeCursorVariables(data.isDark),
   };
 
   // Portaled dialogs do not inherit variables from the application root.
@@ -6384,7 +6380,12 @@ export default function SketchER() {
           }}
           style={{
             background: theme.canvasBg,
-            cursor: interactionActive ? "var(--sker-cursor-grabbing)" : "default",
+            cursor:
+              activeInteractionType === "resize" || activeInteractionType === "line"
+                ? "var(--sker-cursor-col-resize)"
+                : activeInteractionType
+                  ? "var(--sker-cursor-grabbing)"
+                  : "default",
           }}
         >
           <svg
@@ -6729,6 +6730,7 @@ export default function SketchER() {
                   }
                   relationshipColumns={relationshipColumns.get(table.name)}
                   activeColumns={activeColumns.get(table.name)}
+                  interactionActive={interactionActive}
                   onPointerDown={handleTablePointerDown}
                   onSelect={selectTable}
                   onMove={(name, dx, dy) => {
