@@ -205,6 +205,34 @@ const DARK_THEME = {
   legendBg: "rgba(30,30,30,0.7)",
 };
 
+// Named grab/grabbing cursors are drawn by the OS as a white hand, which
+// reads poorly against the light canvas. Custom hand cursors keep the
+// pointer legible in both themes.
+const HAND_CURSOR_FINGERS = [
+  { x: 7, width: 5 },
+  { x: 12, width: 5 },
+  { x: 18, width: 5 },
+  { x: 23, width: 4.5 },
+];
+
+function handCursorCss(fill, open) {
+  const fingerHeights = open ? [15, 17, 15, 11] : [8, 8, 8, 8];
+  const fingers = HAND_CURSOR_FINGERS.map(
+    ({ x, width }, index) => {
+      const height = fingerHeights[index];
+      return `<rect x="${x}" y="${17 - height}" width="${width}" height="${height}" rx="${width / 2}"/>`;
+    },
+  ).join("");
+  const svg =
+    `<svg xmlns="http://www.w3.org/2000/svg" width="32" height="32" viewBox="0 0 32 32">` +
+    `<g fill="${fill}">` +
+    `<rect x="7" y="13" width="20" height="16" rx="5"/>${fingers}` +
+    `<rect x="24" y="14" width="5" height="11" rx="2.5" transform="rotate(15 26.5 19.5)"/>` +
+    `</g></svg>`;
+  const hotspot = open ? "9 2" : "9 9";
+  return `url("data:image/svg+xml,${encodeURIComponent(svg)}") ${hotspot}, ${open ? "grab" : "grabbing"}`;
+}
+
 /* -------------------------------------------------------------------------- */
 /* General utilities                                                          */
 /* -------------------------------------------------------------------------- */
@@ -3017,7 +3045,7 @@ function TableNode({
         "--sker-table-shadow": selected
           ? `0 0 0 2px ${color}, 0 8px 24px rgba(0,0,0,0.12)`
           : "0 2px 8px rgba(0,0,0,0.09)",
-        cursor: "grab",
+        cursor: "var(--sker-cursor-grab)",
         userSelect: "none",
         fontFamily: "'DM Sans', sans-serif",
       }}
@@ -4249,7 +4277,7 @@ const STYLES = `
   background: color-mix(in srgb, var(--sker-text) 6%, transparent);
   border: 1px solid transparent;
   border-radius: 6px;
-  cursor: grab;
+  cursor: var(--sker-cursor-grab);
   user-select: none;
   -webkit-user-select: none;
   flex-shrink: 0;
@@ -4261,7 +4289,7 @@ const STYLES = `
   border-color: color-mix(in srgb, #10b981 30%, transparent);
 }
 .sker-drag-handle:active {
-  cursor: grabbing;
+  cursor: var(--sker-cursor-grabbing);
   background: color-mix(in srgb, #10b981 25%, transparent);
 }
 .sker-drag-handle:focus-visible {
@@ -6022,6 +6050,8 @@ export default function SketchER() {
     "--sker-secondary": theme.secondary,
     "--sker-muted": theme.muted,
     "--sker-chrome-top": `${topbarSize.height + 24}px`,
+    "--sker-cursor-grab": handCursorCss(data.isDark ? "#ffffff" : "#000000", true),
+    "--sker-cursor-grabbing": handCursorCss(data.isDark ? "#ffffff" : "#000000", false),
   };
 
   // Portaled dialogs do not inherit variables from the application root.
@@ -6354,7 +6384,7 @@ export default function SketchER() {
           }}
           style={{
             background: theme.canvasBg,
-            cursor: interactionActive ? "grabbing" : "default",
+            cursor: interactionActive ? "var(--sker-cursor-grabbing)" : "default",
           }}
         >
           <svg
