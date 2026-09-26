@@ -1,0 +1,3 @@
+## 2025-02-28 - Missing ARIA Semantics on Custom Components
+**Learning:** Custom interactive components like `ToggleSwitch`, `ColorPalette`, and typeahead suggestions (`ColumnEditor`'s `role="listbox"`) in this codebase often lack necessary specific ARIA attributes (`role="switch"`, `aria-pressed`, `role="option"`, `aria-selected`). This results in screen readers failing to announce the components' true state or role.
+**Action:** When working on custom interactive elements (buttons acting as toggles, checkbox acting as a switch, or custom dropdown options), always evaluate if specific ARIA attributes like `role` or `aria-selected`/`aria-pressed` are required to convey their exact purpose and state.
