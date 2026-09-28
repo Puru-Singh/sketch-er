@@ -1397,6 +1397,7 @@ function AnimatedPanel({ children }) {
 function ToolButton({
   children,
   label,
+  title,
   onClick,
   disabled = false,
   buttonRef,
@@ -1409,7 +1410,7 @@ function ToolButton({
       type="button"
       className={`sker-button ${className}`}
       aria-label={label}
-      title={label}
+      title={title || label}
       onClick={onClick}
       disabled={disabled}
       {...rest}
@@ -1438,6 +1439,7 @@ function ToggleSwitch({ checked, onChange, label }) {
 
 function Popover({
   label,
+  title,
   children,
   trigger,
   triggerRef,
@@ -1495,6 +1497,7 @@ function Popover({
       <ToolButton
         buttonRef={actualTriggerRef}
         label={label}
+        title={title}
         disabled={disabled}
         aria-expanded={open}
         aria-controls={id}
@@ -2335,6 +2338,7 @@ function ColumnEditor({
             <button
               type="button"
               className="sker-action-btn sker-apply-btn"
+              title={disabled || table.partials?.length > 0 ? "Resolve DBML errors to apply changes" : "Apply changes"}
               disabled={disabled || table.partials?.length > 0}
               onClick={handleApply}
             >
@@ -6479,6 +6483,7 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom out"
+                title="Zoom out (-)"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom / 1.1)}
               >
                 −
@@ -6488,17 +6493,23 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom in"
+                title="Zoom in (+)"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom * 1.1)}
               >
                 +
               </ToolButton>
 
-              <ToolButton label="Fit diagram in view" onClick={fitToCanvas}>
+              <ToolButton
+                label="Fit diagram in view"
+                title="Fit diagram in view (F)"
+                onClick={fitToCanvas}
+              >
                 Fit
               </ToolButton>
 
               <Popover
                 label="Layout options"
+                title={layoutRunning ? "Arranging layout..." : (!tables.length ? "Add tables to diagram first" : (parsingPending ? "Resolve DBML errors to use layout" : "Layout options"))}
                 trigger={layoutRunning ? "Arranging…" : "Layout"}
                 disabled={layoutRunning || !tables.length || parsingPending}
               >
@@ -6581,6 +6592,7 @@ export default function SketchER() {
 
               <ToolButton
                 label="Export diagram as PNG"
+                title={exportRunning ? "Exporting..." : (!tables.length ? "Add tables to diagram to export" : "Export diagram as PNG")}
                 disabled={exportRunning || !tables.length}
                 onClick={() => void exportPng()}
               >
@@ -6897,6 +6909,7 @@ export default function SketchER() {
               <button
                 type="submit"
                 className="sker-button sker-primary"
+                title={(!newGroupName.trim() || groupExists || parsingPending || state.errors.length > 0) ? "Fix errors and enter a valid name to create group" : "Create group"}
                 disabled={
                   !newGroupName.trim() ||
                   groupExists ||
