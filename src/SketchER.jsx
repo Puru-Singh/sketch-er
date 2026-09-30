@@ -1397,6 +1397,7 @@ function AnimatedPanel({ children }) {
 function ToolButton({
   children,
   label,
+  title,
   onClick,
   disabled = false,
   buttonRef,
@@ -1409,7 +1410,7 @@ function ToolButton({
       type="button"
       className={`sker-button ${className}`}
       aria-label={label}
-      title={label}
+      title={title || label}
       onClick={onClick}
       disabled={disabled}
       {...rest}
@@ -1438,6 +1439,7 @@ function ToggleSwitch({ checked, onChange, label }) {
 
 function Popover({
   label,
+  title,
   children,
   trigger,
   triggerRef,
@@ -1495,6 +1497,7 @@ function Popover({
       <ToolButton
         buttonRef={actualTriggerRef}
         label={label}
+        title={title}
         disabled={disabled}
         aria-expanded={open}
         aria-controls={id}
@@ -6479,6 +6482,7 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom out"
+                title="Zoom out (−)"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom / 1.1)}
               >
                 −
@@ -6488,17 +6492,31 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom in"
+                title="Zoom in (+ / =)"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom * 1.1)}
               >
                 +
               </ToolButton>
 
-              <ToolButton label="Fit diagram in view" onClick={fitToCanvas}>
+              <ToolButton
+                label="Fit diagram in view"
+                title="Fit diagram in view (F)"
+                onClick={fitToCanvas}
+              >
                 Fit
               </ToolButton>
 
               <Popover
                 label="Layout options"
+                title={
+                  layoutRunning
+                    ? "Layout in progress…"
+                    : parsingPending
+                      ? "Wait for the diagram to finish updating"
+                      : !tables.length
+                        ? "Diagram must contain at least one table to arrange"
+                        : undefined
+                }
                 trigger={layoutRunning ? "Arranging…" : "Layout"}
                 disabled={layoutRunning || !tables.length || parsingPending}
               >
@@ -6556,6 +6574,7 @@ export default function SketchER() {
 
                     <ToolButton
                       label="Reset canvas view"
+                      title="Reset canvas view (0)"
                       onClick={() => {
                         resetView();
                         close(true);
@@ -6581,6 +6600,13 @@ export default function SketchER() {
 
               <ToolButton
                 label="Export diagram as PNG"
+                title={
+                  exportRunning
+                    ? "Export in progress…"
+                    : !tables.length
+                      ? "Diagram must contain at least one table to export"
+                      : undefined
+                }
                 disabled={exportRunning || !tables.length}
                 onClick={() => void exportPng()}
               >
