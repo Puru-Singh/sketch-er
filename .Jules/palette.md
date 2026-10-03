@@ -1,0 +1,3 @@
+## 2025-02-12 - Improve accessibility of custom radio-like buttons
+**Learning:** For custom UI elements that behave like radio buttons or toggles (e.g., color selection swatches), relying solely on visual cues or class names like `is-selected` is insufficient for accessibility.
+**Action:** Always add `aria-pressed={selected === item}` or an equivalent `aria-checked` state to explicitly communicate the selected status to assistive technologies.
