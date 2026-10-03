@@ -1401,15 +1401,19 @@ function ToolButton({
   disabled = false,
   buttonRef,
   className = "",
+  shortcut,
   ...rest
 }) {
+  const titleText = shortcut ? `${label} (${shortcut})` : label;
+
   return (
     <button
       ref={buttonRef}
       type="button"
       className={`sker-button ${className}`}
       aria-label={label}
-      title={label}
+      title={titleText}
+      aria-keyshortcuts={shortcut}
       onClick={onClick}
       disabled={disabled}
       {...rest}
@@ -6479,6 +6483,7 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom out"
+                shortcut="-"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom / 1.1)}
               >
                 −
@@ -6488,12 +6493,13 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom in"
+                shortcut="+"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom * 1.1)}
               >
                 +
               </ToolButton>
 
-              <ToolButton label="Fit diagram in view" onClick={fitToCanvas}>
+              <ToolButton label="Fit diagram in view" shortcut="F" onClick={fitToCanvas}>
                 Fit
               </ToolButton>
 
@@ -6556,6 +6562,7 @@ export default function SketchER() {
 
                     <ToolButton
                       label="Reset canvas view"
+                      shortcut="0"
                       onClick={() => {
                         resetView();
                         close(true);
