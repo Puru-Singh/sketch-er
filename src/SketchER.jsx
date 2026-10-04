@@ -56,6 +56,15 @@ import {
   SHARE_QR_TOO_LARGE,
 } from "./shareQr.js";
 
+import {
+  createColResizeCursor,
+  createGrabCursor,
+  createGrabbingCursor,
+  createMoveCursor,
+  getThemeCursorVariables,
+  handCursorCss,
+} from "./cursors.js";
+
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
@@ -204,6 +213,10 @@ const DARK_THEME = {
   activeColumn: "rgba(59,130,246,0.2)",
   legendBg: "rgba(30,30,30,0.7)",
 };
+
+// Custom high-contrast cursor suite (grab, grabbing, col-resize, move)
+// imported from ./cursors.js. Provides dual-tone silhouettes, natural ergonomics,
+// and ambient drop shadows for 100% legibility across light and dark themes.
 
 /* -------------------------------------------------------------------------- */
 /* General utilities                                                          */
@@ -1384,11 +1397,11 @@ function AnimatedPanel({ children }) {
 function ToolButton({
   children,
   label,
+  title,
   onClick,
   disabled = false,
   buttonRef,
   className = "",
-  shortcut,
   ...rest
 }) {
   return (
@@ -1397,8 +1410,7 @@ function ToolButton({
       type="button"
       className={`sker-button ${className}`}
       aria-label={label}
-      title={shortcut ? `${label} (${shortcut})` : label}
-      aria-keyshortcuts={shortcut}
+      title={title || label}
       onClick={onClick}
       disabled={disabled}
       {...rest}
@@ -1413,6 +1425,8 @@ function ToggleSwitch({ checked, onChange, label }) {
     <label className="sker-toggle-label">
       <input
         type="checkbox"
+        role="switch"
+        aria-checked={checked}
         className="sker-toggle-input"
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
@@ -1427,6 +1441,7 @@ function ToggleSwitch({ checked, onChange, label }) {
 
 function Popover({
   label,
+  title,
   children,
   trigger,
   triggerRef,
@@ -1484,6 +1499,7 @@ function Popover({
       <ToolButton
         buttonRef={actualTriggerRef}
         label={label}
+        title={title}
         disabled={disabled}
         aria-expanded={open}
         aria-controls={id}
@@ -2277,6 +2293,8 @@ function ColumnEditor({
                         <button
                           key={type}
                           type="button"
+                          role="option"
+                          aria-selected={type === column.type}
                           className={`sker-type-option ${type === column.type ? "is-selected" : ""}`}
                           onMouseDown={(event) => {
                             event.preventDefault();
@@ -2360,8 +2378,8 @@ function ColorPalette({ colors, selected, onChoose, label }) {
           className={`sker-color-dot ${selected === color ? "is-selected" : ""}`}
           style={{ background: color }}
           aria-label={`Apply color ${color}`}
-          title={color}
           aria-pressed={selected === color}
+          title={color}
           onClick={() => onChoose(color)}
         />
       ))}
@@ -2804,7 +2822,7 @@ function RelationshipLines({
               role="button"
               aria-label={`Reroute ${description}. Use left and right arrow keys.`}
               className="sker-line-handle"
-              style={{ pointerEvents: "stroke", cursor: "col-resize" }}
+              style={{ pointerEvents: "stroke", cursor: "var(--sker-cursor-col-resize)" }}
               onPointerDown={(event) => {
                 event.stopPropagation();
                 if (event.button !== 0) return;
@@ -2919,6 +2937,7 @@ function TableNode({
   dimmed,
   relationshipColumns,
   activeColumns,
+  interactionActive = false,
   onPointerDown,
   onSelect,
   onMove,
@@ -2936,7 +2955,7 @@ function TableNode({
   return (
     <div
       data-diagram-table={table.name}
-      className="sker-table"
+      className={`sker-table ${interactionActive && selected ? "is-dragging" : ""}`}
       role="group"
       tabIndex={0}
       aria-label={`${table.name}${selected ? ", selected" : ""}. Enter to select. Arrow keys to move. Shift F10 for options.`}
@@ -3020,7 +3039,9 @@ function TableNode({
         "--sker-table-shadow": selected
           ? `0 0 0 2px ${color}, 0 8px 24px rgba(0,0,0,0.12)`
           : "0 2px 8px rgba(0,0,0,0.09)",
-        cursor: "grab",
+        cursor: (interactionActive && selected)
+          ? "var(--sker-cursor-grabbing)"
+          : "var(--sker-cursor-grab)",
         userSelect: "none",
         fontFamily: "'DM Sans', sans-serif",
       }}
@@ -3252,7 +3273,7 @@ function GroupOverlay({
           tabIndex={0}
           aria-label={`Group ${group.name}. Enter to select; arrow keys to move.`}
           className="sker-group-handle"
-          style={{ pointerEvents: "all", cursor: "move" }}
+          style={{ pointerEvents: "all", cursor: "var(--sker-cursor-grab)" }}
           onPointerDown={(event) => {
             event.stopPropagation();
             if (event.button !== 0) return;
@@ -4020,7 +4041,7 @@ const STYLES = `
 .sker-resizer {
   flex-shrink: 0;
   width: 5px;
-  cursor: col-resize;
+  cursor: var(--sker-cursor-col-resize);
   touch-action: none;
 }
 .sker-resizer:hover,
@@ -4083,7 +4104,10 @@ const STYLES = `
   cursor: pointer;
 }
 
+.sker-line-handle { cursor: var(--sker-cursor-col-resize); }
 .sker-line-handle:focus { stroke: #10b98166; }
+.sker-group-handle { cursor: var(--sker-cursor-grab); }
+.sker-group-handle:active { cursor: var(--sker-cursor-grabbing); }
 .sker-group-handle:focus { stroke: #10b981; stroke-width: 2; }
 
 .sker-bottom-controls {
@@ -4213,6 +4237,11 @@ const STYLES = `
 .sker-table {
   box-shadow: var(--sker-table-shadow);
   transition: box-shadow 160ms ease, border-color 160ms ease;
+  cursor: var(--sker-cursor-grab);
+}
+.sker-table:active,
+.sker-table.is-dragging {
+  cursor: var(--sker-cursor-grabbing);
 }
 @media (hover: hover) {
   .sker-table:hover {
@@ -4252,7 +4281,7 @@ const STYLES = `
   background: color-mix(in srgb, var(--sker-text) 6%, transparent);
   border: 1px solid transparent;
   border-radius: 6px;
-  cursor: grab;
+  cursor: var(--sker-cursor-grab);
   user-select: none;
   -webkit-user-select: none;
   flex-shrink: 0;
@@ -4264,7 +4293,7 @@ const STYLES = `
   border-color: color-mix(in srgb, #10b981 30%, transparent);
 }
 .sker-drag-handle:active {
-  cursor: grabbing;
+  cursor: var(--sker-cursor-grabbing);
   background: color-mix(in srgb, #10b981 25%, transparent);
 }
 .sker-drag-handle:focus-visible {
@@ -5121,7 +5150,8 @@ export default function SketchER() {
   const interactionRef = useRef(null);
   const pointerFrameRef = useRef(null);
   const latestPointerRef = useRef(null);
-  const [interactionActive, setInteractionActive] = useState(false);
+  const [activeInteractionType, setActiveInteractionType] = useState(null);
+  const interactionActive = Boolean(activeInteractionType);
 
   const flushPointer = useCallback(() => {
     pointerFrameRef.current = null;
@@ -5186,7 +5216,7 @@ export default function SketchER() {
     const interaction = interactionRef.current;
     interactionRef.current = null;
     latestPointerRef.current = null;
-    setInteractionActive(false);
+    setActiveInteractionType(null);
 
     try {
       if (
@@ -5225,7 +5255,7 @@ export default function SketchER() {
       y: event.clientY,
     };
 
-    setInteractionActive(true);
+    setActiveInteractionType(interaction.type);
 
     try {
       canvasRef.current?.setPointerCapture(event.pointerId);
@@ -5953,6 +5983,9 @@ export default function SketchER() {
         htmlNodes,
         bounds,
         backgroundColor: data.isDark ? "#1e1e1e" : "#f5f5f5",
+        // Keep the HTML capture stage inside the app root so the legend
+        // clone inherits the theme's CSS variables and scoped rules.
+        hostElement: rootRef.current ?? undefined,
       });
 
       if (!mountedRef.current) return;
@@ -6022,6 +6055,7 @@ export default function SketchER() {
     "--sker-secondary": theme.secondary,
     "--sker-muted": theme.muted,
     "--sker-chrome-top": `${topbarSize.height + 24}px`,
+    ...getThemeCursorVariables(data.isDark),
   };
 
   // Portaled dialogs do not inherit variables from the application root.
@@ -6354,7 +6388,12 @@ export default function SketchER() {
           }}
           style={{
             background: theme.canvasBg,
-            cursor: interactionActive ? "grabbing" : "default",
+            cursor:
+              activeInteractionType === "resize" || activeInteractionType === "line"
+                ? "var(--sker-cursor-col-resize)"
+                : activeInteractionType
+                  ? "var(--sker-cursor-grabbing)"
+                  : "default",
           }}
         >
           <svg
@@ -6448,7 +6487,8 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom out"
-                shortcut="-"
+                title="Zoom out (-)"
+                aria-keyshortcuts="-"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom / 1.1)}
               >
                 −
@@ -6458,18 +6498,33 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom in"
-                shortcut="+"
+                title="Zoom in (+ / =)"
+                aria-keyshortcuts="+"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom * 1.1)}
               >
                 +
               </ToolButton>
 
-              <ToolButton label="Fit diagram in view" shortcut="f" onClick={fitToCanvas}>
+              <ToolButton
+                label="Fit diagram in view"
+                title="Fit diagram in view (F)"
+                aria-keyshortcuts="f"
+                onClick={fitToCanvas}
+              >
                 Fit
               </ToolButton>
 
               <Popover
                 label="Layout options"
+                title={
+                  layoutRunning
+                    ? "Layout in progress…"
+                    : parsingPending
+                      ? "Wait for the diagram to finish updating"
+                      : !tables.length
+                        ? "Diagram must contain at least one table to arrange"
+                        : undefined
+                }
                 trigger={layoutRunning ? "Arranging…" : "Layout"}
                 disabled={layoutRunning || !tables.length || parsingPending}
               >
@@ -6527,7 +6582,8 @@ export default function SketchER() {
 
                     <ToolButton
                       label="Reset canvas view"
-                      shortcut="0"
+                      title="Reset canvas view (0)"
+                      aria-keyshortcuts="0"
                       onClick={() => {
                         resetView();
                         close(true);
@@ -6553,6 +6609,13 @@ export default function SketchER() {
 
               <ToolButton
                 label="Export diagram as PNG"
+                title={
+                  exportRunning
+                    ? "Export in progress…"
+                    : !tables.length
+                      ? "Diagram must contain at least one table to export"
+                      : undefined
+                }
                 disabled={exportRunning || !tables.length}
                 onClick={() => void exportPng()}
               >
@@ -6702,6 +6765,7 @@ export default function SketchER() {
                   }
                   relationshipColumns={relationshipColumns.get(table.name)}
                   activeColumns={activeColumns.get(table.name)}
+                  interactionActive={interactionActive}
                   onPointerDown={handleTablePointerDown}
                   onSelect={selectTable}
                   onMove={(name, dx, dy) => {
@@ -6741,10 +6805,20 @@ export default function SketchER() {
           )}
 
           {!tables.length && (
-            <div className="sker-empty">
-              {state.errors.length
-                ? "Correct the DBML errors to display this diagram."
-                : "Write DBML in the editor to create tables."}
+            <div className="sker-empty sker-stack" style={{ alignItems: "center" }}>
+              <div style={{ fontSize: 32, opacity: 0.4 }} aria-hidden="true">
+                {state.errors.length ? "⚠️" : "✨"}
+              </div>
+              <strong style={{ fontSize: 14, color: "var(--sker-text)", fontWeight: 600 }}>
+                {state.errors.length
+                  ? "Correct DBML errors to render"
+                  : "Write DBML to create your diagram"}
+              </strong>
+              <span className="sker-muted">
+                {state.errors.length
+                  ? "Check the editor panel for highlighted lines."
+                  : "Example: Table users { id int [pk] }"}
+              </span>
             </div>
           )}
 
