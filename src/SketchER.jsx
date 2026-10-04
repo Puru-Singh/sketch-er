@@ -1922,7 +1922,8 @@ function ColumnEditor({
   onApply,
   onCancel,
   onRegisterGuard,
-  disabled,
+  parsingPending,
+  hasErrors,
 }) {
   const [originalSource] = useState(source);
   const [columns, setColumns] = useState(() =>
@@ -2322,13 +2323,15 @@ function ColumnEditor({
             <button
               type="button"
               className="sker-action-btn sker-apply-btn"
-              disabled={disabled || table.partials?.length > 0}
+              disabled={parsingPending || hasErrors || table.partials?.length > 0}
               title={
                 table.partials?.length > 0
                   ? "Cannot edit tables constructed with TablePartials"
-                  : disabled
-                    ? "No changes to apply"
-                    : undefined
+                  : parsingPending
+                    ? "Waiting for code to parse..."
+                    : hasErrors
+                      ? "Fix code errors before applying"
+                      : undefined
               }
               onClick={handleApply}
             >
@@ -6830,7 +6833,8 @@ export default function SketchER() {
                   tables={tables}
                   source={data.dbml}
                   enums={model.enums}
-                  disabled={parsingPending || state.errors.length > 0}
+                  parsingPending={parsingPending}
+                  hasErrors={state.errors.length > 0}
                   onRegisterGuard={(guardFn) => {
                     unsavedGuardRef.current = guardFn;
                   }}
