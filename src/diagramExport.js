@@ -14,13 +14,33 @@ function isUsableRect(rect) {
 }
 
 export function calculateExportBounds(rectangles, padding = 40) {
-  const usable = rectangles.filter(isUsableRect);
-  if (usable.length === 0) return null;
+  if (!rectangles || rectangles.length === 0) return null;
 
-  const minX = Math.floor(Math.min(...usable.map((rect) => rect.x)) - padding);
-  const minY = Math.floor(Math.min(...usable.map((rect) => rect.y)) - padding);
-  const maxX = Math.ceil(Math.max(...usable.map((rect) => rect.x + rect.width)) + padding);
-  const maxY = Math.ceil(Math.max(...usable.map((rect) => rect.y + rect.height)) + padding);
+  let rawMinX = Infinity;
+  let rawMinY = Infinity;
+  let rawMaxX = -Infinity;
+  let rawMaxY = -Infinity;
+  let hasUsable = false;
+
+  for (let i = 0; i < rectangles.length; i++) {
+    const rect = rectangles[i];
+    if (isUsableRect(rect)) {
+      hasUsable = true;
+      if (rect.x < rawMinX) rawMinX = rect.x;
+      if (rect.y < rawMinY) rawMinY = rect.y;
+      const right = rect.x + rect.width;
+      if (right > rawMaxX) rawMaxX = right;
+      const bottom = rect.y + rect.height;
+      if (bottom > rawMaxY) rawMaxY = bottom;
+    }
+  }
+
+  if (!hasUsable) return null;
+
+  const minX = Math.floor(rawMinX - padding);
+  const minY = Math.floor(rawMinY - padding);
+  const maxX = Math.ceil(rawMaxX + padding);
+  const maxY = Math.ceil(rawMaxY + padding);
 
   return {
     minX,
