@@ -6519,14 +6519,12 @@ export default function SketchER() {
                 label="Layout options"
                 title={
                   layoutRunning
-                    ? "Arranging layout..."
+                    ? "Layout in progress…"
                     : parsingPending
-                      ? "Wait for parsing to finish"
-                      : state.errors.length > 0
-                        ? "Resolve DBML errors to use layout"
+                      ? "Wait for the diagram to finish updating"
                       : !tables.length
-                        ? "Add tables to diagram first"
-                        : "Layout options"
+                        ? "Diagram must contain at least one table to arrange"
+                        : undefined
                 }
                 trigger={layoutRunning ? "Arranging…" : "Layout"}
                 disabled={layoutRunning || !tables.length || parsingPending}

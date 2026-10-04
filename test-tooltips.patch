@@ -1,0 +1,22 @@
+--- src/SketchER.jsx
++++ src/SketchER.jsx
+@@ -2354,7 +2354,7 @@
+             <button
+               type="button"
+               className="sker-action-btn sker-apply-btn"
+-              disabled={disabled || table.partials?.length > 0}
++              title={table.partials?.length > 0 ? "Edit TablePartial columns in the DBML editor" : (disabled ? "Resolve DBML errors to apply changes" : "Apply changes")}
++              disabled={disabled || table.partials?.length > 0}
+               onClick={handleApply}
+             >
+               Apply changes
+@@ -6911,7 +6911,7 @@
+               <button
+                 type="submit"
+                 className="sker-button sker-primary"
+-                disabled={
++                title={parsingPending ? "Parsing DBML..." : (state.errors.length > 0 ? "Resolve DBML errors to create group" : (groupExists ? "A group with this name already exists" : (!newGroupName.trim() ? "Enter a group name" : "Create group")))}
++                disabled={
+                   !newGroupName.trim() ||
+                   groupExists ||
+                   parsingPending ||
