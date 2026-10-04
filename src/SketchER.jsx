@@ -435,29 +435,32 @@ function getColumnY(position, index) {
 }
 
 function unionBounds(rectangles, padding = 0) {
-  const valid = rectangles.filter(
-    (rectangle) =>
-      rectangle &&
-      [rectangle.x, rectangle.y, rectangle.width, rectangle.height].every(
-        Number.isFinite,
-      ) &&
-      rectangle.width >= 0 &&
-      rectangle.height >= 0,
-  );
-
-  if (!valid.length) return null;
-
   let left = Infinity;
   let top = Infinity;
   let right = -Infinity;
   let bottom = -Infinity;
+  let hasValid = false;
 
-  for (const rectangle of valid) {
-    left = Math.min(left, rectangle.x);
-    top = Math.min(top, rectangle.y);
-    right = Math.max(right, rectangle.x + rectangle.width);
-    bottom = Math.max(bottom, rectangle.y + rectangle.height);
+  for (let i = 0; i < rectangles.length; i += 1) {
+    const rectangle = rectangles[i];
+    if (
+      rectangle &&
+      Number.isFinite(rectangle.x) &&
+      Number.isFinite(rectangle.y) &&
+      Number.isFinite(rectangle.width) &&
+      Number.isFinite(rectangle.height) &&
+      rectangle.width >= 0 &&
+      rectangle.height >= 0
+    ) {
+      hasValid = true;
+      if (rectangle.x < left) left = rectangle.x;
+      if (rectangle.y < top) top = rectangle.y;
+      if (rectangle.x + rectangle.width > right) right = rectangle.x + rectangle.width;
+      if (rectangle.y + rectangle.height > bottom) bottom = rectangle.y + rectangle.height;
+    }
   }
+
+  if (!hasValid) return null;
 
   return {
     x: left - padding,
