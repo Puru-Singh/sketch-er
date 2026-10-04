@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { calculateExportBounds, calculateExportScale, placeRightSideExportNode } from "../src/diagramExport.js";
+import { calculateExportBounds, calculateExportScale, placeRightSideExportNode, downloadPng } from "../src/diagramExport.js";
 
 test("export bounds include table and group geometry in one coordinate space", () => {
   const bounds = calculateExportBounds([
@@ -17,6 +17,106 @@ test("export bounds include table and group geometry in one coordinate space", (
     width: 468,
     height: 300,
   });
+});
+
+test("downloadPng creates anchor, sets default download name, clicks, removes link, and revokes object URL after timeout", (t) => {
+  const originalDocument = globalThis.document;
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+
+  let createdUrl = null;
+  let revokedUrl = null;
+  let appendedChild = null;
+  let clicked = false;
+  let removed = false;
+  const dummyBlob = { size: 100, type: "image/png" };
+
+  const mockLink = {
+    download: "",
+    href: "",
+    click() {
+      clicked = true;
+    },
+    remove() {
+      removed = true;
+    },
+  };
+
+  const mockDocument = {
+    body: {
+      appendChild(child) {
+        appendedChild = child;
+      },
+    },
+    createElement(tagName) {
+      assert.equal(tagName, "a");
+      return mockLink;
+    },
+  };
+
+  t.after(() => {
+    globalThis.document = originalDocument;
+    URL.createObjectURL = originalCreateObjectURL;
+    URL.revokeObjectURL = originalRevokeObjectURL;
+  });
+
+  globalThis.document = mockDocument;
+  URL.createObjectURL = (blob) => {
+    assert.equal(blob, dummyBlob);
+    createdUrl = "blob:http://localhost/test-uuid";
+    return createdUrl;
+  };
+  URL.revokeObjectURL = (url) => {
+    revokedUrl = url;
+  };
+
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+
+  downloadPng(dummyBlob);
+
+  assert.equal(mockLink.download, "diagram.png");
+  assert.equal(mockLink.href, createdUrl);
+  assert.equal(appendedChild, mockLink);
+  assert.equal(clicked, true);
+  assert.equal(removed, true);
+
+  assert.equal(revokedUrl, null);
+
+  t.mock.timers.tick(1000);
+
+  assert.equal(revokedUrl, createdUrl);
+});
+
+test("downloadPng uses custom file name when provided", (t) => {
+  const originalDocument = globalThis.document;
+  const originalCreateObjectURL = URL.createObjectURL;
+  const originalRevokeObjectURL = URL.revokeObjectURL;
+
+  const mockLink = {
+    download: "",
+    href: "",
+    click() {},
+    remove() {},
+  };
+
+  t.after(() => {
+    globalThis.document = originalDocument;
+    URL.createObjectURL = originalCreateObjectURL;
+    URL.revokeObjectURL = originalRevokeObjectURL;
+  });
+
+  globalThis.document = {
+    body: { appendChild() {} },
+    createElement: () => mockLink,
+  };
+  URL.createObjectURL = () => "blob:http://localhost/test-custom";
+  URL.revokeObjectURL = () => {};
+
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+
+  downloadPng({}, "my-custom-diagram");
+
+  assert.equal(mockLink.download, "my-custom-diagram.png");
 });
 
 test("export bounds ignore invalid browser geometry", () => {
