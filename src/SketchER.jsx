@@ -1424,6 +1424,8 @@ function ToggleSwitch({ checked, onChange, label }) {
     <label className="sker-toggle-label">
       <input
         type="checkbox"
+        role="switch"
+        aria-checked={checked}
         className="sker-toggle-input"
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
