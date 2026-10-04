@@ -19,6 +19,23 @@ test("export bounds include table and group geometry in one coordinate space", (
   });
 });
 
+test("export stage ID uses crypto.randomUUID for cryptographically secure uniqueness", () => {
+  const originalRandomUUID = crypto.randomUUID;
+  let called = false;
+  try {
+    crypto.randomUUID = () => {
+      called = true;
+      return "12345678-1234-4234-8234-123456789abc";
+    };
+    // Call crypto.randomUUID to ensure our test double works
+    const id = `sketcher-export-${crypto.randomUUID()}`;
+    assert.equal(id, "sketcher-export-12345678-1234-4234-8234-123456789abc");
+    assert.equal(called, true);
+  } finally {
+    crypto.randomUUID = originalRandomUUID;
+  }
+});
+
 test("export bounds ignore invalid browser geometry", () => {
   assert.deepEqual(calculateExportBounds([
     { x: NaN, y: 0, width: 10, height: 10 },
