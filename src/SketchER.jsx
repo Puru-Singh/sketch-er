@@ -2056,18 +2056,6 @@ function ColumnEditor({
     });
   };
 
-  const addColumn = () => {
-    setError("");
-    setColumns((items) => [
-      ...items,
-      {
-        originalName: null,
-        name: `column_${items.length + 1}`,
-        type: "varchar",
-      },
-    ]);
-  };
-
   const removeColumn = (index) => {
     setError("");
     setColumns((items) => items.filter((_, i) => i !== index));
