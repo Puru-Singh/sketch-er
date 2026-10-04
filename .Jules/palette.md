@@ -10,3 +10,6 @@
 ## 2024-05-18 - Tooltip Hints for Disabled States and Shortcuts
 **Learning:** Tooltips should provide specific, actionable explanations for why a button is disabled, rather than simply stating it is disabled. They should also surface hidden keyboard shortcuts to improve power user workflows without cluttering the UI.
 **Action:** Always add an explicit `title` prop to `ToolButton` components when dynamically disabling them, explaining exactly what condition must be met to enable it. Add shortcut keys to the `title` text for primary canvas actions.
+## 2025-10-02 - Added Empty State Helpful Guidance
+**Learning:** Empty states with actionable, helpful instructions and a clear visual cue make the initial "blank slate" experience much friendlier and less daunting.
+**Action:** Enhance bare-bones empty states across apps by adding an icon (like ✨ or ⚠️), a clear headline, and a small example or hint of what to do next.
