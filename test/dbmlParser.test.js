@@ -1,6 +1,6 @@
 import test from "node:test";
 import assert from "node:assert/strict";
-import { parseDBMLDocument } from "../src/dbmlParser.js";
+import { parseDBMLDocument, parseDocument } from "../src/dbmlParser.js";
 
 const FULL_DBML = `Project commerce {
   database_type: 'PostgreSQL'
@@ -127,4 +127,61 @@ test("materializes fields and inline references injected by table partials", () 
   assert.equal(result.model.refs.length, 1);
   assert.equal(result.model.refs[0].from.table, "posts");
   assert.equal(result.model.refs[0].from.cardinality, "*");
+});
+
+test("parseDocument returns model, errors, and warnings for valid and invalid DBML", () => {
+  const valid = parseDocument("Table users { id int [pk] }");
+  assert.ok(valid.model);
+  assert.equal(valid.model.tables.length, 1);
+  assert.deepEqual(valid.errors, []);
+  assert.deepEqual(valid.warnings, []);
+
+  const invalid = parseDocument("Table users {\n id int [pk\n}");
+  assert.equal(invalid.model, null);
+  assert.ok(invalid.errors.length > 0);
+  assert.equal(invalid.errors[0].startLineNumber, 3);
+});
+
+test("parseDocument handles parser exceptions with Error objects in catch block", () => {
+  const result = parseDocument("Table users {}", () => {
+    throw new Error("Critical DBML parser failure");
+  });
+
+  assert.equal(result.model, null);
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(result.errors, [
+    {
+      message: "Critical DBML parser failure",
+      startLineNumber: 1,
+      startColumn: 1,
+      endLineNumber: 1,
+      endColumn: 2,
+    },
+  ]);
+});
+
+test("parseDocument handles non-Error exceptions with fallback message in catch block", () => {
+  const result = parseDocument("Table users {}", () => {
+    throw "Unexpected string error";
+  });
+
+  assert.equal(result.model, null);
+  assert.deepEqual(result.warnings, []);
+  assert.deepEqual(result.errors, [
+    {
+      message: "Unable to parse DBML.",
+      startLineNumber: 1,
+      startColumn: 1,
+      endLineNumber: 1,
+      endColumn: 2,
+    },
+  ]);
+});
+
+test("parseDocument supplies default fallbacks for missing result properties", () => {
+  const result = parseDocument("Table users {}", () => ({}));
+
+  assert.equal(result.model, null);
+  assert.deepEqual(result.errors, []);
+  assert.deepEqual(result.warnings, []);
 });
