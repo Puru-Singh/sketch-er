@@ -292,11 +292,25 @@ export async function buildSmartLayout({ tables, refs, groups, tableWidths }) {
   };
   (result.children || []).forEach((child) => collect(child));
 
-  const values = Object.values(rawPositions);
-  const minX = Math.min(...values.map((position) => position.x));
-  const minY = Math.min(...values.map((position) => position.y));
-  return Object.fromEntries(Object.entries(rawPositions).map(([name, position]) => [name, {
-    x: Math.round(position.x - minX + 60),
-    y: Math.round(position.y - minY + 60),
-  }]));
+  let minX = Infinity;
+  let minY = Infinity;
+
+  for (const name in rawPositions) {
+    const pos = rawPositions[name];
+    if (pos.x < minX) minX = pos.x;
+    if (pos.y < minY) minY = pos.y;
+  }
+
+  if (minX === Infinity) return {};
+
+  const normalized = {};
+  for (const name in rawPositions) {
+    const pos = rawPositions[name];
+    normalized[name] = {
+      x: Math.round(pos.x - minX + 60),
+      y: Math.round(pos.y - minY + 60),
+    };
+  }
+
+  return normalized;
 }
