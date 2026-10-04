@@ -21,6 +21,7 @@ import {
   dbmlMonarchTokensProvider,
   EMPTY_DBML_MODEL,
   parseDBMLDocument,
+  parseDocument,
 } from "./dbmlParser.js";
 
 import {
@@ -687,31 +688,6 @@ function normalizeDocument(raw, { requireDbml = false } = {}) {
   };
 }
 
-function parseDocument(dbml) {
-  try {
-    const result = parseDBMLDocument(dbml);
-
-    return {
-      model: result.model || null,
-      errors: result.errors || [],
-      warnings: result.warnings || [],
-    };
-  } catch (error) {
-    return {
-      model: null,
-      errors: [
-        {
-          message: errorMessage(error, "Unable to parse DBML."),
-          startLineNumber: 1,
-          startColumn: 1,
-          endLineNumber: 1,
-          endColumn: 2,
-        },
-      ],
-      warnings: [],
-    };
-  }
-}
 
 function modelTables(model) {
   return model?.tables || [];
