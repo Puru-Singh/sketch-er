@@ -2290,6 +2290,8 @@ function ColumnEditor({
                         <button
                           key={type}
                           type="button"
+                          role="option"
+                          aria-selected={type === column.type}
                           className={`sker-type-option ${type === column.type ? "is-selected" : ""}`}
                           onMouseDown={(event) => {
                             event.preventDefault();
@@ -2373,6 +2375,7 @@ function ColorPalette({ colors, selected, onChoose, label }) {
           className={`sker-color-dot ${selected === color ? "is-selected" : ""}`}
           style={{ background: color }}
           aria-label={`Apply color ${color}`}
+          aria-pressed={selected === color}
           title={color}
           onClick={() => onChoose(color)}
         />
