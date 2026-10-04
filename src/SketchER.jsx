@@ -56,14 +56,7 @@ import {
   SHARE_QR_TOO_LARGE,
 } from "./shareQr.js";
 
-import {
-  createColResizeCursor,
-  createGrabCursor,
-  createGrabbingCursor,
-  createMoveCursor,
-  getThemeCursorVariables,
-  handCursorCss,
-} from "./cursors.js";
+import { getThemeCursorVariables } from "./cursors.js";
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
