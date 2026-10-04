@@ -6805,10 +6805,20 @@ export default function SketchER() {
           )}
 
           {!tables.length && (
-            <div className="sker-empty">
-              {state.errors.length
-                ? "Correct the DBML errors to display this diagram."
-                : "Write DBML in the editor to create tables."}
+            <div className="sker-empty sker-stack" style={{ alignItems: "center" }}>
+              <div style={{ fontSize: 32, opacity: 0.4 }} aria-hidden="true">
+                {state.errors.length ? "⚠️" : "✨"}
+              </div>
+              <strong style={{ fontSize: 14, color: "var(--sker-text)", fontWeight: 600 }}>
+                {state.errors.length
+                  ? "Correct DBML errors to render"
+                  : "Write DBML to create your diagram"}
+              </strong>
+              <span className="sker-muted">
+                {state.errors.length
+                  ? "Check the editor panel for highlighted lines."
+                  : "Example: Table users { id int [pk] }"}
+              </span>
             </div>
           )}
 
