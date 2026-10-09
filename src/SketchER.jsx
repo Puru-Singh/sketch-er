@@ -4724,11 +4724,6 @@ export default function SketchER() {
 
   const refsRef = useLatest(refs);
 
-  const tablesByName = useMemo(
-    () => new Map(tables.map((table) => [table.name, table])),
-    [tables],
-  );
-
   const relationshipColumns = useMemo(() => {
     const map = new Map();
 
