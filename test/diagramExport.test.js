@@ -19,20 +19,38 @@ test("export bounds include table and group geometry in one coordinate space", (
   });
 });
 
-test("export stage ID uses crypto.randomUUID for cryptographically secure uniqueness", () => {
-  const originalRandomUUID = crypto.randomUUID;
-  let called = false;
+test("generateStageId uses crypto.randomUUID when available and falls back gracefully when unavailable", async () => {
+  const originalRandomUUID = globalThis.crypto?.randomUUID;
+
   try {
-    crypto.randomUUID = () => {
-      called = true;
-      return "12345678-1234-4234-8234-123456789abc";
-    };
-    // Call crypto.randomUUID to ensure our test double works
-    const id = `sketcher-export-${crypto.randomUUID()}`;
-    assert.equal(id, "sketcher-export-12345678-1234-4234-8234-123456789abc");
-    assert.equal(called, true);
+    const { generateStageId } = await import(`../src/diagramExport.js?test=${Date.now()}`);
+
+    // Case 1: crypto.randomUUID is available
+    Object.defineProperty(globalThis.crypto, "randomUUID", {
+      value: () => "12345678-1234-4234-8234-123456789abc",
+      configurable: true,
+      writable: true,
+    });
+
+    const idWithUUID = generateStageId();
+    assert.equal(idWithUUID, "12345678-1234-4234-8234-123456789abc");
+
+    // Case 2: crypto.randomUUID is unavailable (e.g. non-secure HTTP context)
+    delete globalThis.crypto.randomUUID;
+
+    const fallbackId = generateStageId();
+    assert.ok(typeof fallbackId === "string");
+    assert.ok(fallbackId.length > 5);
   } finally {
-    crypto.randomUUID = originalRandomUUID;
+    if (originalRandomUUID) {
+      Object.defineProperty(globalThis.crypto, "randomUUID", {
+        value: originalRandomUUID,
+        configurable: true,
+        writable: true,
+      });
+    } else {
+      delete globalThis.crypto.randomUUID;
+    }
   }
 });
 
