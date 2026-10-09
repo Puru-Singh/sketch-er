@@ -1940,7 +1940,8 @@ function ColumnEditor({
   onApply,
   onCancel,
   onRegisterGuard,
-  disabled,
+  parsingPending,
+  hasErrors,
 }) {
   const [originalSource] = useState(source);
   const [columns, setColumns] = useState(() =>
@@ -2197,7 +2198,7 @@ function ColumnEditor({
             >
               <div
                 className="sker-drag-handle"
-                draggable={!disabled}
+                draggable={!parsingPending && !hasErrors}
                 tabIndex={0}
                 role="button"
                 title="Hold and drag to reorder column or use arrow keys"
@@ -2342,8 +2343,8 @@ function ColumnEditor({
             <button
               type="button"
               className="sker-action-btn sker-apply-btn"
-              title={table.partials?.length > 0 ? "Edit TablePartial columns in the DBML editor" : (disabled ? "Resolve DBML errors to apply changes" : "Apply changes")}
-              disabled={disabled || table.partials?.length > 0}
+              title={table.partials?.length > 0 ? "Edit TablePartial columns in the DBML editor" : (parsingPending ? "Parsing DBML..." : (hasErrors ? "Resolve DBML errors to apply changes" : "Apply changes"))}
+              disabled={parsingPending || hasErrors || table.partials?.length > 0}
               onClick={handleApply}
             >
               Apply changes
@@ -6906,7 +6907,8 @@ export default function SketchER() {
                   tables={tables}
                   source={data.dbml}
                   enums={model.enums}
-                  disabled={parsingPending || state.errors.length > 0}
+                  parsingPending={parsingPending}
+                  hasErrors={state.errors.length > 0}
                   onRegisterGuard={(guardFn) => {
                     unsavedGuardRef.current = guardFn;
                   }}
