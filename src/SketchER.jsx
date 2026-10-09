@@ -15,6 +15,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import MonacoEditor from "@monaco-editor/react";
+import HelpContent from "./HelpContent.jsx";
 
 import {
   dbmlLanguageConfig,
@@ -3643,126 +3644,12 @@ function ShareQrDialog({
 function HelpDialog({ onClose, restoreFocusRef }) {
   return (
     <Dialog
-      title="SketchER reference"
+      title="Help & guide"
       onClose={onClose}
       restoreFocusRef={restoreFocusRef}
       wide
     >
-      <nav className="sker-help-nav" aria-label="Reference sections">
-        <a href="#sker-help-tables">Tables</a>
-        <a href="#sker-help-relationships">Relationships</a>
-        <a href="#sker-help-groups">Groups</a>
-        <a href="#sker-help-canvas">Canvas</a>
-        <a href="#sker-help-saving">Saving and sharing</a>
-      </nav>
-
-      <section id="sker-help-tables">
-        <h3>Tables and advanced DBML</h3>
-        <p>
-          The editor uses the project’s DBML parser. Schemas, quoted identifiers,
-          aliases, parameterized types, defaults, notes, indexes, and other
-          supported DBML metadata are preserved in the parsed model.
-        </p>
-        <pre>{`Table core.users as U [headercolor: #3498db] {
-  id bigint [pk, increment]
-  email varchar(255) [not null, unique]
-  balance decimal(10,2) [default: 0]
-  full_name "character varying" [note: 'Display name']
-
-  indexes {
-    (email, full_name) [name: 'users_search_idx']
-  }
-}`}</pre>
-        <p>
-          Invalid edits show diagnostics while the canvas retains the last valid
-          model from the current document. Opening a different file never reuses
-          the previous file’s model.
-        </p>
-      </section>
-
-      <section id="sker-help-relationships">
-        <h3>Relationships</h3>
-        <pre>{`Table orders {
-  id int [pk]
-  user_id int [ref: > users.id]
-}
-
-Ref order_owner {
-  sales.orders.(tenant_id, user_id) > core.users.(tenant_id, id)
-}`}</pre>
-        <p>
-          Cardinalities: <code>&lt;</code> one-to-many, <code>&gt;</code>{" "}
-          many-to-one, <code>-</code> one-to-one, and <code>&lt;&gt;</code>{" "}
-          many-to-many. Optional endpoint syntax depends on the parser version.
-        </p>
-        <p>
-          Drag a relationship’s vertical grip to reroute it. Keyboard users can
-          focus a grip and use Left/Right; hold Shift for larger steps.
-          Reversing display flow does not change relationship cardinality.
-        </p>
-      </section>
-
-      <section id="sker-help-groups">
-        <h3>Groups and colors</h3>
-        <pre>{`TableGroup Auth [color: #8b5cf6] {
-  core.users
-  core.roles
-}`}</pre>
-        <p>
-          Ctrl/Cmd-click tables to select multiple tables. Right-click, or use
-          Shift+F10 on a focused table, to create a group. Drag a group’s label
-          strip to move all members and its manually positioned internal routes.
-        </p>
-        <p>
-          Palette colors are explicit UI overrides. Use “Use DBML/default color”
-          to remove a table override. Applying a color to multiple selected
-          tables creates related shades.
-        </p>
-      </section>
-
-      <section id="sker-help-canvas">
-        <h3>Canvas controls</h3>
-        <ul>
-          <li>Drag empty canvas to pan.</li>
-          <li>Two-finger trackpad scrolling pans in both axes.</li>
-          <li>Ctrl/Cmd-wheel or trackpad pinch zooms around the pointer.</li>
-          <li>Touch and pen dragging use pointer events.</li>
-          <li>Touch users can use the zoom buttons or slider.</li>
-          <li>Focus a table: Enter selects; arrow keys move it.</li>
-          <li>Hold Shift with arrow keys for larger movement steps.</li>
-          <li>Focus the canvas: arrows pan, +/− zoom, F fits, 0 resets.</li>
-          <li>Collapse tables to retain primary and relationship columns.</li>
-          <li>Smart layout groups tables; hierarchy layout emphasizes lineage.</li>
-        </ul>
-        <p>
-          Large diagrams can fit down to 5% zoom. Reduced-motion system
-          preferences disable animated relationship particles.
-        </p>
-      </section>
-
-      <section id="sker-help-saving">
-        <h3>Saving, export, and sharing</h3>
-        <ul>
-          <li>
-            Autosave runs after 400 ms of inactivity, with a two-second maximum
-            wait during continuous changes.
-          </li>
-          <li>
-            Save downloads a versioned <code>.sker</code> JSON document.
-          </li>
-          <li>
-            Open validates the complete document before replacing current state.
-          </li>
-          <li>PNG export includes the visible legend.</li>
-          <li>Share creates a snapshot link; QR codes have a smaller size limit.</li>
-        </ul>
-        <p>
-          Browser storage can fail or be cleared. Keep downloaded backups for
-          important diagrams. Opening a shared snapshot removes its hash from
-          the address bar so a later reload restores the edited autosave rather
-          than reopening the original snapshot.
-        </p>
-      </section>
+      <HelpContent />
     </Dialog>
   );
 }
@@ -4557,8 +4444,6 @@ const STYLES = `
 .sker-dialog-content { padding: 18px; overflow: auto; overscroll-behavior: contain; line-height: 1.65; }
 .sker-dialog pre { padding: 12px; border: 1px solid var(--sker-border); border-radius: 7px; overflow: auto; background: var(--sker-editor); font-size: 11px; }
 .sker-dialog section { scroll-margin-top: 12px; margin-bottom: 28px; }
-.sker-help-nav { display: flex; flex-wrap: wrap; gap: 12px; }
-.sker-help-nav a { color: #059669; }
 .sker-qr-panel { display: flex; justify-content: center; align-items: center; min-height: 320px; padding: 10px; background: white; color: #374151; border-radius: 10px; margin: 14px 0; text-align: center; }
 .sker-qr-panel img { display: block; max-width: 100%; height: auto; }
 .sker-warning { padding: 10px; border: 1px solid #f59e0b88; border-radius: 7px; background: #f59e0b15; }
