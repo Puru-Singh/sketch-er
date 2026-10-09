@@ -257,10 +257,6 @@ function clampZoom(value) {
   return clamp(value, MIN_ZOOM, MAX_ZOOM);
 }
 
-function safeNumber(value, fallback = 0) {
-  return Number.isFinite(value) ? value : fallback;
-}
-
 function normalizeColor(value) {
   if (typeof value !== "string") return null;
 
