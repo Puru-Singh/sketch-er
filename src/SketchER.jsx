@@ -2064,15 +2064,6 @@ function ColumnEditor({
     ]);
   };
 
-  const removeColumn = (index) => {
-    setError("");
-    setColumns((items) => items.filter((_, i) => i !== index));
-    if (activeTypeIndex === index) {
-      setActiveTypeIndex(null);
-      setIsTyping(false);
-    }
-  };
-
   const typeCounts = useMemo(() => {
     const counts = new Map();
     for (const t of tables || []) {
