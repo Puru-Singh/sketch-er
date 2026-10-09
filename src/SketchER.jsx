@@ -1411,8 +1411,14 @@ function ToolButton({
       className={`sker-button ${className}`}
       aria-label={label}
       title={title || label}
-      onClick={onClick}
-      disabled={disabled}
+      onClick={(event) => {
+        if (disabled) {
+          event.preventDefault();
+          return;
+        }
+        if (onClick) onClick(event);
+      }}
+      aria-disabled={disabled}
       {...rest}
     >
       {children}
@@ -1558,7 +1564,7 @@ function Dialog({ title, onClose, restoreFocusRef, children, wide = false }) {
 
       const focusable = [
         ...(panelRef.current?.querySelectorAll(
-          'button:not([disabled]), a[href], input:not([disabled]), ' +
+          'button:not([disabled]):not([aria-disabled="true"]), a[href], input:not([disabled]), ' +
           'select:not([disabled]), textarea:not([disabled]), ' +
           '[tabindex]:not([tabindex="-1"])',
         ) || []),
@@ -2333,8 +2339,14 @@ function ColumnEditor({
             <button
               type="button"
               className="sker-action-btn sker-apply-btn"
-              disabled={disabled || table.partials?.length > 0}
-              onClick={handleApply}
+              aria-disabled={disabled || table.partials?.length > 0}
+              onClick={(event) => {
+                if (disabled || table.partials?.length > 0) {
+                  event.preventDefault();
+                  return;
+                }
+                handleApply(event);
+              }}
             >
               Apply changes
             </button>
@@ -3804,11 +3816,11 @@ const STYLES = `
   white-space: nowrap;
 }
 
-.sker-button:hover:not(:disabled) {
+.sker-button:hover:not([aria-disabled="true"]) {
   background: var(--sker-soft);
 }
 
-.sker-button:disabled {
+.sker-button[aria-disabled="true"] {
   opacity: .55;
   cursor: not-allowed;
 }
@@ -3819,7 +3831,7 @@ const STYLES = `
   border-color: #047857;
 }
 
-.sker-primary:hover:not(:disabled) {
+.sker-primary:hover:not([aria-disabled="true"]) {
   background: #065f46;
 }
 
@@ -4390,11 +4402,11 @@ const STYLES = `
   font-weight: 600;
   animation: sker-amber-glow 2s infinite ease-in-out;
 }
-.sker-apply-btn:hover:not(:disabled) {
+.sker-apply-btn:hover:not([aria-disabled="true"]) {
   filter: brightness(1.12);
   transform: translateY(-1px);
 }
-.sker-apply-btn:disabled {
+.sker-apply-btn[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
   animation: none;
@@ -4489,7 +4501,7 @@ body:has(.find-widget .codicon-widget-close:hover) .workbench-hover-container:ha
 .sker-button > span[aria-hidden="true"] { transition: transform 160ms ease; }
 .sker-button[aria-expanded="true"] > span[aria-hidden="true"] { transform: rotate(180deg); }
 @media (hover: hover) {
-  .sker-button:hover:not(:disabled), .sker-collapse-button:hover,
+  .sker-button:hover:not([aria-disabled="true"]), .sker-collapse-button:hover,
   .sker-color-picker:hover, .sker-legend-swatch:hover {
     border-color: #10b98180;
     box-shadow: 0 0 0 1px #10b98118, 0 0 12px #10b98124;
@@ -4497,7 +4509,7 @@ body:has(.find-widget .codicon-widget-close:hover) .workbench-hover-container:ha
   .sker-color-dot:hover { transform: scale(1.08); box-shadow: 0 0 10px #10b98135; }
   .sker-toggle-label:hover .sker-toggle-track { box-shadow: 0 0 10px #10b98124; }
 }
-.sker-button:active:not(:disabled) { transform: translateY(1px); }
+.sker-button:active:not([aria-disabled="true"]) { transform: translateY(1px); }
 .sker-popover { transform-origin: top right; }
 .sker-popover-left, .sker-context { transform-origin: top left; }
 [data-motion="open"] { animation: sker-panel-in 180ms cubic-bezier(.2,.8,.2,1) both; }
@@ -6812,12 +6824,23 @@ export default function SketchER() {
               <button
                 type="submit"
                 className="sker-button sker-primary"
-                disabled={
+                aria-disabled={
                   !newGroupName.trim() ||
                   groupExists ||
                   parsingPending ||
                   state.errors.length > 0
                 }
+                onClick={(event) => {
+                  if (
+                    !newGroupName.trim() ||
+                    groupExists ||
+                    parsingPending ||
+                    state.errors.length > 0
+                  ) {
+                    event.preventDefault();
+                    return;
+                  }
+                }}
               >
                 Create group
               </button>
