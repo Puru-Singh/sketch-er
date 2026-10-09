@@ -1617,7 +1617,13 @@ function Dialog({ title, onClose, restoreFocusRef, children, wide = false }) {
       >
         <header className="sker-dialog-header">
           <h2 id={titleId}>{title}</h2>
-          <ToolButton buttonRef={closeRef} label="Close dialog" onClick={onClose}>
+          <ToolButton
+            buttonRef={closeRef}
+            label="Close dialog"
+            title="Close dialog (Escape)"
+            aria-keyshortcuts="Escape"
+            onClick={onClose}
+          >
             ×
           </ToolButton>
         </header>
