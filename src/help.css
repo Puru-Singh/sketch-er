@@ -9,7 +9,8 @@
 .sker-help-search-field { display: flex; align-items: center; gap: 10px; padding: 0 12px; border: 1px solid var(--sker-border); border-radius: 9px; background: var(--sker-editor); }
 .sker-help-search-field:focus-within { border-color: var(--help-accent); outline: 2px solid color-mix(in srgb, var(--help-accent) 20%, transparent); }
 .sker-help-search-field > span { font-size: 23px; color: var(--sker-muted); }
-.sker-help-search-field input { width: 100%; min-width: 0; border: 0; background: transparent; color: var(--sker-text); font: inherit; padding: 12px 0; outline: none; }
+/* The wrapper owns the border and focus ring; override the shared dialog input styles. */
+.sker-help-search-field #sker-help-search { width: 100%; min-width: 0; border: 0; border-radius: 0; background: transparent; color: var(--sker-text); font: inherit; padding: 12px 0; outline: none; outline-offset: 0; }
 .sker-help-search-field input::placeholder { color: var(--sker-muted); }
 .sker-help-search-field button { border: 0; background: transparent; color: var(--sker-text); padding: 8px; cursor: pointer; font: inherit; }
 .sker-help-layout { display: grid; grid-template-columns: 210px minmax(0, 1fr); }
