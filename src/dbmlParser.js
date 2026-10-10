@@ -110,8 +110,8 @@ function normalizeRawDatabase(raw) {
     }
     const indexes = [...indexByIdentity.values()];
     const inheritedMetadata = Object.assign({}, ...injectedPartials.map((partial) => partial.metadata || {}));
-    const inheritedHeaderColor = [...injectedPartials].reverse().find((partial) => partial.headerColor)?.headerColor;
-    const inheritedNote = [...injectedPartials].reverse().find((partial) => partial.note)?.note;
+    const inheritedHeaderColor = injectedPartials.findLast((partial) => partial.headerColor)?.headerColor;
+    const inheritedNote = injectedPartials.findLast((partial) => partial.note)?.note;
 
     const pkNames = new Set();
     const uniqueNames = new Set();
