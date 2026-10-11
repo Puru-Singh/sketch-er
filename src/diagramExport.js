@@ -104,9 +104,16 @@ async function drawVectorLayer(context, diagramSvg, bounds, pixelWidth, pixelHei
   }
 }
 
+export function generateStageId() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
 async function captureHtmlLayer({ htmlNodes, bounds, scale, html2canvas, hostElement }) {
   const stage = document.createElement("div");
-  const stageId = `sketcher-export-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const stageId = `sketcher-export-${generateStageId()}`;
   stage.dataset.exportTableStage = stageId;
   stage.style.cssText = [
     "position:absolute",

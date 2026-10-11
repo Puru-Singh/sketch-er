@@ -19,6 +19,41 @@ test("export bounds include table and group geometry in one coordinate space", (
   });
 });
 
+test("generateStageId uses crypto.randomUUID when available and falls back gracefully when unavailable", async () => {
+  const originalRandomUUID = globalThis.crypto?.randomUUID;
+
+  try {
+    const { generateStageId } = await import(`../src/diagramExport.js?test=${Date.now()}`);
+
+    // Case 1: crypto.randomUUID is available
+    Object.defineProperty(globalThis.crypto, "randomUUID", {
+      value: () => "12345678-1234-4234-8234-123456789abc",
+      configurable: true,
+      writable: true,
+    });
+
+    const idWithUUID = generateStageId();
+    assert.equal(idWithUUID, "12345678-1234-4234-8234-123456789abc");
+
+    // Case 2: crypto.randomUUID is unavailable (e.g. non-secure HTTP context)
+    delete globalThis.crypto.randomUUID;
+
+    const fallbackId = generateStageId();
+    assert.ok(typeof fallbackId === "string");
+    assert.ok(fallbackId.length > 5);
+  } finally {
+    if (originalRandomUUID) {
+      Object.defineProperty(globalThis.crypto, "randomUUID", {
+        value: originalRandomUUID,
+        configurable: true,
+        writable: true,
+      });
+    } else {
+      delete globalThis.crypto.randomUUID;
+    }
+  }
+});
+
 test("export bounds ignore invalid browser geometry", () => {
   assert.deepEqual(calculateExportBounds([
     { x: NaN, y: 0, width: 10, height: 10 },
