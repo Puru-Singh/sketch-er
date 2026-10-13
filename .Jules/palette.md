@@ -13,3 +13,6 @@
 ## 2025-10-02 - Added Empty State Helpful Guidance
 **Learning:** Empty states with actionable, helpful instructions and a clear visual cue make the initial "blank slate" experience much friendlier and less daunting.
 **Action:** Enhance bare-bones empty states across apps by adding an icon (like ✨ or ⚠️), a clear headline, and a small example or hint of what to do next.
+## 2025-10-24 - Maintain Focusability for Disabled Buttons
+**Learning:** Using the native `disabled` attribute removes elements from the keyboard tab order, meaning screen reader and keyboard users cannot discover them or read their explanatory tooltips.
+**Action:** Use `aria-disabled="true"` instead of `disabled` to keep interactive elements in the focus order. Remember to manually guard `onClick` and `onKeyDown` (Enter/Space) events with `e.preventDefault(); e.stopPropagation();` and style `[aria-disabled="true"]` identically to `:disabled`.
