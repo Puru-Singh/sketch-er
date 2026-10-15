@@ -2025,18 +2025,6 @@ function ColumnEditor({
     });
   };
 
-  const addColumn = () => {
-    setError("");
-    setColumns((items) => [
-      ...items,
-      {
-        originalName: null,
-        name: `column_${items.length + 1}`,
-        type: "varchar",
-      },
-    ]);
-  };
-
   const typeCounts = useMemo(() => {
     const counts = new Map();
     for (const t of tables || []) {
