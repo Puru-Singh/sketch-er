@@ -263,3 +263,33 @@ export function parseDBMLDocument(source) {
     return { model: null, errors: normalizeDiagnostics(error?.diags || [error]), warnings: [] };
   }
 }
+
+function errorMessage(error, fallback) {
+  return error instanceof Error && error.message ? error.message : fallback;
+}
+
+export function parseDocument(dbml, parser = parseDBMLDocument) {
+  try {
+    const result = parser(dbml);
+
+    return {
+      model: result.model || null,
+      errors: result.errors || [],
+      warnings: result.warnings || [],
+    };
+  } catch (error) {
+    return {
+      model: null,
+      errors: [
+        {
+          message: errorMessage(error, "Unable to parse DBML."),
+          startLineNumber: 1,
+          startColumn: 1,
+          endLineNumber: 1,
+          endColumn: 2,
+        },
+      ],
+      warnings: [],
+    };
+  }
+}
