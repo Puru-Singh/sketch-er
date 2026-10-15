@@ -13,3 +13,6 @@
 ## 2025-10-02 - Added Empty State Helpful Guidance
 **Learning:** Empty states with actionable, helpful instructions and a clear visual cue make the initial "blank slate" experience much friendlier and less daunting.
 **Action:** Enhance bare-bones empty states across apps by adding an icon (like ✨ or ⚠️), a clear headline, and a small example or hint of what to do next.
+## 2026-10-15 - Accessible Disabled Buttons
+**Learning:** Using the native `disabled` attribute on buttons removes them from the focus order completely, making them invisible to keyboard navigation. This means keyboard users cannot discover disabled actions or read their tooltip explanations.
+**Action:** Use `aria-disabled="true"` on `ToolButton` components instead of the native `disabled` attribute. Remember to manually guard `onClick` and `onKeyDown` (Enter/Space) handlers with `e.preventDefault(); e.stopPropagation();` and ensure CSS rules style both states identically.
