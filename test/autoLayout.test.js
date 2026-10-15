@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import {
   buildHierarchicalLayout,
   buildSmartLayout,
+  inferLineage,
   HIERARCHY_ROOTS_LEFT,
 } from "../src/autoLayout.js";
 
@@ -58,6 +59,80 @@ test("strict hierarchy condenses relationship cycles without losing tables", () 
     assert.ok(Number.isFinite(x));
     assert.ok(Number.isFinite(y));
   });
+});
+
+test("inferLineage identifies parent and child based on primary key scoring", () => {
+  const tableMap = new Map([
+    ["users", { name: "users", columns: [{ name: "id", isPk: true, isUnique: false }] }],
+    ["posts", { name: "posts", columns: [{ name: "user_id", isPk: false, isUnique: false }] }],
+  ]);
+
+  const ref = {
+    from: { table: "posts", column: "user_id", cardinality: "*" },
+    to: { table: "users", column: "id", cardinality: "1" },
+  };
+
+  const lineage = inferLineage(ref, tableMap);
+  assert.deepEqual(lineage, { child: "posts", parent: "users" });
+});
+
+test("inferLineage handles unique column constraints and cardinality differences", () => {
+  const tableMap = new Map([
+    ["profiles", { name: "profiles", columns: [{ name: "profile_code", isPk: false, isUnique: true }] }],
+    ["members", { name: "members", columns: [{ name: "profile_code", isPk: false, isUnique: false }] }],
+  ]);
+
+  // from: unique column with 1 cardinality, to: non-unique column with * cardinality
+  const ref = {
+    from: { table: "profiles", column: "profile_code", cardinality: "1" },
+    to: { table: "members", column: "profile_code", cardinality: "*" },
+  };
+
+  const lineage = inferLineage(ref, tableMap);
+  assert.deepEqual(lineage, { child: "members", parent: "profiles" });
+});
+
+test("inferLineage applies column name heuristics ('id' vs '*_id')", () => {
+  const tableMap = new Map([
+    ["orders", { name: "orders", columns: [{ name: "id", isPk: false, isUnique: false }] }],
+    ["items", { name: "items", columns: [{ name: "order_id", isPk: false, isUnique: false }] }],
+  ]);
+
+  const ref = {
+    from: { table: "items", column: "order_id" },
+    to: { table: "orders", column: "id" },
+  };
+
+  const lineage = inferLineage(ref, tableMap);
+  assert.deepEqual(lineage, { child: "items", parent: "orders" });
+});
+
+test("inferLineage falls back deterministically when endpoint scores are equal", () => {
+  const tableMap = new Map([
+    ["table_a", { name: "table_a", columns: [{ name: "code", isPk: false, isUnique: false }] }],
+    ["table_b", { name: "table_b", columns: [{ name: "code", isPk: false, isUnique: false }] }],
+  ]);
+
+  const ref = {
+    from: { table: "table_a", column: "code" },
+    to: { table: "table_b", column: "code" },
+  };
+
+  // When scores are equal, fromScore > toScore is false, so 'from' becomes child and 'to' becomes parent
+  const lineage = inferLineage(ref, tableMap);
+  assert.deepEqual(lineage, { child: "table_a", parent: "table_b" });
+});
+
+test("inferLineage safely handles missing tables or columns", () => {
+  const tableMap = new Map(); // empty table map
+
+  const ref = {
+    from: { table: "unknown_child", column: "parent_id", cardinality: "0..*" },
+    to: { table: "unknown_parent", column: "id", cardinality: "0..1" },
+  };
+
+  const lineage = inferLineage(ref, tableMap);
+  assert.deepEqual(lineage, { child: "unknown_child", parent: "unknown_parent" });
 });
 
 test("smart layout returns positions for grouped and ungrouped tables", async () => {

@@ -14,13 +14,33 @@ function isUsableRect(rect) {
 }
 
 export function calculateExportBounds(rectangles, padding = 40) {
-  const usable = rectangles.filter(isUsableRect);
-  if (usable.length === 0) return null;
+  if (!rectangles || rectangles.length === 0) return null;
 
-  const minX = Math.floor(Math.min(...usable.map((rect) => rect.x)) - padding);
-  const minY = Math.floor(Math.min(...usable.map((rect) => rect.y)) - padding);
-  const maxX = Math.ceil(Math.max(...usable.map((rect) => rect.x + rect.width)) + padding);
-  const maxY = Math.ceil(Math.max(...usable.map((rect) => rect.y + rect.height)) + padding);
+  let rawMinX = Infinity;
+  let rawMinY = Infinity;
+  let rawMaxX = -Infinity;
+  let rawMaxY = -Infinity;
+  let hasUsable = false;
+
+  for (let i = 0; i < rectangles.length; i++) {
+    const rect = rectangles[i];
+    if (isUsableRect(rect)) {
+      hasUsable = true;
+      if (rect.x < rawMinX) rawMinX = rect.x;
+      if (rect.y < rawMinY) rawMinY = rect.y;
+      const right = rect.x + rect.width;
+      if (right > rawMaxX) rawMaxX = right;
+      const bottom = rect.y + rect.height;
+      if (bottom > rawMaxY) rawMaxY = bottom;
+    }
+  }
+
+  if (!hasUsable) return null;
+
+  const minX = Math.floor(rawMinX - padding);
+  const minY = Math.floor(rawMinY - padding);
+  const maxX = Math.ceil(rawMaxX + padding);
+  const maxY = Math.ceil(rawMaxY + padding);
 
   return {
     minX,
@@ -104,9 +124,16 @@ async function drawVectorLayer(context, diagramSvg, bounds, pixelWidth, pixelHei
   }
 }
 
-async function captureHtmlLayer({ htmlNodes, bounds, scale, html2canvas }) {
+export function generateStageId() {
+  if (typeof globalThis.crypto?.randomUUID === "function") {
+    return globalThis.crypto.randomUUID();
+  }
+  return `${Date.now()}-${Math.random().toString(36).slice(2)}`;
+}
+
+async function captureHtmlLayer({ htmlNodes, bounds, scale, html2canvas, hostElement }) {
   const stage = document.createElement("div");
-  const stageId = `sketcher-export-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+  const stageId = `sketcher-export-${generateStageId()}`;
   stage.dataset.exportTableStage = stageId;
   stage.style.cssText = [
     "position:absolute",
@@ -151,7 +178,12 @@ async function captureHtmlLayer({ htmlNodes, bounds, scale, html2canvas }) {
     stage.appendChild(clone);
   });
 
-  document.body.appendChild(stage);
+  // The stage must stay inside the app root so clones inherit its theme CSS
+  // variables (e.g. --sker-border) and descendant rules like `.sker-root
+  // input`. Clones appended to document.body lose that scope, and
+  // `var(--sker-border)` falls back to currentColor, drawing a text-colored
+  // border around the exported legend.
+  (hostElement ?? document.body).appendChild(stage);
   try {
     if (document.fonts?.ready) await document.fonts.ready;
     await nextPaint();
@@ -199,6 +231,7 @@ export async function renderDiagramPng({
   htmlNodes,
   bounds,
   backgroundColor,
+  hostElement,
 }) {
   if (!diagramSvg || !bounds || htmlNodes.length === 0) {
     throw new Error("The diagram has no renderable content.");
@@ -225,7 +258,7 @@ export async function renderDiagramPng({
   // diagram annotations are captured without the canvas pan/zoom transform,
   // then composited using the exact same world bounds.
   await drawVectorLayer(context, diagramSvg, bounds, pixelWidth, pixelHeight);
-  const htmlLayer = await captureHtmlLayer({ htmlNodes, bounds, scale, html2canvas });
+  const htmlLayer = await captureHtmlLayer({ htmlNodes, bounds, scale, html2canvas, hostElement });
   context.drawImage(htmlLayer, 0, 0);
   htmlLayer.width = 1;
   htmlLayer.height = 1;

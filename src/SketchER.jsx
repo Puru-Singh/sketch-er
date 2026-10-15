@@ -15,6 +15,7 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import MonacoEditor from "@monaco-editor/react";
+import HelpContent from "./HelpContent.jsx";
 
 import {
   dbmlLanguageConfig,
@@ -55,6 +56,8 @@ import {
   generateShareQrDataUrl,
   SHARE_QR_TOO_LARGE,
 } from "./shareQr.js";
+
+import { getThemeCursorVariables } from "./cursors.js";
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
@@ -205,6 +208,10 @@ const DARK_THEME = {
   legendBg: "rgba(30,30,30,0.7)",
 };
 
+// Custom high-contrast cursor suite (grab, grabbing, col-resize, move)
+// imported from ./cursors.js. Provides dual-tone silhouettes, natural ergonomics,
+// and ambient drop shadows for 100% legibility across light and dark themes.
+
 /* -------------------------------------------------------------------------- */
 /* General utilities                                                          */
 /* -------------------------------------------------------------------------- */
@@ -242,10 +249,6 @@ function measureTextWidth(value, font) {
 
 function clampZoom(value) {
   return clamp(value, MIN_ZOOM, MAX_ZOOM);
-}
-
-function safeNumber(value, fallback = 0) {
-  return Number.isFinite(value) ? value : fallback;
 }
 
 function normalizeColor(value) {
@@ -422,29 +425,32 @@ function getColumnY(position, index) {
 }
 
 function unionBounds(rectangles, padding = 0) {
-  const valid = rectangles.filter(
-    (rectangle) =>
-      rectangle &&
-      [rectangle.x, rectangle.y, rectangle.width, rectangle.height].every(
-        Number.isFinite,
-      ) &&
-      rectangle.width >= 0 &&
-      rectangle.height >= 0,
-  );
-
-  if (!valid.length) return null;
-
   let left = Infinity;
   let top = Infinity;
   let right = -Infinity;
   let bottom = -Infinity;
+  let hasValid = false;
 
-  for (const rectangle of valid) {
-    left = Math.min(left, rectangle.x);
-    top = Math.min(top, rectangle.y);
-    right = Math.max(right, rectangle.x + rectangle.width);
-    bottom = Math.max(bottom, rectangle.y + rectangle.height);
+  for (let i = 0; i < rectangles.length; i += 1) {
+    const rectangle = rectangles[i];
+    if (
+      rectangle &&
+      Number.isFinite(rectangle.x) &&
+      Number.isFinite(rectangle.y) &&
+      Number.isFinite(rectangle.width) &&
+      Number.isFinite(rectangle.height) &&
+      rectangle.width >= 0 &&
+      rectangle.height >= 0
+    ) {
+      hasValid = true;
+      if (rectangle.x < left) left = rectangle.x;
+      if (rectangle.y < top) top = rectangle.y;
+      if (rectangle.x + rectangle.width > right) right = rectangle.x + rectangle.width;
+      if (rectangle.y + rectangle.height > bottom) bottom = rectangle.y + rectangle.height;
+    }
   }
+
+  if (!hasValid) return null;
 
   return {
     x: left - padding,
@@ -1384,6 +1390,7 @@ function AnimatedPanel({ children }) {
 function ToolButton({
   children,
   label,
+  title,
   onClick,
   disabled = false,
   buttonRef,
@@ -1396,7 +1403,7 @@ function ToolButton({
       type="button"
       className={`sker-button ${className}`}
       aria-label={label}
-      title={label}
+      title={title || label}
       onClick={onClick}
       disabled={disabled}
       {...rest}
@@ -1411,6 +1418,8 @@ function ToggleSwitch({ checked, onChange, label }) {
     <label className="sker-toggle-label">
       <input
         type="checkbox"
+        role="switch"
+        aria-checked={checked}
         className="sker-toggle-input"
         checked={checked}
         onChange={(event) => onChange(event.target.checked)}
@@ -1425,6 +1434,7 @@ function ToggleSwitch({ checked, onChange, label }) {
 
 function Popover({
   label,
+  title,
   children,
   trigger,
   triggerRef,
@@ -1482,6 +1492,7 @@ function Popover({
       <ToolButton
         buttonRef={actualTriggerRef}
         label={label}
+        title={title}
         disabled={disabled}
         aria-expanded={open}
         aria-controls={id}
@@ -1600,7 +1611,7 @@ function Dialog({ title, onClose, restoreFocusRef, children, wide = false }) {
       >
         <header className="sker-dialog-header">
           <h2 id={titleId}>{title}</h2>
-          <ToolButton buttonRef={closeRef} label="Close dialog" onClick={onClose}>
+          <ToolButton buttonRef={closeRef} label="Close dialog" title="Close dialog (Escape)" aria-keyshortcuts="Escape" onClick={onClose}>
             ×
           </ToolButton>
         </header>
@@ -2051,15 +2062,6 @@ function ColumnEditor({
     ]);
   };
 
-  const removeColumn = (index) => {
-    setError("");
-    setColumns((items) => items.filter((_, i) => i !== index));
-    if (activeTypeIndex === index) {
-      setActiveTypeIndex(null);
-      setIsTyping(false);
-    }
-  };
-
   const typeCounts = useMemo(() => {
     const counts = new Map();
     for (const t of tables || []) {
@@ -2180,7 +2182,7 @@ function ColumnEditor({
             >
               <div
                 className="sker-drag-handle"
-                draggable={!disabled}
+                draggable={!parsingPending && !hasErrors}
                 tabIndex={0}
                 role="button"
                 title="Hold and drag to reorder column or use arrow keys"
@@ -2276,6 +2278,8 @@ function ColumnEditor({
                         <button
                           key={type}
                           type="button"
+                          role="option"
+                          aria-selected={type === column.type}
                           className={`sker-type-option ${type === column.type ? "is-selected" : ""}`}
                           onMouseDown={(event) => {
                             event.preventDefault();
@@ -2368,6 +2372,7 @@ function ColorPalette({ colors, selected, onChoose, label }) {
           className={`sker-color-dot ${selected === color ? "is-selected" : ""}`}
           style={{ background: color }}
           aria-label={`Apply color ${color}`}
+          aria-pressed={selected === color}
           title={color}
           onClick={() => onChoose(color)}
         />
@@ -2811,7 +2816,7 @@ function RelationshipLines({
               role="button"
               aria-label={`Reroute ${description}. Use left and right arrow keys.`}
               className="sker-line-handle"
-              style={{ pointerEvents: "stroke", cursor: "col-resize" }}
+              style={{ pointerEvents: "stroke", cursor: "var(--sker-cursor-col-resize)" }}
               onPointerDown={(event) => {
                 event.stopPropagation();
                 if (event.button !== 0) return;
@@ -2926,6 +2931,7 @@ function TableNode({
   dimmed,
   relationshipColumns,
   activeColumns,
+  interactionActive = false,
   onPointerDown,
   onSelect,
   onMove,
@@ -2943,7 +2949,7 @@ function TableNode({
   return (
     <div
       data-diagram-table={table.name}
-      className="sker-table"
+      className={`sker-table ${interactionActive && selected ? "is-dragging" : ""}`}
       role="group"
       tabIndex={0}
       aria-label={`${table.name}${selected ? ", selected" : ""}. Enter to select. Arrow keys to move. Shift F10 for options.`}
@@ -3027,7 +3033,9 @@ function TableNode({
         "--sker-table-shadow": selected
           ? `0 0 0 2px ${color}, 0 8px 24px rgba(0,0,0,0.12)`
           : "0 2px 8px rgba(0,0,0,0.09)",
-        cursor: "grab",
+        cursor: (interactionActive && selected)
+          ? "var(--sker-cursor-grabbing)"
+          : "var(--sker-cursor-grab)",
         userSelect: "none",
         fontFamily: "'DM Sans', sans-serif",
       }}
@@ -3259,7 +3267,7 @@ function GroupOverlay({
           tabIndex={0}
           aria-label={`Group ${group.name}. Enter to select; arrow keys to move.`}
           className="sker-group-handle"
-          style={{ pointerEvents: "all", cursor: "move" }}
+          style={{ pointerEvents: "all", cursor: "var(--sker-cursor-grab)" }}
           onPointerDown={(event) => {
             event.stopPropagation();
             if (event.button !== 0) return;
@@ -3639,126 +3647,12 @@ function ShareQrDialog({
 function HelpDialog({ onClose, restoreFocusRef }) {
   return (
     <Dialog
-      title="SketchER reference"
+      title="Help & guide"
       onClose={onClose}
       restoreFocusRef={restoreFocusRef}
       wide
     >
-      <nav className="sker-help-nav" aria-label="Reference sections">
-        <a href="#sker-help-tables">Tables</a>
-        <a href="#sker-help-relationships">Relationships</a>
-        <a href="#sker-help-groups">Groups</a>
-        <a href="#sker-help-canvas">Canvas</a>
-        <a href="#sker-help-saving">Saving and sharing</a>
-      </nav>
-
-      <section id="sker-help-tables">
-        <h3>Tables and advanced DBML</h3>
-        <p>
-          The editor uses the project’s DBML parser. Schemas, quoted identifiers,
-          aliases, parameterized types, defaults, notes, indexes, and other
-          supported DBML metadata are preserved in the parsed model.
-        </p>
-        <pre>{`Table core.users as U [headercolor: #3498db] {
-  id bigint [pk, increment]
-  email varchar(255) [not null, unique]
-  balance decimal(10,2) [default: 0]
-  full_name "character varying" [note: 'Display name']
-
-  indexes {
-    (email, full_name) [name: 'users_search_idx']
-  }
-}`}</pre>
-        <p>
-          Invalid edits show diagnostics while the canvas retains the last valid
-          model from the current document. Opening a different file never reuses
-          the previous file’s model.
-        </p>
-      </section>
-
-      <section id="sker-help-relationships">
-        <h3>Relationships</h3>
-        <pre>{`Table orders {
-  id int [pk]
-  user_id int [ref: > users.id]
-}
-
-Ref order_owner {
-  sales.orders.(tenant_id, user_id) > core.users.(tenant_id, id)
-}`}</pre>
-        <p>
-          Cardinalities: <code>&lt;</code> one-to-many, <code>&gt;</code>{" "}
-          many-to-one, <code>-</code> one-to-one, and <code>&lt;&gt;</code>{" "}
-          many-to-many. Optional endpoint syntax depends on the parser version.
-        </p>
-        <p>
-          Drag a relationship’s vertical grip to reroute it. Keyboard users can
-          focus a grip and use Left/Right; hold Shift for larger steps.
-          Reversing display flow does not change relationship cardinality.
-        </p>
-      </section>
-
-      <section id="sker-help-groups">
-        <h3>Groups and colors</h3>
-        <pre>{`TableGroup Auth [color: #8b5cf6] {
-  core.users
-  core.roles
-}`}</pre>
-        <p>
-          Ctrl/Cmd-click tables to select multiple tables. Right-click, or use
-          Shift+F10 on a focused table, to create a group. Drag a group’s label
-          strip to move all members and its manually positioned internal routes.
-        </p>
-        <p>
-          Palette colors are explicit UI overrides. Use “Use DBML/default color”
-          to remove a table override. Applying a color to multiple selected
-          tables creates related shades.
-        </p>
-      </section>
-
-      <section id="sker-help-canvas">
-        <h3>Canvas controls</h3>
-        <ul>
-          <li>Drag empty canvas to pan.</li>
-          <li>Two-finger trackpad scrolling pans in both axes.</li>
-          <li>Ctrl/Cmd-wheel or trackpad pinch zooms around the pointer.</li>
-          <li>Touch and pen dragging use pointer events.</li>
-          <li>Touch users can use the zoom buttons or slider.</li>
-          <li>Focus a table: Enter selects; arrow keys move it.</li>
-          <li>Hold Shift with arrow keys for larger movement steps.</li>
-          <li>Focus the canvas: arrows pan, +/− zoom, F fits, 0 resets.</li>
-          <li>Collapse tables to retain primary and relationship columns.</li>
-          <li>Smart layout groups tables; hierarchy layout emphasizes lineage.</li>
-        </ul>
-        <p>
-          Large diagrams can fit down to 5% zoom. Reduced-motion system
-          preferences disable animated relationship particles.
-        </p>
-      </section>
-
-      <section id="sker-help-saving">
-        <h3>Saving, export, and sharing</h3>
-        <ul>
-          <li>
-            Autosave runs after 400 ms of inactivity, with a two-second maximum
-            wait during continuous changes.
-          </li>
-          <li>
-            Save downloads a versioned <code>.sker</code> JSON document.
-          </li>
-          <li>
-            Open validates the complete document before replacing current state.
-          </li>
-          <li>PNG export includes the visible legend.</li>
-          <li>Share creates a snapshot link; QR codes have a smaller size limit.</li>
-        </ul>
-        <p>
-          Browser storage can fail or be cleared. Keep downloaded backups for
-          important diagrams. Opening a shared snapshot removes its hash from
-          the address bar so a later reload restores the edited autosave rather
-          than reopening the original snapshot.
-        </p>
-      </section>
+      <HelpContent />
     </Dialog>
   );
 }
@@ -4027,7 +3921,7 @@ const STYLES = `
 .sker-resizer {
   flex-shrink: 0;
   width: 5px;
-  cursor: col-resize;
+  cursor: var(--sker-cursor-col-resize);
   touch-action: none;
 }
 .sker-resizer:hover,
@@ -4090,7 +3984,10 @@ const STYLES = `
   cursor: pointer;
 }
 
+.sker-line-handle { cursor: var(--sker-cursor-col-resize); }
 .sker-line-handle:focus { stroke: #10b98166; }
+.sker-group-handle { cursor: var(--sker-cursor-grab); }
+.sker-group-handle:active { cursor: var(--sker-cursor-grabbing); }
 .sker-group-handle:focus { stroke: #10b981; stroke-width: 2; }
 
 .sker-bottom-controls {
@@ -4220,6 +4117,11 @@ const STYLES = `
 .sker-table {
   box-shadow: var(--sker-table-shadow);
   transition: box-shadow 160ms ease, border-color 160ms ease;
+  cursor: var(--sker-cursor-grab);
+}
+.sker-table:active,
+.sker-table.is-dragging {
+  cursor: var(--sker-cursor-grabbing);
 }
 @media (hover: hover) {
   .sker-table:hover {
@@ -4259,7 +4161,7 @@ const STYLES = `
   background: color-mix(in srgb, var(--sker-text) 6%, transparent);
   border: 1px solid transparent;
   border-radius: 6px;
-  cursor: grab;
+  cursor: var(--sker-cursor-grab);
   user-select: none;
   -webkit-user-select: none;
   flex-shrink: 0;
@@ -4271,7 +4173,7 @@ const STYLES = `
   border-color: color-mix(in srgb, #10b981 30%, transparent);
 }
 .sker-drag-handle:active {
-  cursor: grabbing;
+  cursor: var(--sker-cursor-grabbing);
   background: color-mix(in srgb, #10b981 25%, transparent);
 }
 .sker-drag-handle:focus-visible {
@@ -4545,8 +4447,6 @@ const STYLES = `
 .sker-dialog-content { padding: 18px; overflow: auto; overscroll-behavior: contain; line-height: 1.65; }
 .sker-dialog pre { padding: 12px; border: 1px solid var(--sker-border); border-radius: 7px; overflow: auto; background: var(--sker-editor); font-size: 11px; }
 .sker-dialog section { scroll-margin-top: 12px; margin-bottom: 28px; }
-.sker-help-nav { display: flex; flex-wrap: wrap; gap: 12px; }
-.sker-help-nav a { color: #059669; }
 .sker-qr-panel { display: flex; justify-content: center; align-items: center; min-height: 320px; padding: 10px; background: white; color: #374151; border-radius: 10px; margin: 14px 0; text-align: center; }
 .sker-qr-panel img { display: block; max-width: 100%; height: auto; }
 .sker-warning { padding: 10px; border: 1px solid #f59e0b88; border-radius: 7px; background: #f59e0b15; }
@@ -4714,11 +4614,6 @@ export default function SketchER() {
   );
 
   const refsRef = useLatest(refs);
-
-  const tablesByName = useMemo(
-    () => new Map(tables.map((table) => [table.name, table])),
-    [tables],
-  );
 
   const relationshipColumns = useMemo(() => {
     const map = new Map();
@@ -5128,7 +5023,8 @@ export default function SketchER() {
   const interactionRef = useRef(null);
   const pointerFrameRef = useRef(null);
   const latestPointerRef = useRef(null);
-  const [interactionActive, setInteractionActive] = useState(false);
+  const [activeInteractionType, setActiveInteractionType] = useState(null);
+  const interactionActive = Boolean(activeInteractionType);
 
   const flushPointer = useCallback(() => {
     pointerFrameRef.current = null;
@@ -5193,7 +5089,7 @@ export default function SketchER() {
     const interaction = interactionRef.current;
     interactionRef.current = null;
     latestPointerRef.current = null;
-    setInteractionActive(false);
+    setActiveInteractionType(null);
 
     try {
       if (
@@ -5232,7 +5128,7 @@ export default function SketchER() {
       y: event.clientY,
     };
 
-    setInteractionActive(true);
+    setActiveInteractionType(interaction.type);
 
     try {
       canvasRef.current?.setPointerCapture(event.pointerId);
@@ -5960,6 +5856,9 @@ export default function SketchER() {
         htmlNodes,
         bounds,
         backgroundColor: data.isDark ? "#1e1e1e" : "#f5f5f5",
+        // Keep the HTML capture stage inside the app root so the legend
+        // clone inherits the theme's CSS variables and scoped rules.
+        hostElement: rootRef.current ?? undefined,
       });
 
       if (!mountedRef.current) return;
@@ -6029,6 +5928,7 @@ export default function SketchER() {
     "--sker-secondary": theme.secondary,
     "--sker-muted": theme.muted,
     "--sker-chrome-top": `${topbarSize.height + 24}px`,
+    ...getThemeCursorVariables(data.isDark),
   };
 
   // Portaled dialogs do not inherit variables from the application root.
@@ -6361,7 +6261,12 @@ export default function SketchER() {
           }}
           style={{
             background: theme.canvasBg,
-            cursor: interactionActive ? "grabbing" : "default",
+            cursor:
+              activeInteractionType === "resize" || activeInteractionType === "line"
+                ? "var(--sker-cursor-col-resize)"
+                : activeInteractionType
+                  ? "var(--sker-cursor-grabbing)"
+                  : "default",
           }}
         >
           <svg
@@ -6455,6 +6360,8 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom out"
+                title="Zoom out (-)"
+                aria-keyshortcuts="-"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom / 1.1)}
               >
                 −
@@ -6464,17 +6371,33 @@ export default function SketchER() {
 
               <ToolButton
                 label="Zoom in"
+                title="Zoom in (+ / =)"
+                aria-keyshortcuts="+"
                 onClick={() => setCanvasZoom(viewportRef.current.zoom * 1.1)}
               >
                 +
               </ToolButton>
 
-              <ToolButton label="Fit diagram in view" onClick={fitToCanvas}>
+              <ToolButton
+                label="Fit diagram in view"
+                title="Fit diagram in view (F)"
+                aria-keyshortcuts="f"
+                onClick={fitToCanvas}
+              >
                 Fit
               </ToolButton>
 
               <Popover
                 label="Layout options"
+                title={
+                  layoutRunning
+                    ? "Layout in progress…"
+                    : parsingPending
+                      ? "Wait for the diagram to finish updating"
+                      : !tables.length
+                        ? "Diagram must contain at least one table to arrange"
+                        : undefined
+                }
                 trigger={layoutRunning ? "Arranging…" : "Layout"}
                 disabled={layoutRunning || !tables.length || parsingPending}
               >
@@ -6532,6 +6455,8 @@ export default function SketchER() {
 
                     <ToolButton
                       label="Reset canvas view"
+                      title="Reset canvas view (0)"
+                      aria-keyshortcuts="0"
                       onClick={() => {
                         resetView();
                         close(true);
@@ -6557,6 +6482,13 @@ export default function SketchER() {
 
               <ToolButton
                 label="Export diagram as PNG"
+                title={
+                  exportRunning
+                    ? "Export in progress…"
+                    : !tables.length
+                      ? "Diagram must contain at least one table to export"
+                      : undefined
+                }
                 disabled={exportRunning || !tables.length}
                 onClick={() => void exportPng()}
               >
@@ -6706,6 +6638,7 @@ export default function SketchER() {
                   }
                   relationshipColumns={relationshipColumns.get(table.name)}
                   activeColumns={activeColumns.get(table.name)}
+                  interactionActive={interactionActive}
                   onPointerDown={handleTablePointerDown}
                   onSelect={selectTable}
                   onMove={(name, dx, dy) => {
@@ -6745,10 +6678,20 @@ export default function SketchER() {
           )}
 
           {!tables.length && (
-            <div className="sker-empty">
-              {state.errors.length
-                ? "Correct the DBML errors to display this diagram."
-                : "Write DBML in the editor to create tables."}
+            <div className="sker-empty sker-stack" style={{ alignItems: "center" }}>
+              <div style={{ fontSize: 32, opacity: 0.4 }} aria-hidden="true">
+                {state.errors.length ? "⚠️" : "✨"}
+              </div>
+              <strong style={{ fontSize: 14, color: "var(--sker-text)", fontWeight: 600 }}>
+                {state.errors.length
+                  ? "Correct DBML errors to render"
+                  : "Write DBML to create your diagram"}
+              </strong>
+              <span className="sker-muted">
+                {state.errors.length
+                  ? "Check the editor panel for highlighted lines."
+                  : "Example: Table users { id int [pk] }"}
+              </span>
             </div>
           )}
 
