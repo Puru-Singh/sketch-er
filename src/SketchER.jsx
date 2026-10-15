@@ -574,7 +574,7 @@ function readStringArray(value, name, fallback = []) {
   return [...new Set(value)];
 }
 
-function normalizeDocument(raw, { requireDbml = false } = {}) {
+export function normalizeDocument(raw, { requireDbml = false } = {}) {
   if (!isRecord(raw)) throw new Error("The diagram must be a JSON object.");
 
   if (
@@ -750,7 +750,7 @@ function identifyRelationships(model, tableIds) {
   });
 }
 
-function reconcileDocument(data, model, previousModel, allowRenames) {
+export function reconcileDocument(data, model, previousModel, allowRenames) {
   const tables = modelTables(model);
   const validNames = new Set(tables.map((table) => table.name));
   const renames = allowRenames
@@ -875,7 +875,7 @@ function createDocumentState(data, parsed, epoch = 0) {
   };
 }
 
-function initializeApplication() {
+export function initializeApplication() {
   const warnings = [];
   let data = null;
   let fromShare = false;
@@ -922,7 +922,7 @@ function initializeApplication() {
   };
 }
 
-function documentReducer(state, action) {
+export function documentReducer(state, action) {
   switch (action.type) {
     case "edit":
       return {
