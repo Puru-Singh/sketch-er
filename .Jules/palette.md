@@ -13,3 +13,6 @@
 ## 2025-10-02 - Added Empty State Helpful Guidance
 **Learning:** Empty states with actionable, helpful instructions and a clear visual cue make the initial "blank slate" experience much friendlier and less daunting.
 **Action:** Enhance bare-bones empty states across apps by adding an icon (like ✨ or ⚠️), a clear headline, and a small example or hint of what to do next.
+## 2025-10-17 - Discoverable Disabled State Interactions
+**Learning:** Using the native `disabled` attribute on interactive elements completely removes them from the tab order. This makes the element entirely invisible to keyboard users and prevents them from discovering tooltips explaining *why* an action is unavailable.
+**Action:** Prefer using `aria-disabled="true"` for disabled interactive elements (and manually safeguarding click/keyboard handlers) so that the element remains focusable and screen readers can still announce the element, its disabled state, and any related tooltips.
