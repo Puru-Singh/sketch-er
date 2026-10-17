@@ -13,3 +13,6 @@
 ## 2025-10-02 - Added Empty State Helpful Guidance
 **Learning:** Empty states with actionable, helpful instructions and a clear visual cue make the initial "blank slate" experience much friendlier and less daunting.
 **Action:** Enhance bare-bones empty states across apps by adding an icon (like ✨ or ⚠️), a clear headline, and a small example or hint of what to do next.
+## 2025-10-16 - Semantic Disabled State
+**Learning:** The project uses `aria-disabled="true"` instead of the native `disabled` attribute to maintain keyboard focusability on disabled elements, but click and keydown handlers must manually guard against execution.
+**Action:** Replaced `disabled` with `aria-disabled` in ToolButton and other relevant components, while updating the event handlers to manually block actions if the element is disabled.
