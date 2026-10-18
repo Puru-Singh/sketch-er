@@ -1371,6 +1371,7 @@ function ToolButton({
   disabled = false,
   buttonRef,
   className = "",
+  onKeyDown,
   ...rest
 }) {
   return (
@@ -1380,8 +1381,23 @@ function ToolButton({
       className={`sker-button ${className}`}
       aria-label={label}
       title={title || label}
-      onClick={onClick}
-      disabled={disabled}
+      aria-disabled={disabled ? "true" : undefined}
+      onClick={(e) => {
+        if (disabled) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        if (onClick) onClick(e);
+      }}
+      onKeyDown={(e) => {
+        if (disabled && (e.key === 'Enter' || e.key === ' ')) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        if (onKeyDown) onKeyDown(e);
+      }}
       {...rest}
     >
       {children}
@@ -2290,8 +2306,21 @@ function ColumnEditor({
             <button
               type="button"
               className="sker-action-btn sker-apply-btn"
-              disabled={disabled || table.partials?.length > 0}
-              onClick={handleApply}
+              aria-disabled={(disabled || table.partials?.length > 0) ? "true" : undefined}
+              onClick={(e) => {
+                if (disabled || table.partials?.length > 0) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  return;
+                }
+                handleApply(e);
+              }}
+              onKeyDown={(e) => {
+                if ((disabled || table.partials?.length > 0) && (e.key === 'Enter' || e.key === ' ')) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                }
+              }}
             >
               Apply changes
             </button>
@@ -3761,11 +3790,12 @@ const STYLES = `
   white-space: nowrap;
 }
 
-.sker-button:hover:not(:disabled) {
+.sker-button:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--sker-soft);
 }
 
-.sker-button:disabled {
+.sker-button:disabled,
+.sker-button[aria-disabled="true"] {
   opacity: .55;
   cursor: not-allowed;
 }
@@ -3776,7 +3806,7 @@ const STYLES = `
   border-color: #047857;
 }
 
-.sker-primary:hover:not(:disabled) {
+.sker-primary:hover:not(:disabled):not([aria-disabled="true"]) {
   background: #065f46;
 }
 
@@ -4347,11 +4377,12 @@ const STYLES = `
   font-weight: 600;
   animation: sker-amber-glow 2s infinite ease-in-out;
 }
-.sker-apply-btn:hover:not(:disabled) {
+.sker-apply-btn:hover:not(:disabled):not([aria-disabled="true"]) {
   filter: brightness(1.12);
   transform: translateY(-1px);
 }
-.sker-apply-btn:disabled {
+.sker-apply-btn:disabled,
+.sker-apply-btn[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
   animation: none;
@@ -4446,7 +4477,7 @@ body:has(.find-widget .codicon-widget-close:hover) .workbench-hover-container:ha
 .sker-button > span[aria-hidden="true"] { transition: transform 160ms ease; }
 .sker-button[aria-expanded="true"] > span[aria-hidden="true"] { transform: rotate(180deg); }
 @media (hover: hover) {
-  .sker-button:hover:not(:disabled), .sker-collapse-button:hover,
+  .sker-button:hover:not(:disabled):not([aria-disabled="true"]), .sker-collapse-button:hover,
   .sker-color-picker:hover, .sker-legend-swatch:hover {
     border-color: #10b98180;
     box-shadow: 0 0 0 1px #10b98118, 0 0 12px #10b98124;
@@ -4454,7 +4485,7 @@ body:has(.find-widget .codicon-widget-close:hover) .workbench-hover-container:ha
   .sker-color-dot:hover { transform: scale(1.08); box-shadow: 0 0 10px #10b98135; }
   .sker-toggle-label:hover .sker-toggle-track { box-shadow: 0 0 10px #10b98124; }
 }
-.sker-button:active:not(:disabled) { transform: translateY(1px); }
+.sker-button:active:not(:disabled):not([aria-disabled="true"]) { transform: translateY(1px); }
 .sker-popover { transform-origin: top right; }
 .sker-popover-left, .sker-context { transform-origin: top left; }
 [data-motion="open"] { animation: sker-panel-in 180ms cubic-bezier(.2,.8,.2,1) both; }
@@ -6745,40 +6776,52 @@ export default function SketchER() {
                     setContextMenu(null);
                   }}
                 />
-              ) : (<>
-              <strong>Create table group</strong>
-              <span className="sker-muted">
-                {contextMenu.names.length} table(s) selected
-              </span>
+              ) : (() => {
+                const isGroupDisabled = !newGroupName.trim() || groupExists || parsingPending || state.errors.length > 0;
+                return (
+                  <>
+                    <strong>Create table group</strong>
+                    <span className="sker-muted">
+                      {contextMenu.names.length} table(s) selected
+                    </span>
 
-              <input
-                autoFocus
-                aria-label="New table group name"
-                value={newGroupName}
-                maxLength={500}
-                onChange={(event) => setNewGroupName(event.target.value)}
-                aria-invalid={groupExists || undefined}
-              />
+                    <input
+                      autoFocus
+                      aria-label="New table group name"
+                      value={newGroupName}
+                      maxLength={500}
+                      onChange={(event) => setNewGroupName(event.target.value)}
+                      aria-invalid={groupExists || undefined}
+                    />
 
-              {groupExists && (
-                <span role="status" style={{ color: "#dc2626" }}>
-                  A group with this name already exists.
-                </span>
-              )}
+                    {groupExists && (
+                      <span role="status" style={{ color: "#dc2626" }}>
+                        A group with this name already exists.
+                      </span>
+                    )}
 
-              <button
-                type="submit"
-                className="sker-button sker-primary"
-                disabled={
-                  !newGroupName.trim() ||
-                  groupExists ||
-                  parsingPending ||
-                  state.errors.length > 0
-                }
-              >
-                Create group
-              </button>
-              </>)}
+                    <button
+                      type="submit"
+                      className="sker-button sker-primary"
+                      aria-disabled={isGroupDisabled ? "true" : undefined}
+                      onClick={(e) => {
+                        if (isGroupDisabled) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }
+                      }}
+                      onKeyDown={(e) => {
+                        if (isGroupDisabled && (e.key === 'Enter' || e.key === ' ')) {
+                          e.preventDefault();
+                          e.stopPropagation();
+                        }
+                      }}
+                    >
+                      Create group
+                    </button>
+                  </>
+                );
+              })()}
 
               <ToolButton
                 label="Close table options"
