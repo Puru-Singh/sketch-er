@@ -1422,10 +1422,16 @@ function ToolButton({
         if (onClick) onClick(e);
       }}
       onKeyDown={(e) => {
-        if (disabled && (e.key === "Enter" || e.key === " ")) {
-          e.preventDefault();
-          e.stopPropagation();
-          return;
+          if (disabled) {
+            if (e.key === "Enter" || e.key === " ") {
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            } else if (rest.onKeyDown) {
+              e.preventDefault();
+              e.stopPropagation();
+              return;
+            }
         }
         if (rest.onKeyDown) rest.onKeyDown(e);
       }}
