@@ -1514,6 +1514,8 @@ function Popover({
           if (event.key !== "ArrowDown") return;
 
           event.preventDefault();
+          if (disabled) return;
+
           setOpen(true);
 
           requestAnimationFrame(() => {
