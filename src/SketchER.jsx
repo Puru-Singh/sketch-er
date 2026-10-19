@@ -15,12 +15,14 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import MonacoEditor from "@monaco-editor/react";
+import HelpContent from "./HelpContent.jsx";
 
 import {
   dbmlLanguageConfig,
   dbmlMonarchTokensProvider,
   EMPTY_DBML_MODEL,
   parseDBMLDocument,
+  parseDocument,
 } from "./dbmlParser.js";
 
 import {
@@ -56,14 +58,7 @@ import {
   SHARE_QR_TOO_LARGE,
 } from "./shareQr.js";
 
-import {
-  createColResizeCursor,
-  createGrabCursor,
-  createGrabbingCursor,
-  createMoveCursor,
-  getThemeCursorVariables,
-  handCursorCss,
-} from "./cursors.js";
+import { getThemeCursorVariables } from "./cursors.js";
 
 import {
   STORAGE_KEY,
@@ -85,7 +80,6 @@ import {
   readRecord,
   readPosition,
   normalizeDocument,
-  parseDocument,
   modelTables,
   modelGroups,
   identifyRelationships,
@@ -205,9 +199,6 @@ function measureTextWidth(value, font) {
   return textMeasurementContext.measureText(text).width;
 }
 
-function safeNumber(value, fallback = 0) {
-  return Number.isFinite(value) ? value : fallback;
-}
 
 function nextGroupName(groups) {
   const names = new Set(groups.map((group) => group.name));
@@ -350,29 +341,32 @@ function getColumnY(position, index) {
 }
 
 function unionBounds(rectangles, padding = 0) {
-  const valid = rectangles.filter(
-    (rectangle) =>
-      rectangle &&
-      [rectangle.x, rectangle.y, rectangle.width, rectangle.height].every(
-        Number.isFinite,
-      ) &&
-      rectangle.width >= 0 &&
-      rectangle.height >= 0,
-  );
-
-  if (!valid.length) return null;
-
   let left = Infinity;
   let top = Infinity;
   let right = -Infinity;
   let bottom = -Infinity;
+  let hasValid = false;
 
-  for (const rectangle of valid) {
-    left = Math.min(left, rectangle.x);
-    top = Math.min(top, rectangle.y);
-    right = Math.max(right, rectangle.x + rectangle.width);
-    bottom = Math.max(bottom, rectangle.y + rectangle.height);
+  for (let i = 0; i < rectangles.length; i += 1) {
+    const rectangle = rectangles[i];
+    if (
+      rectangle &&
+      Number.isFinite(rectangle.x) &&
+      Number.isFinite(rectangle.y) &&
+      Number.isFinite(rectangle.width) &&
+      Number.isFinite(rectangle.height) &&
+      rectangle.width >= 0 &&
+      rectangle.height >= 0
+    ) {
+      hasValid = true;
+      if (rectangle.x < left) left = rectangle.x;
+      if (rectangle.y < top) top = rectangle.y;
+      if (rectangle.x + rectangle.width > right) right = rectangle.x + rectangle.width;
+      if (rectangle.y + rectangle.height > bottom) bottom = rectangle.y + rectangle.height;
+    }
   }
+
+  if (!hasValid) return null;
 
   return {
     x: left - padding,
@@ -649,6 +643,7 @@ function ToolButton({
   label,
   title,
   onClick,
+  onKeyDown,
   disabled = false,
   buttonRef,
   className = "",
@@ -661,8 +656,25 @@ function ToolButton({
       className={`sker-button ${className}`}
       aria-label={label}
       title={title || label}
-      onClick={onClick}
-      disabled={disabled}
+      onClick={(e) => {
+        if (disabled) {
+          e.preventDefault();
+          e.stopPropagation();
+          return;
+        }
+        if (onClick) onClick(e);
+      }}
+      onKeyDown={(e) => {
+        if (disabled) {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          return;
+        }
+        if (onKeyDown) onKeyDown(e);
+      }}
+      aria-disabled={disabled ? "true" : undefined}
       {...rest}
     >
       {children}
@@ -868,7 +880,7 @@ function Dialog({ title, onClose, restoreFocusRef, children, wide = false }) {
       >
         <header className="sker-dialog-header">
           <h2 id={titleId}>{title}</h2>
-          <ToolButton buttonRef={closeRef} label="Close dialog" onClick={onClose}>
+          <ToolButton buttonRef={closeRef} label="Close dialog" title="Close dialog (Escape)" aria-keyshortcuts="Escape" onClick={onClose}>
             ×
           </ToolButton>
         </header>
@@ -1190,7 +1202,8 @@ function ColumnEditor({
   onApply,
   onCancel,
   onRegisterGuard,
-  disabled,
+  parsingPending,
+  hasErrors,
 }) {
   const [originalSource] = useState(source);
   const [columns, setColumns] = useState(() =>
@@ -1304,27 +1317,6 @@ function ColumnEditor({
       next.splice(toIndex, 0, moved);
       return next;
     });
-  };
-
-  const addColumn = () => {
-    setError("");
-    setColumns((items) => [
-      ...items,
-      {
-        originalName: null,
-        name: `column_${items.length + 1}`,
-        type: "varchar",
-      },
-    ]);
-  };
-
-  const removeColumn = (index) => {
-    setError("");
-    setColumns((items) => items.filter((_, i) => i !== index));
-    if (activeTypeIndex === index) {
-      setActiveTypeIndex(null);
-      setIsTyping(false);
-    }
   };
 
   const typeCounts = useMemo(() => {
@@ -1447,7 +1439,7 @@ function ColumnEditor({
             >
               <div
                 className="sker-drag-handle"
-                draggable={!disabled}
+                draggable={!parsingPending && !hasErrors}
                 tabIndex={0}
                 role="button"
                 title="Hold and drag to reorder column or use arrow keys"
@@ -1592,8 +1584,24 @@ function ColumnEditor({
             <button
               type="button"
               className="sker-action-btn sker-apply-btn"
-              disabled={disabled || table.partials?.length > 0}
-              onClick={handleApply}
+              title={
+                table.partials?.length > 0
+                  ? "Cannot edit tables constructed with TablePartials"
+                  : parsingPending
+                    ? "Waiting for code to parse..."
+                    : hasErrors
+                      ? "Fix code errors before applying"
+                      : undefined
+              }
+              aria-disabled={parsingPending || hasErrors || table.partials?.length > 0 ? "true" : undefined}
+              onClick={(e) => {
+                if (parsingPending || hasErrors || table.partials?.length > 0) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  return;
+                }
+                handleApply(e);
+              }}
             >
               Apply changes
             </button>
@@ -2903,126 +2911,12 @@ function ShareQrDialog({
 function HelpDialog({ onClose, restoreFocusRef }) {
   return (
     <Dialog
-      title="SketchER reference"
+      title="Help & guide"
       onClose={onClose}
       restoreFocusRef={restoreFocusRef}
       wide
     >
-      <nav className="sker-help-nav" aria-label="Reference sections">
-        <a href="#sker-help-tables">Tables</a>
-        <a href="#sker-help-relationships">Relationships</a>
-        <a href="#sker-help-groups">Groups</a>
-        <a href="#sker-help-canvas">Canvas</a>
-        <a href="#sker-help-saving">Saving and sharing</a>
-      </nav>
-
-      <section id="sker-help-tables">
-        <h3>Tables and advanced DBML</h3>
-        <p>
-          The editor uses the project’s DBML parser. Schemas, quoted identifiers,
-          aliases, parameterized types, defaults, notes, indexes, and other
-          supported DBML metadata are preserved in the parsed model.
-        </p>
-        <pre>{`Table core.users as U [headercolor: #3498db] {
-  id bigint [pk, increment]
-  email varchar(255) [not null, unique]
-  balance decimal(10,2) [default: 0]
-  full_name "character varying" [note: 'Display name']
-
-  indexes {
-    (email, full_name) [name: 'users_search_idx']
-  }
-}`}</pre>
-        <p>
-          Invalid edits show diagnostics while the canvas retains the last valid
-          model from the current document. Opening a different file never reuses
-          the previous file’s model.
-        </p>
-      </section>
-
-      <section id="sker-help-relationships">
-        <h3>Relationships</h3>
-        <pre>{`Table orders {
-  id int [pk]
-  user_id int [ref: > users.id]
-}
-
-Ref order_owner {
-  sales.orders.(tenant_id, user_id) > core.users.(tenant_id, id)
-}`}</pre>
-        <p>
-          Cardinalities: <code>&lt;</code> one-to-many, <code>&gt;</code>{" "}
-          many-to-one, <code>-</code> one-to-one, and <code>&lt;&gt;</code>{" "}
-          many-to-many. Optional endpoint syntax depends on the parser version.
-        </p>
-        <p>
-          Drag a relationship’s vertical grip to reroute it. Keyboard users can
-          focus a grip and use Left/Right; hold Shift for larger steps.
-          Reversing display flow does not change relationship cardinality.
-        </p>
-      </section>
-
-      <section id="sker-help-groups">
-        <h3>Groups and colors</h3>
-        <pre>{`TableGroup Auth [color: #8b5cf6] {
-  core.users
-  core.roles
-}`}</pre>
-        <p>
-          Ctrl/Cmd-click tables to select multiple tables. Right-click, or use
-          Shift+F10 on a focused table, to create a group. Drag a group’s label
-          strip to move all members and its manually positioned internal routes.
-        </p>
-        <p>
-          Palette colors are explicit UI overrides. Use “Use DBML/default color”
-          to remove a table override. Applying a color to multiple selected
-          tables creates related shades.
-        </p>
-      </section>
-
-      <section id="sker-help-canvas">
-        <h3>Canvas controls</h3>
-        <ul>
-          <li>Drag empty canvas to pan.</li>
-          <li>Two-finger trackpad scrolling pans in both axes.</li>
-          <li>Ctrl/Cmd-wheel or trackpad pinch zooms around the pointer.</li>
-          <li>Touch and pen dragging use pointer events.</li>
-          <li>Touch users can use the zoom buttons or slider.</li>
-          <li>Focus a table: Enter selects; arrow keys move it.</li>
-          <li>Hold Shift with arrow keys for larger movement steps.</li>
-          <li>Focus the canvas: arrows pan, +/− zoom, F fits, 0 resets.</li>
-          <li>Collapse tables to retain primary and relationship columns.</li>
-          <li>Smart layout groups tables; hierarchy layout emphasizes lineage.</li>
-        </ul>
-        <p>
-          Large diagrams can fit down to 5% zoom. Reduced-motion system
-          preferences disable animated relationship particles.
-        </p>
-      </section>
-
-      <section id="sker-help-saving">
-        <h3>Saving, export, and sharing</h3>
-        <ul>
-          <li>
-            Autosave runs after 400 ms of inactivity, with a two-second maximum
-            wait during continuous changes.
-          </li>
-          <li>
-            Save downloads a versioned <code>.sker</code> JSON document.
-          </li>
-          <li>
-            Open validates the complete document before replacing current state.
-          </li>
-          <li>PNG export includes the visible legend.</li>
-          <li>Share creates a snapshot link; QR codes have a smaller size limit.</li>
-        </ul>
-        <p>
-          Browser storage can fail or be cleared. Keep downloaded backups for
-          important diagrams. Opening a shared snapshot removes its hash from
-          the address bar so a later reload restores the edited autosave rather
-          than reopening the original snapshot.
-        </p>
-      </section>
+      <HelpContent />
     </Dialog>
   );
 }
@@ -3177,11 +3071,12 @@ const STYLES = `
   white-space: nowrap;
 }
 
-.sker-button:hover:not(:disabled) {
+.sker-button:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--sker-soft);
 }
 
-.sker-button:disabled {
+.sker-button:disabled,
+.sker-button[aria-disabled="true"] {
   opacity: .55;
   cursor: not-allowed;
 }
@@ -3192,7 +3087,7 @@ const STYLES = `
   border-color: #047857;
 }
 
-.sker-primary:hover:not(:disabled) {
+.sker-primary:hover:not(:disabled):not([aria-disabled="true"]) {
   background: #065f46;
 }
 
@@ -3763,11 +3658,12 @@ const STYLES = `
   font-weight: 600;
   animation: sker-amber-glow 2s infinite ease-in-out;
 }
-.sker-apply-btn:hover:not(:disabled) {
+.sker-apply-btn:hover:not(:disabled):not([aria-disabled="true"]) {
   filter: brightness(1.12);
   transform: translateY(-1px);
 }
-.sker-apply-btn:disabled {
+.sker-apply-btn:disabled,
+.sker-apply-btn[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
   animation: none;
@@ -3817,8 +3713,6 @@ const STYLES = `
 .sker-dialog-content { padding: 18px; overflow: auto; overscroll-behavior: contain; line-height: 1.65; }
 .sker-dialog pre { padding: 12px; border: 1px solid var(--sker-border); border-radius: 7px; overflow: auto; background: var(--sker-editor); font-size: 11px; }
 .sker-dialog section { scroll-margin-top: 12px; margin-bottom: 28px; }
-.sker-help-nav { display: flex; flex-wrap: wrap; gap: 12px; }
-.sker-help-nav a { color: #059669; }
 .sker-qr-panel { display: flex; justify-content: center; align-items: center; min-height: 320px; padding: 10px; background: white; color: #374151; border-radius: 10px; margin: 14px 0; text-align: center; }
 .sker-qr-panel img { display: block; max-width: 100%; height: auto; }
 .sker-warning { padding: 10px; border: 1px solid #f59e0b88; border-radius: 7px; background: #f59e0b15; }
@@ -3864,7 +3758,7 @@ body:has(.find-widget .codicon-widget-close:hover) .workbench-hover-container:ha
 .sker-button > span[aria-hidden="true"] { transition: transform 160ms ease; }
 .sker-button[aria-expanded="true"] > span[aria-hidden="true"] { transform: rotate(180deg); }
 @media (hover: hover) {
-  .sker-button:hover:not(:disabled), .sker-collapse-button:hover,
+  .sker-button:hover:not(:disabled):not([aria-disabled="true"]), .sker-collapse-button:hover,
   .sker-color-picker:hover, .sker-legend-swatch:hover {
     border-color: #10b98180;
     box-shadow: 0 0 0 1px #10b98118, 0 0 12px #10b98124;
@@ -3872,7 +3766,7 @@ body:has(.find-widget .codicon-widget-close:hover) .workbench-hover-container:ha
   .sker-color-dot:hover { transform: scale(1.08); box-shadow: 0 0 10px #10b98135; }
   .sker-toggle-label:hover .sker-toggle-track { box-shadow: 0 0 10px #10b98124; }
 }
-.sker-button:active:not(:disabled) { transform: translateY(1px); }
+.sker-button:active:not(:disabled):not([aria-disabled="true"]) { transform: translateY(1px); }
 .sker-popover { transform-origin: top right; }
 .sker-popover-left, .sker-context { transform-origin: top left; }
 [data-motion="open"] { animation: sker-panel-in 180ms cubic-bezier(.2,.8,.2,1) both; }
@@ -3986,11 +3880,6 @@ export default function SketchER() {
   );
 
   const refsRef = useLatest(refs);
-
-  const tablesByName = useMemo(
-    () => new Map(tables.map((table) => [table.name, table])),
-    [tables],
-  );
 
   const relationshipColumns = useMemo(() => {
     const map = new Map();
@@ -6153,7 +6042,8 @@ export default function SketchER() {
                   tables={tables}
                   source={data.dbml}
                   enums={model.enums}
-                  disabled={parsingPending || state.errors.length > 0}
+                  parsingPending={parsingPending}
+                  hasErrors={state.errors.length > 0}
                   onRegisterGuard={(guardFn) => {
                     unsavedGuardRef.current = guardFn;
                   }}
@@ -6192,12 +6082,32 @@ export default function SketchER() {
               <button
                 type="submit"
                 className="sker-button sker-primary"
-                disabled={
+                aria-disabled={
                   !newGroupName.trim() ||
                   groupExists ||
                   parsingPending ||
                   state.errors.length > 0
+                    ? "true"
+                    : undefined
                 }
+                title={
+                  !newGroupName.trim() ? "Enter a group name" :
+                  groupExists ? "A group with this name already exists" :
+                  parsingPending ? "Waiting for code to parse..." :
+                  state.errors.length > 0 ? "Fix code errors before grouping" :
+                  undefined
+                }
+                onClick={(e) => {
+                  if (
+                    !newGroupName.trim() ||
+                    groupExists ||
+                    parsingPending ||
+                    state.errors.length > 0
+                  ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }
+                }}
               >
                 Create group
               </button>

@@ -1,6 +1,6 @@
 import {
   EMPTY_DBML_MODEL,
-  parseDBMLDocument,
+  parseDocument,
 } from "./dbmlParser.js";
 import { detectTableRenames } from "./tableIdentity.js";
 import { decodeShareHash } from "./shareLink.js";
@@ -318,32 +318,6 @@ export function normalizeDocument(raw, { requireDbml = false } = {}) {
     editorWidth: clamp(editorWidth, 280, 700),
     viewport,
   };
-}
-
-export function parseDocument(dbml) {
-  try {
-    const result = parseDBMLDocument(dbml);
-
-    return {
-      model: result.model || null,
-      errors: result.errors || [],
-      warnings: result.warnings || [],
-    };
-  } catch (error) {
-    return {
-      model: null,
-      errors: [
-        {
-          message: errorMessage(error, "Unable to parse DBML."),
-          startLineNumber: 1,
-          startColumn: 1,
-          endLineNumber: 1,
-          endColumn: 2,
-        },
-      ],
-      warnings: [],
-    };
-  }
 }
 
 export function modelTables(model) {
