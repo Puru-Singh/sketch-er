@@ -1909,7 +1909,8 @@ function ColumnEditor({
   onApply,
   onCancel,
   onRegisterGuard,
-  disabled,
+  parsingPending,
+  hasErrors,
 }) {
   const [originalSource] = useState(source);
   const [columns, setColumns] = useState(() =>
@@ -2145,7 +2146,7 @@ function ColumnEditor({
             >
               <div
                 className="sker-drag-handle"
-                draggable={!disabled}
+                draggable={!parsingPending && !hasErrors}
                 tabIndex={0}
                 role="button"
                 title="Hold and drag to reorder column or use arrow keys"
@@ -2290,7 +2291,16 @@ function ColumnEditor({
             <button
               type="button"
               className="sker-action-btn sker-apply-btn"
-              disabled={disabled || table.partials?.length > 0}
+              disabled={parsingPending || hasErrors || table.partials?.length > 0}
+              title={
+                table.partials?.length > 0
+                  ? "Cannot edit tables constructed with TablePartials"
+                  : parsingPending
+                    ? "Waiting for code to parse..."
+                    : hasErrors
+                      ? "Fix code errors before applying"
+                      : undefined
+              }
               onClick={handleApply}
             >
               Apply changes
@@ -6730,7 +6740,8 @@ export default function SketchER() {
                   tables={tables}
                   source={data.dbml}
                   enums={model.enums}
-                  disabled={parsingPending || state.errors.length > 0}
+                  parsingPending={parsingPending}
+                  hasErrors={state.errors.length > 0}
                   onRegisterGuard={(guardFn) => {
                     unsavedGuardRef.current = guardFn;
                   }}
@@ -6774,6 +6785,13 @@ export default function SketchER() {
                   groupExists ||
                   parsingPending ||
                   state.errors.length > 0
+                }
+                title={
+                  !newGroupName.trim() ? "Enter a group name" :
+                  groupExists ? "A group with this name already exists" :
+                  parsingPending ? "Waiting for code to parse..." :
+                  state.errors.length > 0 ? "Fix code errors before grouping" :
+                  undefined
                 }
               >
                 Create group
