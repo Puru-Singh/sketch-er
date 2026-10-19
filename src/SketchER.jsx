@@ -54,8 +54,6 @@ import {
   SHARE_QR_TOO_LARGE,
 } from "./shareQr.js";
 
-import { getThemeCursorVariables } from "./cursors.js";
-
 import {
   STORAGE_KEY,
   DOCUMENT_VERSION,
@@ -169,10 +167,6 @@ const DARK_THEME = {
   activeColumn: "rgba(59,130,246,0.2)",
   legendBg: "rgba(30,30,30,0.7)",
 };
-
-// Custom high-contrast cursor suite (grab, grabbing, col-resize, move)
-// imported from ./cursors.js. Provides dual-tone silhouettes, natural ergonomics,
-// and ambient drop shadows for 100% legibility across light and dark themes.
 
 /* -------------------------------------------------------------------------- */
 /* Helper utilities                                                           */
@@ -2073,7 +2067,7 @@ function RelationshipLines({
               role="button"
               aria-label={`Reroute ${description}. Use left and right arrow keys.`}
               className="sker-line-handle"
-              style={{ pointerEvents: "stroke", cursor: "var(--sker-cursor-col-resize)" }}
+              style={{ pointerEvents: "stroke", cursor: "col-resize" }}
               onPointerDown={(event) => {
                 event.stopPropagation();
                 if (event.button !== 0) return;
@@ -2291,8 +2285,8 @@ function TableNode({
           ? `0 0 0 2px ${color}, 0 8px 24px rgba(0,0,0,0.12)`
           : "0 2px 8px rgba(0,0,0,0.09)",
         cursor: (interactionActive && selected)
-          ? "var(--sker-cursor-grabbing)"
-          : "var(--sker-cursor-grab)",
+          ? "grabbing"
+          : "grab",
         userSelect: "none",
         fontFamily: "'DM Sans', sans-serif",
       }}
@@ -2524,7 +2518,7 @@ function GroupOverlay({
           tabIndex={0}
           aria-label={`Group ${group.name}. Enter to select; arrow keys to move.`}
           className="sker-group-handle"
-          style={{ pointerEvents: "all", cursor: "var(--sker-cursor-grab)" }}
+          style={{ pointerEvents: "all" }}
           onPointerDown={(event) => {
             event.stopPropagation();
             if (event.button !== 0) return;
@@ -3179,7 +3173,7 @@ const STYLES = `
 .sker-resizer {
   flex-shrink: 0;
   width: 5px;
-  cursor: var(--sker-cursor-col-resize);
+  cursor: col-resize;
   touch-action: none;
 }
 .sker-resizer:hover,
@@ -3242,10 +3236,10 @@ const STYLES = `
   cursor: pointer;
 }
 
-.sker-line-handle { cursor: var(--sker-cursor-col-resize); }
+.sker-line-handle { cursor: col-resize; }
 .sker-line-handle:focus { stroke: #10b98166; }
-.sker-group-handle { cursor: var(--sker-cursor-grab); }
-.sker-group-handle:active { cursor: var(--sker-cursor-grabbing); }
+.sker-group-handle { cursor: grab; }
+.sker-group-handle:active { cursor: grabbing; }
 .sker-group-handle:focus { stroke: #10b981; stroke-width: 2; }
 
 .sker-bottom-controls {
@@ -3375,11 +3369,11 @@ const STYLES = `
 .sker-table {
   box-shadow: var(--sker-table-shadow);
   transition: box-shadow 160ms ease, border-color 160ms ease;
-  cursor: var(--sker-cursor-grab);
+  cursor: grab;
 }
 .sker-table:active,
 .sker-table.is-dragging {
-  cursor: var(--sker-cursor-grabbing);
+  cursor: grabbing;
 }
 @media (hover: hover) {
   .sker-table:hover {
@@ -3419,7 +3413,7 @@ const STYLES = `
   background: color-mix(in srgb, var(--sker-text) 6%, transparent);
   border: 1px solid transparent;
   border-radius: 6px;
-  cursor: var(--sker-cursor-grab);
+  cursor: grab;
   user-select: none;
   -webkit-user-select: none;
   flex-shrink: 0;
@@ -3431,7 +3425,7 @@ const STYLES = `
   border-color: color-mix(in srgb, #10b981 30%, transparent);
 }
 .sker-drag-handle:active {
-  cursor: var(--sker-cursor-grabbing);
+  cursor: grabbing;
   background: color-mix(in srgb, #10b981 25%, transparent);
 }
 .sker-drag-handle:focus-visible {
@@ -5187,7 +5181,6 @@ export default function SketchER() {
     "--sker-secondary": theme.secondary,
     "--sker-muted": theme.muted,
     "--sker-chrome-top": `${topbarSize.height + 24}px`,
-    ...getThemeCursorVariables(data.isDark),
   };
 
   // Portaled dialogs do not inherit variables from the application root.
@@ -5522,9 +5515,9 @@ export default function SketchER() {
             background: theme.canvasBg,
             cursor:
               activeInteractionType === "resize" || activeInteractionType === "line"
-                ? "var(--sker-cursor-col-resize)"
+                ? "col-resize"
                 : activeInteractionType
-                  ? "var(--sker-cursor-grabbing)"
+                  ? "grabbing"
                   : "default",
           }}
         >
