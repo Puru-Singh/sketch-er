@@ -15,12 +15,12 @@ import {
 } from "react";
 import { createPortal } from "react-dom";
 import MonacoEditor from "@monaco-editor/react";
+import HelpContent from "./HelpContent.jsx";
 
 import {
   dbmlLanguageConfig,
   dbmlMonarchTokensProvider,
-  EMPTY_DBML_MODEL,
-  parseDBMLDocument,
+  parseDocument,
 } from "./dbmlParser.js";
 
 import {
@@ -37,8 +37,6 @@ import {
   routeOrthogonalConnection,
 } from "./relationshipRouting.js";
 
-import { detectTableRenames } from "./tableIdentity.js";
-
 import {
   calculateExportBounds,
   downloadPng,
@@ -49,43 +47,51 @@ import {
 import { editTableColumns } from "./columnEditing.js";
 
 import { copyTextToClipboard } from "./clipboard.js";
-import { buildShareUrl, decodeShareHash } from "./shareLink.js";
+import { buildShareUrl } from "./shareLink.js";
 
 import {
   generateShareQrDataUrl,
   SHARE_QR_TOO_LARGE,
 } from "./shareQr.js";
 
+import { getThemeCursorVariables } from "./cursors.js";
+
 import {
-  createColResizeCursor,
-  createGrabCursor,
-  createGrabbingCursor,
-  createMoveCursor,
-  getThemeCursorVariables,
-  handCursorCss,
-} from "./cursors.js";
+  STORAGE_KEY,
+  DOCUMENT_VERSION,
+  MAX_FILE_BYTES,
+  MAX_DBML_LENGTH,
+  MAX_COORDINATE,
+  MIN_ZOOM,
+  MAX_ZOOM,
+  RELATIONSHIP_LINE_WIDTH,
+  TABLE_WIDTH,
+  dictionary,
+  hasOwn,
+  clamp,
+  clampZoom,
+  normalizeColor,
+  errorMessage,
+  stableHash,
+  readRecord,
+  readPosition,
+  normalizeDocument,
+  modelTables,
+  modelGroups,
+  identifyRelationships,
+  initializeApplication,
+  documentReducer,
+} from "./sketcherDocument.js";
 
 /* -------------------------------------------------------------------------- */
 /* Constants                                                                  */
 /* -------------------------------------------------------------------------- */
-
-const STORAGE_KEY = "sketcher-state";
-const DOCUMENT_VERSION = 2;
-
-const MAX_FILE_BYTES = 10 * 1024 * 1024;
-const MAX_DBML_LENGTH = 5 * 1024 * 1024;
-const MAX_DICTIONARY_ENTRIES = 100_000;
-const MAX_COORDINATE = 10_000_000;
-
-const MIN_ZOOM = 0.05;
-const MAX_ZOOM = 2;
 
 const HEADER_HEIGHT = 42;
 const COL_HEIGHT = 32;
 const TABLE_META_HEIGHT = 24;
 const TABLE_BORDER = 1;
 const TABLE_MIN_WIDTH = 200;
-const TABLE_WIDTH = 230;
 
 const GROUP_PAD = 22;
 const GROUP_LABEL_HEIGHT = 26;
@@ -93,7 +99,6 @@ const GROUP_LABEL_HEIGHT = 26;
 const LANE_SPACING = 24;
 const ARRIVAL_SPACING = 8;
 const ROUTING_CLEARANCE = 12;
-const RELATIONSHIP_LINE_WIDTH = 1.8;
 
 const TABLE_COLORS = [
   "#ef4444",
@@ -120,55 +125,6 @@ const GROUP_COLORS = [
   "#f97316",
   "#84cc16",
 ];
-
-const DEFAULT_DBML = `Table users {
-  id int [pk]
-  username varchar
-  email varchar
-  created_at datetime
-  role_id int [ref: > roles.id]
-}
-
-Table roles {
-  id int [pk]
-  name varchar
-  description text
-}
-
-Table posts {
-  id int [pk]
-  title varchar
-  content text
-  author_id int [ref: > users.id]
-  category_id int [ref: > categories.id]
-  created_at datetime
-  updated_at datetime
-}
-
-Table categories {
-  id int [pk]
-  name varchar
-  slug varchar
-}
-
-Table comments {
-  id int [pk]
-  post_id int [ref: > posts.id]
-  user_id int [ref: > users.id]
-  body text
-  created_at datetime
-}
-
-TableGroup Auth {
-  users
-  roles
-}
-
-TableGroup Content {
-  posts
-  categories
-  comments
-}`;
 
 const LIGHT_THEME = {
   appBg: "#ffffff",
@@ -219,24 +175,8 @@ const DARK_THEME = {
 // and ambient drop shadows for 100% legibility across light and dark themes.
 
 /* -------------------------------------------------------------------------- */
-/* General utilities                                                          */
+/* Helper utilities                                                           */
 /* -------------------------------------------------------------------------- */
-
-function dictionary(source) {
-  return Object.assign(Object.create(null), source || {});
-}
-
-function hasOwn(object, key) {
-  return Object.prototype.hasOwnProperty.call(object, key);
-}
-
-function isRecord(value) {
-  return value !== null && typeof value === "object" && !Array.isArray(value);
-}
-
-function clamp(value, min, max) {
-  return Math.max(min, Math.min(max, value));
-}
 
 let textMeasurementContext = null;
 
@@ -251,47 +191,6 @@ function measureTextWidth(value, font) {
 
   textMeasurementContext.font = font;
   return textMeasurementContext.measureText(text).width;
-}
-
-function clampZoom(value) {
-  return clamp(value, MIN_ZOOM, MAX_ZOOM);
-}
-
-function safeNumber(value, fallback = 0) {
-  return Number.isFinite(value) ? value : fallback;
-}
-
-function normalizeColor(value) {
-  if (typeof value !== "string") return null;
-
-  const color = value.trim().toLowerCase();
-
-  if (/^#[0-9a-f]{6}$/.test(color)) return color;
-
-  if (/^#[0-9a-f]{3}$/.test(color)) {
-    return `#${[...color.slice(1)].map((character) => character.repeat(2)).join("")}`;
-  }
-
-  return null;
-}
-
-function errorMessage(error, fallback) {
-  return error instanceof Error && error.message ? error.message : fallback;
-}
-
-function stableHash(value) {
-  let hash = 2166136261;
-
-  for (let i = 0; i < value.length; i += 1) {
-    hash ^= value.charCodeAt(i);
-    hash = Math.imul(hash, 16777619);
-  }
-
-  return hash >>> 0;
-}
-
-function arraysEqual(a, b) {
-  return a.length === b.length && a.every((value, index) => value === b[index]);
 }
 
 function nextGroupName(groups) {
@@ -435,29 +334,32 @@ function getColumnY(position, index) {
 }
 
 function unionBounds(rectangles, padding = 0) {
-  const valid = rectangles.filter(
-    (rectangle) =>
-      rectangle &&
-      [rectangle.x, rectangle.y, rectangle.width, rectangle.height].every(
-        Number.isFinite,
-      ) &&
-      rectangle.width >= 0 &&
-      rectangle.height >= 0,
-  );
-
-  if (!valid.length) return null;
-
   let left = Infinity;
   let top = Infinity;
   let right = -Infinity;
   let bottom = -Infinity;
+  let hasValid = false;
 
-  for (const rectangle of valid) {
-    left = Math.min(left, rectangle.x);
-    top = Math.min(top, rectangle.y);
-    right = Math.max(right, rectangle.x + rectangle.width);
-    bottom = Math.max(bottom, rectangle.y + rectangle.height);
+  for (let i = 0; i < rectangles.length; i += 1) {
+    const rectangle = rectangles[i];
+    if (
+      rectangle &&
+      Number.isFinite(rectangle.x) &&
+      Number.isFinite(rectangle.y) &&
+      Number.isFinite(rectangle.width) &&
+      Number.isFinite(rectangle.height) &&
+      rectangle.width >= 0 &&
+      rectangle.height >= 0
+    ) {
+      hasValid = true;
+      if (rectangle.x < left) left = rectangle.x;
+      if (rectangle.y < top) top = rectangle.y;
+      if (rectangle.x + rectangle.width > right) right = rectangle.x + rectangle.width;
+      if (rectangle.y + rectangle.height > bottom) bottom = rectangle.y + rectangle.height;
+    }
   }
+
+  if (!hasValid) return null;
 
   return {
     x: left - padding,
@@ -493,671 +395,6 @@ function getGroupBounds(group, positions, tablesByName, widths) {
     width: bounds.width + GROUP_PAD * 2,
     height: bounds.height + GROUP_PAD * 2 + GROUP_LABEL_HEIGHT,
   };
-}
-
-/* -------------------------------------------------------------------------- */
-/* Validation and serialization                                               */
-/* -------------------------------------------------------------------------- */
-
-function readString(value, name, fallback, maxLength = MAX_DBML_LENGTH) {
-  if (value === undefined) return fallback;
-
-  if (typeof value !== "string" || value.length > maxLength) {
-    throw new Error(`${name} must be a string of at most ${maxLength} characters.`);
-  }
-
-  return value;
-}
-
-function readBoolean(value, name, fallback) {
-  if (value === undefined) return fallback;
-  if (typeof value !== "boolean") throw new Error(`${name} must be a boolean.`);
-  return value;
-}
-
-function readNumber(value, name, fallback, min, max) {
-  if (value === undefined) return fallback;
-  if (typeof value !== "number" || !Number.isFinite(value)) {
-    throw new Error(`${name} must be a finite number.`);
-  }
-  return clamp(value, min, max);
-}
-
-function readRecord(value, name, validateValue) {
-  if (value === undefined) return dictionary();
-
-  if (!isRecord(value)) throw new Error(`${name} must be an object.`);
-
-  const entries = Object.entries(value);
-
-  if (entries.length > MAX_DICTIONARY_ENTRIES) {
-    throw new Error(`${name} contains too many entries.`);
-  }
-
-  const result = dictionary();
-
-  for (const [key, item] of entries) {
-    if (key.length > 10_000) throw new Error(`${name} contains an oversized key.`);
-    result[key] = validateValue(item, `${name}.${key}`);
-  }
-
-  return result;
-}
-
-function readCoordinate(value, name) {
-  if (!Number.isFinite(value) || Math.abs(value) > MAX_COORDINATE) {
-    throw new Error(`${name} must be a finite coordinate.`);
-  }
-
-  return value;
-}
-
-function readPosition(value, name) {
-  if (!isRecord(value)) throw new Error(`${name} must contain x and y.`);
-
-  return {
-    x: readCoordinate(value.x, `${name}.x`),
-    y: readCoordinate(value.y, `${name}.y`),
-  };
-}
-
-function readColor(value, name) {
-  const color = normalizeColor(value);
-  if (!color) throw new Error(`${name} must be a hexadecimal color.`);
-  return color;
-}
-
-function readStringArray(value, name, fallback = []) {
-  if (value === undefined) return fallback;
-
-  if (
-    !Array.isArray(value) ||
-    value.length > MAX_DICTIONARY_ENTRIES ||
-    value.some((entry) => typeof entry !== "string" || entry.length > 10_000)
-  ) {
-    throw new Error(`${name} must be an array of strings.`);
-  }
-
-  return [...new Set(value)];
-}
-
-function normalizeDocument(raw, { requireDbml = false } = {}) {
-  if (!isRecord(raw)) throw new Error("The diagram must be a JSON object.");
-
-  if (
-    raw.version !== undefined &&
-    (!Number.isInteger(raw.version) ||
-      raw.version < 1 ||
-      raw.version > DOCUMENT_VERSION)
-  ) {
-    throw new Error("This diagram uses an unsupported file version.");
-  }
-
-  if (requireDbml && typeof raw.dbml !== "string") {
-    throw new Error("The diagram does not contain a DBML document.");
-  }
-
-  let viewport = null;
-
-  if (raw.viewport !== undefined && raw.viewport !== null) {
-    if (!isRecord(raw.viewport)) {
-      throw new Error("viewport must be an object.");
-    }
-
-    if (!Number.isFinite(raw.viewport.zoom)) {
-      throw new Error("viewport.zoom must be a finite number.");
-    }
-
-    viewport = {
-      zoom: clampZoom(raw.viewport.zoom),
-      offset: readPosition(raw.viewport.offset, "viewport.offset"),
-    };
-  }
-
-  const recentColors =
-    raw.recentColors === undefined
-      ? []
-      : readStringArray(raw.recentColors, "recentColors")
-          .map((color) => readColor(color, "recentColors"))
-          .slice(0, 12);
-
-  const editorWidth =
-    raw.editorWidth === undefined
-      ? 470
-      : readCoordinate(raw.editorWidth, "editorWidth");
-
-  return {
-    version: DOCUMENT_VERSION,
-    dbml: readString(raw.dbml, "dbml", DEFAULT_DBML),
-    fileName: readString(raw.fileName, "fileName", "Untitled", 500),
-    tablePositions: readRecord(raw.tablePositions, "tablePositions", readPosition),
-    tableColors: readRecord(raw.tableColors, "tableColors", readColor),
-    groupColors: readRecord(raw.groupColors, "groupColors", readColor),
-    tableIds: readRecord(raw.tableIds, "tableIds", (value, name) =>
-      readString(value, name, "", 200),
-    ),
-    lineMidXOverrides: readRecord(
-      raw.lineMidXOverrides,
-      "lineMidXOverrides",
-      readCoordinate,
-    ),
-    colorLegendDescriptions: readRecord(
-      raw.colorLegendDescriptions,
-      "colorLegendDescriptions",
-      (value, name) => readString(value, name, "", 20_000),
-    ),
-    recentColors: [...new Set(recentColors)],
-    collapsedTables: readStringArray(raw.collapsedTables, "collapsedTables"),
-    isDark: readBoolean(raw.isDark, "isDark", false),
-    groupsVisible: readBoolean(raw.groupsVisible, "groupsVisible", false),
-    colorLegendVisible: readBoolean(
-      raw.colorLegendVisible,
-      "colorLegendVisible",
-      false,
-    ),
-    showAllConnections: readBoolean(
-      raw.showAllConnections,
-      "showAllConnections",
-      false,
-    ),
-    jumpToTableOnClick: readBoolean(
-      raw.jumpToTableOnClick,
-      "jumpToTableOnClick",
-      false,
-    ),
-    reverseConnectionFlow: readBoolean(
-      raw.reverseConnectionFlow,
-      "reverseConnectionFlow",
-      false,
-    ),
-    connectionLineWidth: readNumber(
-      raw.connectionLineWidth,
-      "connectionLineWidth",
-      RELATIONSHIP_LINE_WIDTH,
-      1.5,
-      2.0,
-    ),
-    isEditorCollapsed: readBoolean(
-      raw.isEditorCollapsed,
-      "isEditorCollapsed",
-      false,
-    ),
-    editorWidth: clamp(editorWidth, 280, 700),
-    viewport,
-  };
-}
-
-function parseDocument(dbml) {
-  try {
-    const result = parseDBMLDocument(dbml);
-
-    return {
-      model: result.model || null,
-      errors: result.errors || [],
-      warnings: result.warnings || [],
-    };
-  } catch (error) {
-    return {
-      model: null,
-      errors: [
-        {
-          message: errorMessage(error, "Unable to parse DBML."),
-          startLineNumber: 1,
-          startColumn: 1,
-          endLineNumber: 1,
-          endColumn: 2,
-        },
-      ],
-      warnings: [],
-    };
-  }
-}
-
-function modelTables(model) {
-  return model?.tables || [];
-}
-
-function modelGroups(model) {
-  return model?.groups || [];
-}
-
-function legacyRelationshipKey(ref) {
-  const base =
-    `rline-${ref.from.table}-${ref.from.column}` +
-    `-${ref.to.table}-${ref.to.column}`;
-
-  return ref.composite ? `${base}-${ref.id}` : base;
-}
-
-/**
- * Persistent route keys use stable table IDs, not DOM IDs or raw table names.
- * An ordinal distinguishes otherwise-identical repeated references.
- */
-function identifyRelationships(model, tableIds) {
-  const occurrences = new Map();
-
-  return (model?.refs || []).map((ref) => {
-    const signature = JSON.stringify([
-      tableIds[ref.from.table] || ref.from.table,
-      ref.from.columns || [ref.from.column],
-      tableIds[ref.to.table] || ref.to.table,
-      ref.to.columns || [ref.to.column],
-      ref.name || "",
-      ref.composite ? ref.from.column : "",
-      ref.composite ? ref.to.column : "",
-    ]);
-
-    const ordinal = occurrences.get(signature) || 0;
-    occurrences.set(signature, ordinal + 1);
-
-    return {
-      ...ref,
-      routeKey: `v2:${signature}:${ordinal}`,
-    };
-  });
-}
-
-function reconcileDocument(data, model, previousModel, allowRenames) {
-  const tables = modelTables(model);
-  const validNames = new Set(tables.map((table) => table.name));
-  const renames = allowRenames
-    ? detectTableRenames(modelTables(previousModel), tables)
-    : new Map();
-
-  const positions = dictionary();
-  const colors = dictionary();
-  const tableIds = dictionary();
-
-  const reverseRenames = new Map(
-    [...renames].map(([oldName, newName]) => [newName, oldName]),
-  );
-
-  const reservedIds = new Set(
-    Object.values(data.tableIds).filter((id) => typeof id === "string" && id),
-  );
-  const usedIds = new Set();
-  let nextId = 1;
-
-  function allocateId() {
-    while (reservedIds.has(`t${nextId}`) || usedIds.has(`t${nextId}`)) {
-      nextId += 1;
-    }
-
-    const id = `t${nextId}`;
-    nextId += 1;
-    return id;
-  }
-
-  const columns = Math.max(1, Math.ceil(Math.sqrt(tables.length)));
-
-  tables.forEach((table, index) => {
-    const oldName = reverseRenames.get(table.name);
-    const sourceName = oldName || table.name;
-
-    positions[table.name] =
-      data.tablePositions[table.name] ||
-      data.tablePositions[sourceName] || {
-        x: 60 + (index % columns) * (TABLE_WIDTH + 90),
-        y: 60 + Math.floor(index / columns) * 320,
-      };
-
-    const override =
-      data.tableColors[table.name] || data.tableColors[sourceName];
-
-    if (override) colors[table.name] = override;
-
-    let id = data.tableIds[sourceName] || data.tableIds[table.name];
-
-    if (!id || usedIds.has(id)) id = allocateId();
-
-    usedIds.add(id);
-    tableIds[table.name] = id;
-  });
-
-  const collapsedTables = [
-    ...new Set(
-      data.collapsedTables
-        .map((name) => renames.get(name) || name)
-        .filter((name) => validNames.has(name)),
-    ),
-  ];
-
-  const groupColors = dictionary();
-  const validGroups = new Set(modelGroups(model).map((group) => group.name));
-
-  for (const [name, color] of Object.entries(data.groupColors)) {
-    if (validGroups.has(name)) groupColors[name] = color;
-  }
-
-  const identifiedRefs = identifyRelationships(model, tableIds);
-  const overrides = dictionary();
-
-  for (const ref of identifiedRefs) {
-    if (hasOwn(data.lineMidXOverrides, ref.routeKey)) {
-      overrides[ref.routeKey] = data.lineMidXOverrides[ref.routeKey];
-      continue;
-    }
-
-    const oldKey = legacyRelationshipKey(ref);
-
-    if (hasOwn(data.lineMidXOverrides, oldKey)) {
-      overrides[ref.routeKey] = data.lineMidXOverrides[oldKey];
-    }
-  }
-
-  return {
-    data: {
-      ...data,
-      tablePositions: positions,
-      tableColors: colors,
-      tableIds,
-      groupColors,
-      collapsedTables,
-      lineMidXOverrides: overrides,
-    },
-    renames,
-    validNames,
-    validGroups,
-  };
-}
-
-function createDocumentState(data, parsed, epoch = 0) {
-  const model = parsed.model || EMPTY_DBML_MODEL;
-
-  const reconciled = parsed.model
-    ? reconcileDocument(data, model, null, false).data
-    : data;
-
-  return {
-    data: reconciled,
-    model,
-    parsedSource: data.dbml,
-    errors: parsed.errors,
-    warnings: parsed.warnings,
-    epoch,
-    geometryRevision: 0,
-    selectedTables: [],
-    selectedGroup: null,
-    hoveredTable: null,
-  };
-}
-
-function initializeApplication() {
-  const warnings = [];
-  let data = null;
-  let fromShare = false;
-
-  if (typeof window !== "undefined") {
-    try {
-      const shared = decodeShareHash(window.location.hash);
-
-      if (shared) {
-        data = normalizeDocument(shared, { requireDbml: true });
-        fromShare = true;
-      }
-    } catch (error) {
-      warnings.push(errorMessage(error, "The shared diagram could not be opened."));
-    }
-
-    if (!data) {
-      try {
-        const stored = window.localStorage.getItem(STORAGE_KEY);
-
-        if (stored) {
-          if (stored.length > MAX_FILE_BYTES) {
-            throw new Error("The saved diagram is too large.");
-          }
-
-          data = normalizeDocument(JSON.parse(stored), {
-            requireDbml: true,
-          });
-        }
-      } catch (error) {
-        warnings.push(
-          errorMessage(error, "The previously saved diagram could not be restored."),
-        );
-      }
-    }
-  }
-
-  data ||= normalizeDocument({ dbml: DEFAULT_DBML });
-
-  return {
-    ...createDocumentState(data, parseDocument(data.dbml)),
-    startupWarnings: warnings,
-    fromShare,
-  };
-}
-
-function documentReducer(state, action) {
-  switch (action.type) {
-    case "edit":
-      return {
-        ...state,
-        data: { ...state.data, dbml: action.dbml },
-        geometryRevision: state.geometryRevision + 1,
-      };
-
-    case "parsed": {
-      if (
-        action.epoch !== state.epoch ||
-        action.source !== state.data.dbml
-      ) {
-        return state;
-      }
-
-      if (!action.result.model) {
-        return {
-          ...state,
-          parsedSource: action.source,
-          errors: action.result.errors,
-          warnings: action.result.warnings,
-        };
-      }
-
-      const result = reconcileDocument(
-        state.data,
-        action.result.model,
-        state.model,
-        true,
-      );
-
-      const rename = (name) => result.renames.get(name) || name;
-
-      const selectedTables = [
-        ...new Set(
-          state.selectedTables
-            .map(rename)
-            .filter((name) => result.validNames.has(name)),
-        ),
-      ];
-
-      const hover = state.hoveredTable ? rename(state.hoveredTable) : null;
-
-      return {
-        ...state,
-        data: result.data,
-        model: action.result.model,
-        parsedSource: action.source,
-        errors: action.result.errors,
-        warnings: action.result.warnings,
-        geometryRevision: state.geometryRevision + 1,
-        selectedTables,
-        selectedGroup: result.validGroups.has(state.selectedGroup)
-          ? state.selectedGroup
-          : null,
-        hoveredTable: result.validNames.has(hover) ? hover : null,
-      };
-    }
-
-    case "open":
-      return {
-        ...createDocumentState(action.data, action.parsed, state.epoch + 1),
-        startupWarnings: [],
-        fromShare: false,
-      };
-
-    case "patch":
-      return {
-        ...state,
-        data: { ...state.data, ...action.patch },
-        geometryRevision:
-          state.geometryRevision + (action.geometry ? 1 : 0),
-      };
-
-    case "positions": {
-      const positions = dictionary(state.data.tablePositions);
-
-      for (const [name, position] of Object.entries(action.positions)) {
-        if (!hasOwn(state.data.tablePositions, name)) continue;
-
-        positions[name] = {
-          x: clamp(position.x, -MAX_COORDINATE, MAX_COORDINATE),
-          y: clamp(position.y, -MAX_COORDINATE, MAX_COORDINATE),
-        };
-      }
-
-      const overrides = dictionary(state.data.lineMidXOverrides);
-
-      if (action.lineOverrides) {
-        for (const [key, x] of Object.entries(action.lineOverrides)) {
-          overrides[key] = clamp(x, -MAX_COORDINATE, MAX_COORDINATE);
-        }
-      }
-
-      return {
-        ...state,
-        data: {
-          ...state.data,
-          tablePositions: positions,
-          lineMidXOverrides: overrides,
-        },
-        geometryRevision: state.geometryRevision + 1,
-      };
-    }
-
-    case "layout":
-      if (
-        action.epoch !== state.epoch ||
-        action.revision !== state.geometryRevision
-      ) {
-        return state;
-      }
-
-      return {
-        ...state,
-        data: {
-          ...state.data,
-          tablePositions: dictionary(action.positions),
-          lineMidXOverrides: dictionary(),
-        },
-        geometryRevision: state.geometryRevision + 1,
-      };
-
-    case "line":
-      return {
-        ...state,
-        data: {
-          ...state.data,
-          lineMidXOverrides: Object.assign(
-            dictionary(state.data.lineMidXOverrides),
-            {
-              [action.key]: clamp(
-                action.x,
-                -MAX_COORDINATE,
-                MAX_COORDINATE,
-              ),
-            },
-          ),
-        },
-        geometryRevision: state.geometryRevision + 1,
-      };
-
-    case "select":
-      return {
-        ...state,
-        selectedTables: action.names,
-        selectedGroup: null,
-      };
-
-    case "select-group":
-      return {
-        ...state,
-        selectedTables: [],
-        selectedGroup: action.name,
-      };
-
-    case "hover":
-      return state.hoveredTable === action.name
-        ? state
-        : { ...state, hoveredTable: action.name };
-
-    case "collapse": {
-      const collapsed = new Set(state.data.collapsedTables);
-
-      if (collapsed.has(action.name)) collapsed.delete(action.name);
-      else collapsed.add(action.name);
-
-      return {
-        ...state,
-        data: { ...state.data, collapsedTables: [...collapsed] },
-        geometryRevision: state.geometryRevision + 1,
-      };
-    }
-
-    case "table-colors": {
-      const colors = dictionary(state.data.tableColors);
-
-      for (const [name, color] of Object.entries(action.colors)) {
-        if (color === null) delete colors[name];
-        else colors[name] = color;
-      }
-
-      return {
-        ...state,
-        data: { ...state.data, tableColors: colors },
-      };
-    }
-
-    case "group-color":
-      return {
-        ...state,
-        data: {
-          ...state.data,
-          groupColors: Object.assign(dictionary(state.data.groupColors), {
-            [action.name]: action.color,
-          }),
-        },
-      };
-
-    case "recent-colors": {
-      const recent = [
-        ...new Set([...action.colors, ...state.data.recentColors]),
-      ].slice(0, 12);
-
-      if (arraysEqual(recent, state.data.recentColors)) return state;
-
-      return {
-        ...state,
-        data: { ...state.data, recentColors: recent },
-      };
-    }
-
-    case "legend-description": {
-      const descriptions = dictionary(state.data.colorLegendDescriptions);
-
-      if (action.description) descriptions[action.color] = action.description;
-      else delete descriptions[action.color];
-
-      return {
-        ...state,
-        data: { ...state.data, colorLegendDescriptions: descriptions },
-      };
-    }
-
-    default:
-      return state;
-  }
 }
 
 /* -------------------------------------------------------------------------- */
@@ -1399,6 +636,7 @@ function ToolButton({
   label,
   title,
   onClick,
+  onKeyDown,
   disabled = false,
   buttonRef,
   className = "",
@@ -1414,11 +652,22 @@ function ToolButton({
       onClick={(e) => {
         if (disabled) {
           e.preventDefault();
-        } else if (onClick) {
-          onClick(e);
+          e.stopPropagation();
+          return;
         }
+        if (onClick) onClick(e);
       }}
-      aria-disabled={disabled || undefined}
+      onKeyDown={(e) => {
+        if (disabled) {
+          if (e.key === "Enter" || e.key === " ") {
+            e.preventDefault();
+            e.stopPropagation();
+          }
+          return;
+        }
+        if (onKeyDown) onKeyDown(e);
+      }}
+      aria-disabled={disabled ? "true" : undefined}
       {...rest}
     >
       {children}
@@ -1624,7 +873,7 @@ function Dialog({ title, onClose, restoreFocusRef, children, wide = false }) {
       >
         <header className="sker-dialog-header">
           <h2 id={titleId}>{title}</h2>
-          <ToolButton buttonRef={closeRef} label="Close dialog" onClick={onClose}>
+          <ToolButton buttonRef={closeRef} label="Close dialog" title="Close dialog (Escape)" aria-keyshortcuts="Escape" onClick={onClose}>
             ×
           </ToolButton>
         </header>
@@ -1946,7 +1195,8 @@ function ColumnEditor({
   onApply,
   onCancel,
   onRegisterGuard,
-  disabled,
+  parsingPending,
+  hasErrors,
 }) {
   const [originalSource] = useState(source);
   const [columns, setColumns] = useState(() =>
@@ -2060,27 +1310,6 @@ function ColumnEditor({
       next.splice(toIndex, 0, moved);
       return next;
     });
-  };
-
-  const addColumn = () => {
-    setError("");
-    setColumns((items) => [
-      ...items,
-      {
-        originalName: null,
-        name: `column_${items.length + 1}`,
-        type: "varchar",
-      },
-    ]);
-  };
-
-  const removeColumn = (index) => {
-    setError("");
-    setColumns((items) => items.filter((_, i) => i !== index));
-    if (activeTypeIndex === index) {
-      setActiveTypeIndex(null);
-      setIsTyping(false);
-    }
   };
 
   const typeCounts = useMemo(() => {
@@ -2203,7 +1432,7 @@ function ColumnEditor({
             >
               <div
                 className="sker-drag-handle"
-                draggable={!disabled}
+                draggable={!parsingPending && !hasErrors}
                 tabIndex={0}
                 role="button"
                 title="Hold and drag to reorder column or use arrow keys"
@@ -2348,8 +1577,24 @@ function ColumnEditor({
             <button
               type="button"
               className="sker-action-btn sker-apply-btn"
-              disabled={disabled || table.partials?.length > 0}
-              onClick={handleApply}
+              title={
+                table.partials?.length > 0
+                  ? "Cannot edit tables constructed with TablePartials"
+                  : parsingPending
+                    ? "Waiting for code to parse..."
+                    : hasErrors
+                      ? "Fix code errors before applying"
+                      : undefined
+              }
+              aria-disabled={parsingPending || hasErrors || table.partials?.length > 0 ? "true" : undefined}
+              onClick={(e) => {
+                if (parsingPending || hasErrors || table.partials?.length > 0) {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  return;
+                }
+                handleApply(e);
+              }}
             >
               Apply changes
             </button>
@@ -3659,126 +2904,12 @@ function ShareQrDialog({
 function HelpDialog({ onClose, restoreFocusRef }) {
   return (
     <Dialog
-      title="SketchER reference"
+      title="Help & guide"
       onClose={onClose}
       restoreFocusRef={restoreFocusRef}
       wide
     >
-      <nav className="sker-help-nav" aria-label="Reference sections">
-        <a href="#sker-help-tables">Tables</a>
-        <a href="#sker-help-relationships">Relationships</a>
-        <a href="#sker-help-groups">Groups</a>
-        <a href="#sker-help-canvas">Canvas</a>
-        <a href="#sker-help-saving">Saving and sharing</a>
-      </nav>
-
-      <section id="sker-help-tables">
-        <h3>Tables and advanced DBML</h3>
-        <p>
-          The editor uses the project’s DBML parser. Schemas, quoted identifiers,
-          aliases, parameterized types, defaults, notes, indexes, and other
-          supported DBML metadata are preserved in the parsed model.
-        </p>
-        <pre>{`Table core.users as U [headercolor: #3498db] {
-  id bigint [pk, increment]
-  email varchar(255) [not null, unique]
-  balance decimal(10,2) [default: 0]
-  full_name "character varying" [note: 'Display name']
-
-  indexes {
-    (email, full_name) [name: 'users_search_idx']
-  }
-}`}</pre>
-        <p>
-          Invalid edits show diagnostics while the canvas retains the last valid
-          model from the current document. Opening a different file never reuses
-          the previous file’s model.
-        </p>
-      </section>
-
-      <section id="sker-help-relationships">
-        <h3>Relationships</h3>
-        <pre>{`Table orders {
-  id int [pk]
-  user_id int [ref: > users.id]
-}
-
-Ref order_owner {
-  sales.orders.(tenant_id, user_id) > core.users.(tenant_id, id)
-}`}</pre>
-        <p>
-          Cardinalities: <code>&lt;</code> one-to-many, <code>&gt;</code>{" "}
-          many-to-one, <code>-</code> one-to-one, and <code>&lt;&gt;</code>{" "}
-          many-to-many. Optional endpoint syntax depends on the parser version.
-        </p>
-        <p>
-          Drag a relationship’s vertical grip to reroute it. Keyboard users can
-          focus a grip and use Left/Right; hold Shift for larger steps.
-          Reversing display flow does not change relationship cardinality.
-        </p>
-      </section>
-
-      <section id="sker-help-groups">
-        <h3>Groups and colors</h3>
-        <pre>{`TableGroup Auth [color: #8b5cf6] {
-  core.users
-  core.roles
-}`}</pre>
-        <p>
-          Ctrl/Cmd-click tables to select multiple tables. Right-click, or use
-          Shift+F10 on a focused table, to create a group. Drag a group’s label
-          strip to move all members and its manually positioned internal routes.
-        </p>
-        <p>
-          Palette colors are explicit UI overrides. Use “Use DBML/default color”
-          to remove a table override. Applying a color to multiple selected
-          tables creates related shades.
-        </p>
-      </section>
-
-      <section id="sker-help-canvas">
-        <h3>Canvas controls</h3>
-        <ul>
-          <li>Drag empty canvas to pan.</li>
-          <li>Two-finger trackpad scrolling pans in both axes.</li>
-          <li>Ctrl/Cmd-wheel or trackpad pinch zooms around the pointer.</li>
-          <li>Touch and pen dragging use pointer events.</li>
-          <li>Touch users can use the zoom buttons or slider.</li>
-          <li>Focus a table: Enter selects; arrow keys move it.</li>
-          <li>Hold Shift with arrow keys for larger movement steps.</li>
-          <li>Focus the canvas: arrows pan, +/− zoom, F fits, 0 resets.</li>
-          <li>Collapse tables to retain primary and relationship columns.</li>
-          <li>Smart layout groups tables; hierarchy layout emphasizes lineage.</li>
-        </ul>
-        <p>
-          Large diagrams can fit down to 5% zoom. Reduced-motion system
-          preferences disable animated relationship particles.
-        </p>
-      </section>
-
-      <section id="sker-help-saving">
-        <h3>Saving, export, and sharing</h3>
-        <ul>
-          <li>
-            Autosave runs after 400 ms of inactivity, with a two-second maximum
-            wait during continuous changes.
-          </li>
-          <li>
-            Save downloads a versioned <code>.sker</code> JSON document.
-          </li>
-          <li>
-            Open validates the complete document before replacing current state.
-          </li>
-          <li>PNG export includes the visible legend.</li>
-          <li>Share creates a snapshot link; QR codes have a smaller size limit.</li>
-        </ul>
-        <p>
-          Browser storage can fail or be cleared. Keep downloaded backups for
-          important diagrams. Opening a shared snapshot removes its hash from
-          the address bar so a later reload restores the edited autosave rather
-          than reopening the original snapshot.
-        </p>
-      </section>
+      <HelpContent />
     </Dialog>
   );
 }
@@ -3933,10 +3064,11 @@ const STYLES = `
   white-space: nowrap;
 }
 
-.sker-button:hover:not([aria-disabled="true"]) {
+.sker-button:hover:not(:disabled):not([aria-disabled="true"]) {
   background: var(--sker-soft);
 }
 
+.sker-button:disabled,
 .sker-button[aria-disabled="true"] {
   opacity: .55;
   cursor: not-allowed;
@@ -3948,7 +3080,7 @@ const STYLES = `
   border-color: #047857;
 }
 
-.sker-primary:hover:not([aria-disabled="true"]) {
+.sker-primary:hover:not(:disabled):not([aria-disabled="true"]) {
   background: #065f46;
 }
 
@@ -4519,11 +3651,12 @@ const STYLES = `
   font-weight: 600;
   animation: sker-amber-glow 2s infinite ease-in-out;
 }
-.sker-apply-btn:hover:not(:disabled) {
+.sker-apply-btn:hover:not(:disabled):not([aria-disabled="true"]) {
   filter: brightness(1.12);
   transform: translateY(-1px);
 }
-.sker-apply-btn:disabled {
+.sker-apply-btn:disabled,
+.sker-apply-btn[aria-disabled="true"] {
   opacity: 0.5;
   cursor: not-allowed;
   animation: none;
@@ -4573,8 +3706,6 @@ const STYLES = `
 .sker-dialog-content { padding: 18px; overflow: auto; overscroll-behavior: contain; line-height: 1.65; }
 .sker-dialog pre { padding: 12px; border: 1px solid var(--sker-border); border-radius: 7px; overflow: auto; background: var(--sker-editor); font-size: 11px; }
 .sker-dialog section { scroll-margin-top: 12px; margin-bottom: 28px; }
-.sker-help-nav { display: flex; flex-wrap: wrap; gap: 12px; }
-.sker-help-nav a { color: #059669; }
 .sker-qr-panel { display: flex; justify-content: center; align-items: center; min-height: 320px; padding: 10px; background: white; color: #374151; border-radius: 10px; margin: 14px 0; text-align: center; }
 .sker-qr-panel img { display: block; max-width: 100%; height: auto; }
 .sker-warning { padding: 10px; border: 1px solid #f59e0b88; border-radius: 7px; background: #f59e0b15; }
@@ -4620,7 +3751,7 @@ body:has(.find-widget .codicon-widget-close:hover) .workbench-hover-container:ha
 .sker-button > span[aria-hidden="true"] { transition: transform 160ms ease; }
 .sker-button[aria-expanded="true"] > span[aria-hidden="true"] { transform: rotate(180deg); }
 @media (hover: hover) {
-  .sker-button:hover:not([aria-disabled="true"]), .sker-collapse-button:hover,
+  .sker-button:hover:not(:disabled):not([aria-disabled="true"]), .sker-collapse-button:hover,
   .sker-color-picker:hover, .sker-legend-swatch:hover {
     border-color: #10b98180;
     box-shadow: 0 0 0 1px #10b98118, 0 0 12px #10b98124;
@@ -4628,7 +3759,7 @@ body:has(.find-widget .codicon-widget-close:hover) .workbench-hover-container:ha
   .sker-color-dot:hover { transform: scale(1.08); box-shadow: 0 0 10px #10b98135; }
   .sker-toggle-label:hover .sker-toggle-track { box-shadow: 0 0 10px #10b98124; }
 }
-.sker-button:active:not([aria-disabled="true"]) { transform: translateY(1px); }
+.sker-button:active:not(:disabled):not([aria-disabled="true"]) { transform: translateY(1px); }
 .sker-popover { transform-origin: top right; }
 .sker-popover-left, .sker-context { transform-origin: top left; }
 [data-motion="open"] { animation: sker-panel-in 180ms cubic-bezier(.2,.8,.2,1) both; }
@@ -4742,11 +3873,6 @@ export default function SketchER() {
   );
 
   const refsRef = useLatest(refs);
-
-  const tablesByName = useMemo(
-    () => new Map(tables.map((table) => [table.name, table])),
-    [tables],
-  );
 
   const relationshipColumns = useMemo(() => {
     const map = new Map();
@@ -6909,7 +6035,8 @@ export default function SketchER() {
                   tables={tables}
                   source={data.dbml}
                   enums={model.enums}
-                  disabled={parsingPending || state.errors.length > 0}
+                  parsingPending={parsingPending}
+                  hasErrors={state.errors.length > 0}
                   onRegisterGuard={(guardFn) => {
                     unsavedGuardRef.current = guardFn;
                   }}
@@ -6948,12 +6075,32 @@ export default function SketchER() {
               <button
                 type="submit"
                 className="sker-button sker-primary"
-                disabled={
+                aria-disabled={
                   !newGroupName.trim() ||
                   groupExists ||
                   parsingPending ||
                   state.errors.length > 0
+                    ? "true"
+                    : undefined
                 }
+                title={
+                  !newGroupName.trim() ? "Enter a group name" :
+                  groupExists ? "A group with this name already exists" :
+                  parsingPending ? "Waiting for code to parse..." :
+                  state.errors.length > 0 ? "Fix code errors before grouping" :
+                  undefined
+                }
+                onClick={(e) => {
+                  if (
+                    !newGroupName.trim() ||
+                    groupExists ||
+                    parsingPending ||
+                    state.errors.length > 0
+                  ) {
+                    e.preventDefault();
+                    e.stopPropagation();
+                  }
+                }}
               >
                 Create group
               </button>

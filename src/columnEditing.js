@@ -52,9 +52,10 @@ export function editTableColumns(source, tableName, columns) {
       if (table.fields.some((field) => field.token.start.offset === start)) continue;
       const parts = tokens(source.slice(start, end));
       const dot = parts.findLastIndex((part) => part[0] === '.');
+      const fieldNamesSet = new Set(endpoint.fieldNames);
       for (const part of parts.slice(dot + 1)) {
         const name = value(part[0]);
-        if (endpoint.fieldNames.includes(name) && renamed.has(name) && renamed.get(name) !== name) {
+        if (fieldNamesSet.has(name) && renamed.has(name) && renamed.get(name) !== name) {
           patch(start + part.index, start + part.index + part[0].length, identifier(renamed.get(name)));
         }
       }
