@@ -22,6 +22,7 @@ import {
   dbmlMonarchTokensProvider,
   EMPTY_DBML_MODEL,
   parseDBMLDocument,
+  parseDocument,
 } from "./dbmlParser.js";
 
 import {
@@ -680,31 +681,6 @@ function normalizeDocument(raw, { requireDbml = false } = {}) {
   };
 }
 
-function parseDocument(dbml) {
-  try {
-    const result = parseDBMLDocument(dbml);
-
-    return {
-      model: result.model || null,
-      errors: result.errors || [],
-      warnings: result.warnings || [],
-    };
-  } catch (error) {
-    return {
-      model: null,
-      errors: [
-        {
-          message: errorMessage(error, "Unable to parse DBML."),
-          startLineNumber: 1,
-          startColumn: 1,
-          endLineNumber: 1,
-          endColumn: 2,
-        },
-      ],
-      warnings: [],
-    };
-  }
-}
 
 function modelTables(model) {
   return model?.tables || [];
@@ -2050,18 +2026,6 @@ function ColumnEditor({
     });
   };
 
-  const addColumn = () => {
-    setError("");
-    setColumns((items) => [
-      ...items,
-      {
-        originalName: null,
-        name: `column_${items.length + 1}`,
-        type: "varchar",
-      },
-    ]);
-  };
-
   const typeCounts = useMemo(() => {
     const counts = new Map();
     for (const t of tables || []) {
@@ -2327,8 +2291,16 @@ function ColumnEditor({
             <button
               type="button"
               className="sker-action-btn sker-apply-btn"
-              title={table.partials?.length > 0 ? "Edit TablePartial columns in the DBML editor" : (parsingPending ? "Parsing DBML..." : (hasErrors ? "Resolve DBML errors to apply changes" : "Apply changes"))}
               disabled={parsingPending || hasErrors || table.partials?.length > 0}
+              title={
+                table.partials?.length > 0
+                  ? "Cannot edit tables constructed with TablePartials"
+                  : parsingPending
+                    ? "Waiting for code to parse..."
+                    : hasErrors
+                      ? "Fix code errors before applying"
+                      : undefined
+              }
               onClick={handleApply}
             >
               Apply changes
@@ -6386,8 +6358,6 @@ export default function SketchER() {
                     ? "Arranging layout..."
                     : parsingPending
                       ? "Wait for parsing to finish"
-                      : state.errors.length > 0
-                        ? "Resolve DBML errors to use layout"
                       : !tables.length
                         ? "Add tables to diagram first"
                         : "Layout options"
@@ -6810,12 +6780,18 @@ export default function SketchER() {
               <button
                 type="submit"
                 className="sker-button sker-primary"
-                title={parsingPending ? "Parsing DBML..." : (state.errors.length > 0 ? "Resolve DBML errors to create group" : (groupExists ? "A group with this name already exists" : (!newGroupName.trim() ? "Enter a group name" : "Create group")))}
                 disabled={
                   !newGroupName.trim() ||
                   groupExists ||
                   parsingPending ||
                   state.errors.length > 0
+                }
+                title={
+                  !newGroupName.trim() ? "Enter a group name" :
+                  groupExists ? "A group with this name already exists" :
+                  parsingPending ? "Waiting for code to parse..." :
+                  state.errors.length > 0 ? "Fix code errors before grouping" :
+                  undefined
                 }
               >
                 Create group
