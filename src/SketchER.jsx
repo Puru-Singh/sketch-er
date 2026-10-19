@@ -1494,7 +1494,7 @@ function Popover({
         aria-controls={id}
         onClick={() => setOpen((value) => !value)}
         onKeyDown={(event) => {
-          if (event.key !== "ArrowDown") return;
+          if (event.key !== "ArrowDown" || disabled) return;
 
           event.preventDefault();
           setOpen(true);
