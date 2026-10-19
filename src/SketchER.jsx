@@ -1373,17 +1373,41 @@ function ToolButton({
   className = "",
   ...rest
 }) {
+  const handleKeyDown = (e) => {
+    if (disabled) {
+      if (e.key === "Enter" || e.key === " " || e.key === "ArrowDown" || e.key === "ArrowUp" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        e.stopPropagation();
+      }
+      return;
+    }
+    if (rest.onKeyDown) {
+      rest.onKeyDown(e);
+    }
+  };
+
+  const handleClick = (e) => {
+    if (disabled) {
+      e.preventDefault();
+      e.stopPropagation();
+      return;
+    }
+    if (onClick) {
+      onClick(e);
+    }
+  };
+
   return (
     <button
+      {...rest}
       ref={buttonRef}
       type="button"
       className={`sker-button ${className}`}
       aria-label={label}
       title={title || label}
-      onClick={disabled ? (e) => { e.preventDefault(); e.stopPropagation(); } : onClick}
-      onKeyDown={disabled ? (e) => { if (e.key === "Enter" || e.key === " ") { e.preventDefault(); e.stopPropagation(); } } : undefined}
       aria-disabled={disabled || undefined}
-      {...rest}
+      onClick={handleClick}
+      onKeyDown={handleKeyDown}
     >
       {children}
     </button>
