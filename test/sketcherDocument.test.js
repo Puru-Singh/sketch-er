@@ -6,6 +6,7 @@ import {
   initializeApplication,
   documentReducer,
 } from "../src/sketcherDocument.js";
+import { encodeShareState } from "../src/shareLink.js";
 import { parseDBMLDocument } from "../src/dbmlParser.js";
 
 test("normalizeDocument validates structure and supplies defaults", () => {
@@ -300,4 +301,62 @@ test("documentReducer handles 'open' and 'patch' actions", () => {
   });
 
   assert.equal(state.data.isDark, true);
+});
+
+
+function mockWindow(t, value) {
+  const previous = Object.getOwnPropertyDescriptor(globalThis, "window");
+  Object.defineProperty(globalThis, "window", { value, configurable: true, writable: true });
+  t.after(() => {
+    if (previous) Object.defineProperty(globalThis, "window", previous);
+    else delete globalThis.window;
+  });
+}
+
+test("startup restores a saved diagram and preserves its view and table settings", (t) => {
+  const saved = {
+    dbml: "Table saved { id int [pk] }",
+    fileName: "Saved diagram",
+    tablePositions: { saved: { x: 321, y: 456 } },
+    tableColors: { saved: "#123456" },
+    collapsedTables: ["saved"],
+    viewport: { zoom: 0.75, offset: { x: 11, y: -22 } },
+  };
+  mockWindow(t, {
+    location: { hash: "" },
+    localStorage: { getItem: () => JSON.stringify(saved) },
+  });
+  const state = initializeApplication();
+  assert.equal(state.fromShare, false);
+  assert.equal(state.data.fileName, saved.fileName);
+  assert.deepEqual(state.data.tablePositions.saved, saved.tablePositions.saved);
+  assert.equal(state.data.tableColors.saved, "#123456");
+  assert.deepEqual(state.data.collapsedTables, ["saved"]);
+  assert.deepEqual(state.data.viewport, saved.viewport);
+  assert.equal(state.model.tables[0].name, "saved");
+  assert.deepEqual(state.errors, []);
+});
+
+test("startup prioritizes a shared diagram over local storage", (t) => {
+  const shared = { dbml: "Table shared { id int [pk] }", fileName: "Shared" };
+  mockWindow(t, {
+    location: { hash: `#share=${encodeShareState(shared)}` },
+    localStorage: { getItem: () => { throw new Error("Storage must not be read"); } },
+  });
+  const state = initializeApplication();
+  assert.equal(state.fromShare, true);
+  assert.equal(state.data.fileName, "Shared");
+  assert.equal(state.model.tables[0].name, "shared");
+  assert.deepEqual(state.startupWarnings, []);
+});
+
+test("startup recovers from an invalid shared document using saved data", (t) => {
+  mockWindow(t, {
+    location: { hash: `#share=${encodeShareState({ version: 999, dbml: "invalid" })}` },
+    localStorage: { getItem: () => JSON.stringify({ dbml: "Table recovered { id int }" }) },
+  });
+  const state = initializeApplication();
+  assert.equal(state.fromShare, false);
+  assert.equal(state.model.tables[0].name, "recovered");
+  assert.match(state.startupWarnings[0], /unsupported file version/);
 });

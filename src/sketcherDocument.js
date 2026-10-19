@@ -21,6 +21,7 @@ export const MIN_ZOOM = 0.05;
 export const MAX_ZOOM = 2;
 
 export const RELATIONSHIP_LINE_WIDTH = 1.8;
+export const TABLE_WIDTH = 230;
 
 export const DEFAULT_DBML = `Table users {
   id int [pk]
@@ -400,7 +401,7 @@ export function reconcileDocument(data, model, previousModel, allowRenames) {
     positions[table.name] =
       data.tablePositions[table.name] ||
       data.tablePositions[sourceName] || {
-        x: 60 + (index % columns) * (230 + 90),
+        x: 60 + (index % columns) * (TABLE_WIDTH + 90),
         y: 60 + Math.floor(index / columns) * 320,
       };
 

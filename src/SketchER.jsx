@@ -20,8 +20,6 @@ import HelpContent from "./HelpContent.jsx";
 import {
   dbmlLanguageConfig,
   dbmlMonarchTokensProvider,
-  EMPTY_DBML_MODEL,
-  parseDBMLDocument,
   parseDocument,
 } from "./dbmlParser.js";
 
@@ -39,8 +37,6 @@ import {
   routeOrthogonalConnection,
 } from "./relationshipRouting.js";
 
-import { detectTableRenames } from "./tableIdentity.js";
-
 import {
   calculateExportBounds,
   downloadPng,
@@ -51,7 +47,7 @@ import {
 import { editTableColumns } from "./columnEditing.js";
 
 import { copyTextToClipboard } from "./clipboard.js";
-import { buildShareUrl, decodeShareHash } from "./shareLink.js";
+import { buildShareUrl } from "./shareLink.js";
 
 import {
   generateShareQrDataUrl,
@@ -69,9 +65,9 @@ import {
   MIN_ZOOM,
   MAX_ZOOM,
   RELATIONSHIP_LINE_WIDTH,
+  TABLE_WIDTH,
   dictionary,
   hasOwn,
-  isRecord,
   clamp,
   clampZoom,
   normalizeColor,
@@ -83,7 +79,6 @@ import {
   modelTables,
   modelGroups,
   identifyRelationships,
-  reconcileDocument,
   initializeApplication,
   documentReducer,
 } from "./sketcherDocument.js";
@@ -97,7 +92,6 @@ const COL_HEIGHT = 32;
 const TABLE_META_HEIGHT = 24;
 const TABLE_BORDER = 1;
 const TABLE_MIN_WIDTH = 200;
-const TABLE_WIDTH = 230;
 
 const GROUP_PAD = 22;
 const GROUP_LABEL_HEIGHT = 26;
@@ -198,7 +192,6 @@ function measureTextWidth(value, font) {
   textMeasurementContext.font = font;
   return textMeasurementContext.measureText(text).width;
 }
-
 
 function nextGroupName(groups) {
   const names = new Set(groups.map((group) => group.name));
