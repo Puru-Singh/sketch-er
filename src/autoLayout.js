@@ -224,6 +224,7 @@ export async function buildSmartLayout({ tables, refs, groups, tableWidths }) {
   if (!tables.length) return {};
   const { default: ELK } = await import("elkjs/lib/elk.bundled.js");
   const elk = new ELK();
+  const tableByName = new Map(tables.map((table) => [table.name, table]));
   const tableIdByName = new Map(tables.map((table, index) => [table.name, `table-${index}`]));
   const tableNameById = new Map([...tableIdByName].map(([name, id]) => [id, name]));
   const assignedTables = new Set();
@@ -237,10 +238,10 @@ export async function buildSmartLayout({ tables, refs, groups, tableWidths }) {
   const groupNodes = [];
   groups.forEach((group, groupIndex) => {
     const members = group.tables
-      .filter((name) => tableIdByName.has(name) && !assignedTables.has(name))
+      .filter((name) => tableByName.has(name) && !assignedTables.has(name))
       .map((name) => {
         assignedTables.add(name);
-        return tableNode(tables.find((table) => table.name === name));
+        return tableNode(tableByName.get(name));
       });
     if (!members.length) return;
     groupNodes.push({
