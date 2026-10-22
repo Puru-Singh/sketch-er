@@ -376,9 +376,13 @@ export function reconcileDocument(data, model, previousModel, allowRenames) {
     [...renames].map(([oldName, newName]) => [newName, oldName]),
   );
 
-  const reservedIds = new Set(
-    Object.values(data.tableIds).filter((id) => typeof id === "string" && id),
-  );
+  const reservedIds = new Set();
+  for (const key in data.tableIds) {
+    const id = data.tableIds[key];
+    if (typeof id === "string" && id) {
+      reservedIds.add(id);
+    }
+  }
   const usedIds = new Set();
   let nextId = 1;
 
