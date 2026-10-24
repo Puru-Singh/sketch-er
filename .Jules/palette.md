@@ -19,3 +19,6 @@
 ## 2025-10-25 - Use aria-disabled instead of disabled for interactive elements
 **Learning:** Using the native `disabled` attribute removes an element from the document's tab order, hiding it completely from keyboard-only and screen reader users navigating sequentially. This makes it impossible for them to discover disabled actions.
 **Action:** Use `aria-disabled="true"` on buttons and interactive elements, guard click/keydown handlers manually (`e.preventDefault(); e.stopPropagation()`), and ensure CSS styles both states identically to keep the element focusable but inoperable.
+## 2025-02-23 - Empty State Content Improvements
+**Learning:** Generic empty states without context or actionable instructions can leave users confused on how to use a feature. Adding a friendly visual indicator, a clear heading, and explicit instructions greatly improves discoverability.
+**Action:** Replace bare-bones text in empty states with a stack containing a decorative icon (`aria-hidden="true"`), a strong heading, and a brief explanation of how to populate the area.
