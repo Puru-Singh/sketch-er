@@ -19,3 +19,6 @@
 ## 2025-10-25 - Use aria-disabled instead of disabled for interactive elements
 **Learning:** Using the native `disabled` attribute removes an element from the document's tab order, hiding it completely from keyboard-only and screen reader users navigating sequentially. This makes it impossible for them to discover disabled actions.
 **Action:** Use `aria-disabled="true"` on buttons and interactive elements, guard click/keydown handlers manually (`e.preventDefault(); e.stopPropagation()`), and ensure CSS styles both states identically to keep the element focusable but inoperable.
+## 2025-02-28 - ARIA Semantics for Mutually Exclusive Options
+**Learning:** Using `role="group"` and `aria-pressed` for a palette of mutually exclusive options (like colors) is functionally okay, but does not provide the precise semantic meaning to screen reader users that a single choice is expected and made.
+**Action:** When a set of options allows only a single, mutually exclusive selection, use `role="radiogroup"` for the container and `role="radio"` with `aria-checked` for the child elements instead of `role="group"` and `aria-pressed`.
