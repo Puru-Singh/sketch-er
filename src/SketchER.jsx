@@ -1615,15 +1615,16 @@ function ColorPicker({ value, onChange, label = "Choose a custom color" }) {
 
 function ColorPalette({ colors, selected, onChoose, label }) {
   return (
-    <div className="sker-color-row" role="group" aria-label={label}>
+    <div className="sker-color-row" role="radiogroup" aria-label={label}>
       {colors.map((color) => (
         <button
           key={color}
           type="button"
+          role="radio"
           className={`sker-color-dot ${selected === color ? "is-selected" : ""}`}
           style={{ background: color }}
           aria-label={`Apply color ${color}`}
-          aria-pressed={selected === color}
+          aria-checked={selected === color}
           title={color}
           onClick={() => onChoose(color)}
         />
