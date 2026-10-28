@@ -19,3 +19,6 @@
 ## 2025-10-25 - Use aria-disabled instead of disabled for interactive elements
 **Learning:** Using the native `disabled` attribute removes an element from the document's tab order, hiding it completely from keyboard-only and screen reader users navigating sequentially. This makes it impossible for them to discover disabled actions.
 **Action:** Use `aria-disabled="true"` on buttons and interactive elements, guard click/keydown handlers manually (`e.preventDefault(); e.stopPropagation()`), and ensure CSS styles both states identically to keep the element focusable but inoperable.
+## 2026-10-28 - Dynamic aria-labels and Background Task Toasts
+**Learning:** When a button or popover's inner text changes to reflect a loading or success state, screen readers won't announce the new state if a static `aria-label` overrides it. Additionally, background actions triggered from auto-closing menus lack visual feedback when the menu disappears.
+**Action:** Ensure static `aria-label`s are updated dynamically alongside inner text, and use independent toast notifications (`notify()`) for actions triggered from popovers.
