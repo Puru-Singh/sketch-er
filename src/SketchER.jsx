@@ -2690,7 +2690,13 @@ function LegendColorSwatch({ color, theme }) {
       type="button"
       className="sker-legend-swatch"
       style={{ background: color }}
-      aria-label={`Copy color ${color.toUpperCase()}`}
+      aria-label={
+        copyStatus === "copied"
+          ? "Color copied"
+          : copyStatus === "error"
+            ? "Copy failed"
+            : `Copy color ${color.toUpperCase()}`
+      }
       onClick={copy}
       onMouseEnter={showTooltip}
       onMouseLeave={() => setHovered(false)}
@@ -2876,7 +2882,13 @@ function ShareQrDialog({
       )}
 
       <ToolButton
-        label="Copy shareable link"
+        label={
+          copyStatus === "copied"
+            ? "Link copied"
+            : copyStatus === "error"
+              ? "Copy failed — retry"
+              : "Copy shareable link"
+        }
         className="sker-primary"
         onClick={() => void onCopy(url)}
       >
@@ -5640,7 +5652,7 @@ export default function SketchER() {
               </ToolButton>
 
               <Popover
-                label="Layout options"
+                label={layoutRunning ? "Arranging layout…" : "Layout options"}
                 title={
                   layoutRunning
                     ? "Layout in progress…"
@@ -5725,7 +5737,7 @@ export default function SketchER() {
               </ToolButton>
 
               <ToolButton
-                label="Open diagram file"
+                label={loadRunning ? "Opening diagram file…" : "Open diagram file"}
                 disabled={loadRunning}
                 onClick={() => loadInputRef.current?.click()}
               >
@@ -5733,7 +5745,7 @@ export default function SketchER() {
               </ToolButton>
 
               <ToolButton
-                label="Export diagram as PNG"
+                label={exportRunning ? "Exporting diagram as PNG…" : "Export diagram as PNG"}
                 title={
                   exportRunning
                     ? "Export in progress…"
