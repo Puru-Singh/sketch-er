@@ -25,3 +25,15 @@
 ## 2025-02-28 - Dynamic ARIA Labels for State Changes
 **Learning:** If a button's inner text changes based on its state (like "Copy" to "Copied" or "Layout" to "Arranging..."), but it has a static `aria-label`, screen readers will only read the static `aria-label` and users will miss the state change feedback. The `aria-label` completely overrides inner text for screen readers.
 **Action:** When a button or component has dynamic text reflecting a status change, ensure any explicit `aria-label`s are similarly updated to match the new text or status (e.g., `label={isPending ? "Arranging..." : "Layout options"}`).
+## 2025-02-23 - Empty State Content Improvements
+**Learning:** Generic empty states without context or actionable instructions can leave users confused on how to use a feature. Adding a friendly visual indicator, a clear heading, and explicit instructions greatly improves discoverability.
+**Action:** Replace bare-bones text in empty states with a stack containing a decorative icon (`aria-hidden="true"`), a strong heading, and a brief explanation of how to populate the area.
+## 2025-02-23 - Empty State Content Sizing Side-Effects
+**Learning:** When replacing short placeholder text with longer, more helpful empty state guidance, be extremely careful if that text is used to calculate container bounds (like minimum width). Using the long empty state string for minimum width calculations can force the component to be overly wide even when populated.
+**Action:** When calculating minimum widths based on text measurement, use a concise, consistent baseline string rather than the potentially lengthy instructional copy of the empty state.
+## 2025-03-09 - Auto-closing Menu Action Feedback
+**Learning:** Background actions (like copying text) that are triggered from auto-closing menus (like popovers or dropdowns) leave the user with no visual feedback because the UI element they interacted with disappears immediately. Furthermore, setting a static `aria-label` completely overrides the element's inner text for screen readers, potentially hiding important dynamic state (like a filename).
+**Action:** Use an independent toast notification or alert when initiating background actions from auto-closing menus. Always include dynamic text (e.g., `${data.fileName}`) in static `aria-label`s if the button relies on the text content to convey state to visual users.
+## 2026-10-28 - Dynamic aria-labels and Background Task Toasts
+**Learning:** When a button or popover's inner text changes to reflect a loading or success state, screen readers won't announce the new state if a static `aria-label` overrides it. Additionally, background actions triggered from auto-closing menus lack visual feedback when the menu disappears.
+**Action:** Ensure static `aria-label`s are updated dynamically alongside inner text, and use independent toast notifications (`notify()`) for actions triggered from popovers.
