@@ -5644,7 +5644,7 @@ export default function SketchER() {
               </ToolButton>
 
               <Popover
-                label="Layout options"
+                label={layoutRunning ? "Arranging diagram…" : "Layout options"}
                 title={
                   layoutRunning
                     ? "Layout in progress…"
@@ -5729,7 +5729,7 @@ export default function SketchER() {
               </ToolButton>
 
               <ToolButton
-                label="Open diagram file"
+                label={loadRunning ? "Opening diagram file…" : "Open diagram file"}
                 disabled={loadRunning}
                 onClick={() => loadInputRef.current?.click()}
               >
@@ -5737,7 +5737,7 @@ export default function SketchER() {
               </ToolButton>
 
               <ToolButton
-                label="Export diagram as PNG"
+                label={exportRunning ? "Exporting diagram as PNG…" : "Export diagram as PNG"}
                 title={
                   exportRunning
                     ? "Export in progress…"
