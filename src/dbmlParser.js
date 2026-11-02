@@ -104,9 +104,19 @@ function normalizeRawDatabase(raw) {
       }
     }
     const indexByIdentity = new Map();
-    for (const index of [...injectedPartials.flatMap((partial) => partial.indexes || []), ...(table.indexes || [])]) {
-      const identity = index.name || JSON.stringify(index.columns || []);
-      indexByIdentity.set(identity, index);
+    for (const partial of injectedPartials) {
+      if (partial.indexes) {
+        for (const index of partial.indexes) {
+          const identity = index.name || JSON.stringify(index.columns || []);
+          indexByIdentity.set(identity, index);
+        }
+      }
+    }
+    if (table.indexes) {
+      for (const index of table.indexes) {
+        const identity = index.name || JSON.stringify(index.columns || []);
+        indexByIdentity.set(identity, index);
+      }
     }
     const indexes = [...indexByIdentity.values()];
     const inheritedMetadata = Object.assign({}, ...injectedPartials.map((partial) => partial.metadata || {}));
