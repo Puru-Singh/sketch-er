@@ -188,7 +188,10 @@ function measureTextWidth(value, font) {
 }
 
 function nextGroupName(groups) {
-  const names = new Set(groups.map((group) => group.name));
+  const names = new Set();
+  for (let i = 0; i < groups.length; i += 1) {
+    names.add(groups[i].name);
+  }
 
   if (!names.has("NewGroup")) return "NewGroup";
 
@@ -4989,6 +4992,7 @@ export default function SketchER() {
       if (!mountedRef.current || request !== copyRequestRef.current) return;
 
       setCopyStatus("copied");
+      notify("Shareable link copied.");
     } catch (error) {
       if (!mountedRef.current || request !== copyRequestRef.current) return;
 
@@ -5601,7 +5605,7 @@ export default function SketchER() {
                 />
               ) : (
                 <ToolButton
-                  label="Rename diagram"
+                  label={`Rename diagram: ${data.fileName}`}
                   className="sker-filename sker-truncate"
                   style={fileNameStyle}
                   onClick={() => {
