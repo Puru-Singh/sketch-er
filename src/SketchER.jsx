@@ -2762,7 +2762,11 @@ function ColorLegend({
     >
       <div data-color-legend-items="1" className="sker-legend-items">
         {!entries.length && (
-          <p className="sker-muted">Table colors will appear here.</p>
+          <div className="sker-stack" style={{ alignItems: "center", padding: "16px 8px", textAlign: "center" }}>
+            <span aria-hidden="true" style={{ fontSize: 24, opacity: 0.8 }}>🎨</span>
+            <strong style={{ fontSize: 13 }}>No colors yet</strong>
+            <p className="sker-muted" style={{ margin: 0 }}>Colors from your tables will appear here.</p>
+          </div>
         )}
 
         {entries.map(({ color }) => (
