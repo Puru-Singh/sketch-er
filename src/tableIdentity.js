@@ -14,8 +14,14 @@ function structureSignature(table) {
 // name. Match those entries by their unchanged structure, preferring the same
 // source-order id so identical table shapes remain deterministic.
 export function detectTableRenames(previousTables, currentTables) {
-  const previousNames = new Set(previousTables.map((table) => table.name));
-  const currentNames = new Set(currentTables.map((table) => table.name));
+  const previousNames = new Set();
+  for (let i = 0; i < previousTables.length; i += 1) {
+    previousNames.add(previousTables[i].name);
+  }
+  const currentNames = new Set();
+  for (let i = 0; i < currentTables.length; i += 1) {
+    currentNames.add(currentTables[i].name);
+  }
   const removed = previousTables.filter((table) => !currentNames.has(table.name));
   const added = currentTables.filter((table) => !previousNames.has(table.name));
   const unmatchedAdded = new Set(added);
