@@ -22,3 +22,6 @@
 ## 2025-02-23 - Empty State Content Improvements
 **Learning:** Generic empty states without context or actionable instructions can leave users confused on how to use a feature. Adding a friendly visual indicator, a clear heading, and explicit instructions greatly improves discoverability.
 **Action:** Replace bare-bones text in empty states with a stack containing a decorative icon (`aria-hidden="true"`), a strong heading, and a brief explanation of how to populate the area.
+## 2025-02-23 - Empty State Content Sizing Side-Effects
+**Learning:** When replacing short placeholder text with longer, more helpful empty state guidance, be extremely careful if that text is used to calculate container bounds (like minimum width). Using the long empty state string for minimum width calculations can force the component to be overly wide even when populated.
+**Action:** When calculating minimum widths based on text measurement, use a concise, consistent baseline string rather than the potentially lengthy instructional copy of the empty state.

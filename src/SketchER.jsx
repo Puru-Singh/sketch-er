@@ -2733,7 +2733,7 @@ function ColorLegend({
   theme,
 }) {
   const longestTextWidth = Math.max(
-    measureTextWidth("Select a table and choose a custom color to add it to the legend.", "400 12px 'DM Sans', sans-serif"),
+    measureTextWidth("Table colors will appear here.", "400 12px 'DM Sans', sans-serif"),
     ...entries.map(({ color }) =>
       measureTextWidth(
         descriptions[color] || "Add description…",
@@ -2762,7 +2762,7 @@ function ColorLegend({
           <div className="sker-stack" style={{ alignItems: "center", padding: "16px 8px", textAlign: "center" }}>
             <span aria-hidden="true" style={{ fontSize: 24, opacity: 0.8 }}>🎨</span>
             <strong style={{ fontSize: 13 }}>No colors yet</strong>
-            <p className="sker-muted" style={{ margin: 0 }}>Select a table and choose a custom color to add it to the legend.</p>
+            <p className="sker-muted" style={{ margin: 0 }}>Colors from your tables will appear here.</p>
           </div>
         )}
 
