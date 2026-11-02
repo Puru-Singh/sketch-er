@@ -2693,7 +2693,13 @@ function LegendColorSwatch({ color, theme }) {
       type="button"
       className="sker-legend-swatch"
       style={{ background: color }}
-      aria-label={`Copy color ${color.toUpperCase()}`}
+      aria-label={
+        copyStatus === "copied"
+          ? "Color copied"
+          : copyStatus === "error"
+            ? "Copy failed"
+            : `Copy color ${color.toUpperCase()}`
+      }
       onClick={copy}
       onMouseEnter={showTooltip}
       onMouseLeave={() => setHovered(false)}
@@ -2883,7 +2889,13 @@ function ShareQrDialog({
       )}
 
       <ToolButton
-        label="Copy shareable link"
+        label={
+          copyStatus === "copied"
+            ? "Link copied"
+            : copyStatus === "error"
+              ? "Copy failed — retry"
+              : "Copy shareable link"
+        }
         className="sker-primary"
         onClick={() => void onCopy(url)}
       >

@@ -31,3 +31,6 @@
 ## 2026-10-28 - Dynamic aria-labels and Background Task Toasts
 **Learning:** When a button or popover's inner text changes to reflect a loading or success state, screen readers won't announce the new state if a static `aria-label` overrides it. Additionally, background actions triggered from auto-closing menus lack visual feedback when the menu disappears.
 **Action:** Ensure static `aria-label`s are updated dynamically alongside inner text, and use independent toast notifications (`notify()`) for actions triggered from popovers.
+## 2025-02-28 - Dynamic ARIA Labels for State Changes
+**Learning:** If a button's inner text changes based on its state (like "Copy" to "Copied" or "Layout" to "Arranging..."), but it has a static `aria-label`, screen readers will only read the static `aria-label` and users will miss the state change feedback. The `aria-label` completely overrides inner text for screen readers.
+**Action:** When a button or component has dynamic text reflecting a status change, ensure any explicit `aria-label`s are similarly updated to match the new text or status (e.g., `label={isPending ? "Arranging..." : "Layout options"}`).
