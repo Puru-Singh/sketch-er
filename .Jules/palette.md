@@ -19,3 +19,6 @@
 ## 2025-10-25 - Use aria-disabled instead of disabled for interactive elements
 **Learning:** Using the native `disabled` attribute removes an element from the document's tab order, hiding it completely from keyboard-only and screen reader users navigating sequentially. This makes it impossible for them to discover disabled actions.
 **Action:** Use `aria-disabled="true"` on buttons and interactive elements, guard click/keydown handlers manually (`e.preventDefault(); e.stopPropagation()`), and ensure CSS styles both states identically to keep the element focusable but inoperable.
+## 2025-03-09 - Auto-closing Menu Action Feedback
+**Learning:** Background actions (like copying text) that are triggered from auto-closing menus (like popovers or dropdowns) leave the user with no visual feedback because the UI element they interacted with disappears immediately. Furthermore, setting a static `aria-label` completely overrides the element's inner text for screen readers, potentially hiding important dynamic state (like a filename).
+**Action:** Use an independent toast notification or alert when initiating background actions from auto-closing menus. Always include dynamic text (e.g., `${data.fileName}`) in static `aria-label`s if the button relies on the text content to convey state to visual users.
