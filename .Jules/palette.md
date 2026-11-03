@@ -34,3 +34,6 @@
 ## 2025-02-28 - Dynamic ARIA Labels for State Changes
 **Learning:** If a button's inner text changes based on its state (like "Copy" to "Copied" or "Layout" to "Arranging..."), but it has a static `aria-label`, screen readers will only read the static `aria-label` and users will miss the state change feedback. The `aria-label` completely overrides inner text for screen readers.
 **Action:** When a button or component has dynamic text reflecting a status change, ensure any explicit `aria-label`s are similarly updated to match the new text or status (e.g., `label={isPending ? "Arranging..." : "Layout options"}`).
+## 2023-11-04 - Accessible Inline Spinners without Custom CSS
+**Learning:** Adding visual loading feedback is crucial for async actions, but adding custom CSS for a spinner might be restricted by project guidelines. A `<Spinner>` component can be built directly in React using an inline SVG that utilizes `<animateTransform>` for its rotation.
+**Action:** Use an inline SVG with `<animateTransform>` to create a spinning animation. Always conditionally render the animation `<animateTransform>` element itself based on a `useReducedMotion` hook to maintain accessibility for users who prefer reduced motion.
