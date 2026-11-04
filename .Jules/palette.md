@@ -34,3 +34,6 @@
 ## 2025-02-28 - Dynamic ARIA Labels for State Changes
 **Learning:** If a button's inner text changes based on its state (like "Copy" to "Copied" or "Layout" to "Arranging..."), but it has a static `aria-label`, screen readers will only read the static `aria-label` and users will miss the state change feedback. The `aria-label` completely overrides inner text for screen readers.
 **Action:** When a button or component has dynamic text reflecting a status change, ensure any explicit `aria-label`s are similarly updated to match the new text or status (e.g., `label={isPending ? "Arranging..." : "Layout options"}`).
+## 2025-02-28 - Loading Feedback for Background Actions
+**Learning:** Actions like "Exporting PNG", "Arranging Layout", and "Opening File" can take noticeable time and often provide no visual indicator that a process is running other than text changing or button disabling, leaving users unsure if the app froze.
+**Action:** Always add an inline `Spinner` component (accessible with `useReducedMotion`) alongside updating label text on buttons undergoing async processing to provide clear visual feedback.

@@ -628,6 +628,19 @@ function AnimatedPanel({ children }) {
   }) : null;
 }
 
+function Spinner() {
+  const reducedMotion = useReducedMotion();
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" aria-hidden="true" style={{ marginRight: 6, opacity: 0.7 }}>
+      <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round">
+        {!reducedMotion && (
+          <animateTransform attributeName="transform" type="rotate" from="0 12 12" to="360 12 12" dur="1s" repeatCount="indefinite" />
+        )}
+      </path>
+    </svg>
+  );
+}
+
 function ToolButton({
   children,
   label,
@@ -5670,7 +5683,7 @@ export default function SketchER() {
                         ? "Diagram must contain at least one table to arrange"
                         : undefined
                 }
-                trigger={layoutRunning ? "Arranging…" : "Layout"}
+                trigger={layoutRunning ? <><Spinner />Arranging…</> : "Layout"}
                 disabled={layoutRunning || !tables.length || parsingPending}
               >
                 {(close) => (
@@ -5749,7 +5762,7 @@ export default function SketchER() {
                 disabled={loadRunning}
                 onClick={() => loadInputRef.current?.click()}
               >
-                {loadRunning ? "Opening…" : "Open"}
+                {loadRunning ? <><Spinner />Opening…</> : "Open"}
               </ToolButton>
 
               <ToolButton
@@ -5764,7 +5777,7 @@ export default function SketchER() {
                 disabled={exportRunning || !tables.length}
                 onClick={() => void exportPng()}
               >
-                {exportRunning ? "Exporting…" : "Export"}
+                {exportRunning ? <><Spinner />Exporting…</> : "Export"}
               </ToolButton>
 
               <Popover
