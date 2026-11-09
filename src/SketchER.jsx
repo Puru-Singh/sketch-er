@@ -628,6 +628,35 @@ function AnimatedPanel({ children }) {
   }) : null;
 }
 
+function Spinner({ reducedMotion = false }) {
+  return (
+    <svg
+      width="1em"
+      height="1em"
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth="2"
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      style={{ display: "inline-block", verticalAlign: "middle", marginRight: "6px" }}
+      aria-hidden="true"
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56" />
+      {!reducedMotion && (
+        <animateTransform
+          attributeName="transform"
+          type="rotate"
+          from="0 12 12"
+          to="360 12 12"
+          dur="1s"
+          repeatCount="indefinite"
+        />
+      )}
+    </svg>
+  );
+}
+
 function ToolButton({
   children,
   label,
@@ -1654,7 +1683,7 @@ function ZoomControl({ zoom, onChange }) {
   };
 
   return (
-    <Popover label="Canvas zoom" trigger={`${Math.round(zoom * 100)}%`}>
+    <Popover label={`Canvas zoom, currently ${Math.round(zoom * 100)}%`} trigger={`${Math.round(zoom * 100)}%`}>
       {(close) => (
         <div className="sker-stack">
           <label className="sker-stack">
@@ -5670,7 +5699,7 @@ export default function SketchER() {
                         ? "Diagram must contain at least one table to arrange"
                         : undefined
                 }
-                trigger={layoutRunning ? "Arranging…" : "Layout"}
+                trigger={layoutRunning ? <><Spinner reducedMotion={reducedMotion} />Arranging…</> : "Layout"}
                 disabled={layoutRunning || !tables.length || parsingPending}
               >
                 {(close) => (
@@ -5749,7 +5778,7 @@ export default function SketchER() {
                 disabled={loadRunning}
                 onClick={() => loadInputRef.current?.click()}
               >
-                {loadRunning ? "Opening…" : "Open"}
+                {loadRunning ? <><Spinner reducedMotion={reducedMotion} />Opening…</> : "Open"}
               </ToolButton>
 
               <ToolButton
@@ -5764,7 +5793,7 @@ export default function SketchER() {
                 disabled={exportRunning || !tables.length}
                 onClick={() => void exportPng()}
               >
-                {exportRunning ? "Exporting…" : "Export"}
+                {exportRunning ? <><Spinner reducedMotion={reducedMotion} />Exporting…</> : "Export"}
               </ToolButton>
 
               <Popover
