@@ -1,121 +1,88 @@
-import fs from "node:fs";
-import path from "node:path";
-import { fileURLToPath } from "node:url";
 import test from "node:test";
-import assert from "node:assert";
+import assert from "node:assert/strict";
+import { createElement } from "react";
+import { renderToStaticMarkup } from "react-dom/server";
+import ColorPalette from "../src/ColorPalette.js";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const colors = ["#ff0000", "#00ff00", "#0000ff"];
 
-async function getTransformedComponent() {
-  const jsxPath = path.resolve(__dirname, "../src/SketchER.jsx");
-  let code = fs.readFileSync(jsxPath, "utf8");
-
-  // Extract just the ColorPalette function string
-  const startIdx = code.indexOf("function ColorPalette(");
-  const endIdx = code.indexOf("\nfunction ZoomControl", startIdx);
-  let componentStr = code.substring(startIdx, endIdx);
-
-  // Quick manual compilation of simple JSX in ColorPalette.
-  // It only contains:
-  // <div className="sker-color-row" role="radiogroup" aria-label={label}>
-  //   {colors.map((color, i) => (
-  //     <button ... />
-  //   ))}
-  // </div>
-  componentStr = componentStr.replace(
-      /<div className="sker-color-row" role="radiogroup" aria-label=\{label\}>([\s\S]*?)<\/div>/,
-      `React.createElement("div", { className: "sker-color-row", role: "radiogroup", "aria-label": label }, $1)`
-  );
-  componentStr = componentStr.replace(
-      /\{colors\.map\(\(color, i\) => \([\s\S]*?<button([\s\S]*?)\/>[\s\S]*?\)\)\}/,
-      `colors.map((color, i) => React.createElement("button", {
-          key: color,
-          type: "button",
-          role: "radio",
-          tabIndex: selected === color || (!colors.includes(selected) && i === 0) ? 0 : -1,
-          className: \`sker-color-dot \${selected === color ? "is-selected" : ""}\`,
-          style: { background: color },
-          "aria-label": \`Apply color \${color}\`,
-          "aria-checked": selected === color,
-          title: color,
-          onClick: () => onChoose(color),
-          onKeyDown: (e) => {
-            let nextIndex = null;
-            if (e.key === "ArrowRight" || e.key === "ArrowDown") nextIndex = (i + 1) % colors.length;
-            if (e.key === "ArrowLeft" || e.key === "ArrowUp") nextIndex = (i - 1 + colors.length) % colors.length;
-            if (nextIndex !== null) {
-              e.preventDefault();
-              onChoose(colors[nextIndex]);
-              e.currentTarget.parentNode.children[nextIndex]?.focus();
-            }
-          }
-      }))`
-  );
-
-  return new Function("React", `
-    ${componentStr};
-    return ColorPalette;
-  `);
+function palette(selected) {
+  const choices = [];
+  const element = ColorPalette({ colors, selected, label: "Table colors", onChoose: color => choices.push(color) });
+  return { buttons: element.props.children, choices };
 }
 
-test("ColorPalette supports roving tabIndex and arrow keys", async () => {
-    // Dynamically import react for standard element creation signature
-    const React = await import("react");
-    const ColorPaletteFactory = await getTransformedComponent();
-    const ColorPalette = ColorPaletteFactory(React.default || React);
+function keyEvent(key) {
+  let focused = null;
+  let prevented = false;
+  return {
+    event: {
+      key,
+      preventDefault() { prevented = true; },
+      currentTarget: {
+        parentElement: { children: colors.map((_, index) => ({ focus() { focused = index; } })) },
+      },
+    },
+    get focused() { return focused; },
+    get prevented() { return prevented; },
+  };
+}
 
-    const colors = ["#ff0000", "#00ff00", "#0000ff"];
-    let chosenColor = null;
+test("renders a named radio group with one selected radio and one tab stop", () => {
+  const markup = renderToStaticMarkup(createElement(ColorPalette, {
+    colors, selected: colors[1], onChoose() {}, label: "Table colors",
+  }));
+  assert.match(markup, /role="radiogroup" aria-label="Table colors"/);
+  assert.equal((markup.match(/role="radio"/g) || []).length, 3);
+  assert.equal((markup.match(/aria-checked="true"/g) || []).length, 1);
+  assert.equal((markup.match(/tabindex="0"/g) || []).length, 1);
+  const { buttons } = palette(colors[1]);
+  assert.deepEqual(buttons.map(b => b.props.tabIndex), [-1, 0, -1]);
+  assert.deepEqual(buttons.map(b => b.props["aria-checked"]), [false, true, false]);
+});
 
-    const element = ColorPalette({
-        colors,
-        selected: "#00ff00",
-        onChoose: (c) => chosenColor = c,
-        label: "Palette"
-    });
+test("custom or absent selection starts on the first preset without changing the color", () => {
+  for (const selected of ["#ffffff", undefined]) {
+    const { buttons, choices } = palette(selected);
+    assert.deepEqual(buttons.map(b => b.props.tabIndex), [0, -1, -1]);
+    assert.ok(buttons.every(b => b.props["aria-checked"] === false));
+    assert.deepEqual(choices, []);
+    const interaction = keyEvent("ArrowRight");
+    buttons[0].props.onKeyDown(interaction.event);
+    assert.deepEqual(choices, [colors[1]]);
+    assert.equal(interaction.focused, 1);
+  }
+});
 
-    const buttons = element.props.children;
-    assert.strictEqual(buttons.length, 3);
+test("all arrow keys select, move focus, and wrap at the ends", () => {
+  for (const [key, from, to] of [
+    ["ArrowRight", 1, 2], ["ArrowDown", 2, 0],
+    ["ArrowLeft", 0, 2], ["ArrowUp", 1, 0],
+  ]) {
+    const { buttons, choices } = palette(colors[from]);
+    const interaction = keyEvent(key);
+    buttons[from].props.onKeyDown(interaction.event);
+    assert.deepEqual(choices, [colors[to]]);
+    assert.equal(interaction.focused, to);
+    assert.equal(interaction.prevented, true);
+    const updated = palette(choices[0]);
+    assert.equal(updated.buttons[to].props.tabIndex, 0);
+    assert.equal(updated.buttons.filter(b => b.props.tabIndex === 0).length, 1);
+  }
+});
 
-    // Check initial tabIndex (selected is second)
-    assert.strictEqual(buttons[0].props.tabIndex, -1);
-    assert.strictEqual(buttons[1].props.tabIndex, 0); // selected
-    assert.strictEqual(buttons[2].props.tabIndex, -1);
+test("Tab remains available for leaving the group and clicking selects a color", () => {
+  const { buttons, choices } = palette(colors[1]);
+  const interaction = keyEvent("Tab");
+  buttons[1].props.onKeyDown(interaction.event);
+  assert.equal(interaction.prevented, false);
+  assert.equal(interaction.focused, null);
+  assert.deepEqual(choices, []);
+  buttons[2].props.onClick();
+  assert.deepEqual(choices, [colors[2]]);
+});
 
-    // Test ArrowRight on second button
-    let focusTarget = null;
-    const mockParent = {
-        children: [
-            { focus: () => { focusTarget = 0; } },
-            { focus: () => { focusTarget = 1; } },
-            { focus: () => { focusTarget = 2; } }
-        ]
-    };
-
-    let mockEvent = {
-        key: "ArrowRight",
-        preventDefault: () => {},
-        currentTarget: { parentNode: mockParent }
-    };
-
-    buttons[1].props.onKeyDown(mockEvent);
-    assert.strictEqual(chosenColor, "#0000ff");
-    assert.strictEqual(focusTarget, 2);
-
-    // Test ArrowLeft wrapping on first button
-    mockEvent.key = "ArrowLeft";
-    buttons[0].props.onKeyDown(mockEvent);
-    assert.strictEqual(chosenColor, "#0000ff");
-    assert.strictEqual(focusTarget, 2);
-
-    // Check unmatched color tabIndex logic
-    const elementUnmatched = ColorPalette({
-        colors,
-        selected: "#ffffff", // not in array
-        onChoose: () => {},
-        label: "Palette"
-    });
-    const buttonsUnmatched = elementUnmatched.props.children;
-    assert.strictEqual(buttonsUnmatched[0].props.tabIndex, 0);
-    assert.strictEqual(buttonsUnmatched[1].props.tabIndex, -1);
+test("empty palettes render without a selectable tab stop", () => {
+  const element = ColorPalette({ colors: [], selected: undefined, onChoose() {}, label: "Colors" });
+  assert.deepEqual(element.props.children, []);
 });

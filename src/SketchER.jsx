@@ -16,6 +16,7 @@ import {
 import { createPortal } from "react-dom";
 import MonacoEditor from "@monaco-editor/react";
 import HelpContent from "./HelpContent.jsx";
+import ColorPalette from "./ColorPalette.js";
 
 import {
   dbmlLanguageConfig,
@@ -1645,37 +1646,6 @@ function ColorPicker({ value, onChange, label = "Choose a custom color" }) {
         onChange={(event) => onChange(event.target.value)}
       />
     </label>
-  );
-}
-
-function ColorPalette({ colors, selected, onChoose, label }) {
-  return (
-    <div className="sker-color-row" role="radiogroup" aria-label={label}>
-      {colors.map((color, i) => (
-        <button
-          key={color}
-          type="button"
-          role="radio"
-          tabIndex={selected === color || (!colors.includes(selected) && i === 0) ? 0 : -1}
-          className={`sker-color-dot ${selected === color ? "is-selected" : ""}`}
-          style={{ background: color }}
-          aria-label={`Apply color ${color}`}
-          aria-checked={selected === color}
-          title={color}
-          onClick={() => onChoose(color)}
-          onKeyDown={(e) => {
-            let nextIndex = null;
-            if (e.key === "ArrowRight" || e.key === "ArrowDown") nextIndex = (i + 1) % colors.length;
-            if (e.key === "ArrowLeft" || e.key === "ArrowUp") nextIndex = (i - 1 + colors.length) % colors.length;
-            if (nextIndex !== null) {
-              e.preventDefault();
-              onChoose(colors[nextIndex]);
-              e.currentTarget.parentNode.children[nextIndex]?.focus();
-            }
-          }}
-        />
-      ))}
-    </div>
   );
 }
 
