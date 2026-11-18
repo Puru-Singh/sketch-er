@@ -16,6 +16,7 @@ import {
 import { createPortal } from "react-dom";
 import MonacoEditor from "@monaco-editor/react";
 import HelpContent from "./HelpContent.jsx";
+import ColorPalette from "./ColorPalette.js";
 
 import {
   dbmlLanguageConfig,
@@ -1645,25 +1646,6 @@ function ColorPicker({ value, onChange, label = "Choose a custom color" }) {
         onChange={(event) => onChange(event.target.value)}
       />
     </label>
-  );
-}
-
-function ColorPalette({ colors, selected, onChoose, label }) {
-  return (
-    <div className="sker-color-row" role="group" aria-label={label}>
-      {colors.map((color) => (
-        <button
-          key={color}
-          type="button"
-          className={`sker-color-dot ${selected === color ? "is-selected" : ""}`}
-          style={{ background: color }}
-          aria-label={`Apply color ${color}`}
-          aria-pressed={selected === color}
-          title={color}
-          onClick={() => onChoose(color)}
-        />
-      ))}
-    </div>
   );
 }
 
