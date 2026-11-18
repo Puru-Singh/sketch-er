@@ -596,6 +596,36 @@ function useTableWidths(tables, relationshipColumns) {
 /* Reusable UI                                                                */
 /* -------------------------------------------------------------------------- */
 
+function Spinner({ size = 14, strokeWidth = 2.5 }) {
+  const reducedMotion = useReducedMotion();
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56">
+        {!reducedMotion && (
+          <animateTransform
+            attributeName="transform"
+            type="rotate"
+            from="0 12 12"
+            to="360 12 12"
+            dur="0.85s"
+            repeatCount="indefinite"
+          />
+        )}
+      </path>
+    </svg>
+  );
+}
+
 // Retain the last panel briefly so dismissal can animate before unmounting.
 function AnimatedPanel({ children }) {
   const reducedMotion = useReducedMotion();
@@ -1592,7 +1622,9 @@ function ColumnEditor({
                 }
                 handleApply(e);
               }}
+              style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
             >
+              {parsingPending && <Spinner />}
               Apply changes
             </button>
           </div>
@@ -2328,7 +2360,7 @@ function TableNode({
           aria-expanded={!table.isCollapsed}
           aria-label={
             table.isCollapsed
-              ? `Expand ${table.name}`
+              ? `Expand ${table.name}; ${table.hiddenColumnCount} hidden columns`
               : `Collapse ${table.name} to keys`
           }
           title={
@@ -2872,7 +2904,10 @@ function ShareQrDialog({
               : "Unable to generate a QR code. You can still copy the shareable link."}
           </p>
         ) : (
-          <p>Generating QR code…</p>
+          <div className="sker-stack" style={{ alignItems: "center" }}>
+            <Spinner size={24} />
+            <p>Generating QR code…</p>
+          </div>
         )}
       </div>
 
@@ -5670,7 +5705,12 @@ export default function SketchER() {
                         ? "Diagram must contain at least one table to arrange"
                         : undefined
                 }
-                trigger={layoutRunning ? "Arranging…" : "Layout"}
+                trigger={
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    {layoutRunning && <Spinner />}
+                    {layoutRunning ? "Arranging…" : "Layout"}
+                  </span>
+                }
                 disabled={layoutRunning || !tables.length || parsingPending}
               >
                 {(close) => (
@@ -5749,7 +5789,8 @@ export default function SketchER() {
                 disabled={loadRunning}
                 onClick={() => loadInputRef.current?.click()}
               >
-                {loadRunning ? "Opening…" : "Open"}
+                {loadRunning && <Spinner />}
+                <span>{loadRunning ? "Opening…" : "Open"}</span>
               </ToolButton>
 
               <ToolButton
@@ -5764,7 +5805,8 @@ export default function SketchER() {
                 disabled={exportRunning || !tables.length}
                 onClick={() => void exportPng()}
               >
-                {exportRunning ? "Exporting…" : "Export"}
+                {exportRunning && <Spinner />}
+                <span>{exportRunning ? "Exporting…" : "Export"}</span>
               </ToolButton>
 
               <Popover
