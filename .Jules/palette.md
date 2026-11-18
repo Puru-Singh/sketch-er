@@ -34,6 +34,9 @@
 ## 2025-02-28 - Dynamic ARIA Labels for State Changes
 **Learning:** If a button's inner text changes based on its state (like "Copy" to "Copied" or "Layout" to "Arranging..."), but it has a static `aria-label`, screen readers will only read the static `aria-label` and users will miss the state change feedback. The `aria-label` completely overrides inner text for screen readers.
 **Action:** When a button or component has dynamic text reflecting a status change, ensure any explicit `aria-label`s are similarly updated to match the new text or status (e.g., `label={isPending ? "Arranging..." : "Layout options"}`).
+## 2023-10-29 - Inline SVG Spinner without CSS
+**Learning:** Sometimes introducing custom CSS is restricted, making traditional CSS-animated spinners impossible.
+**Action:** Use an inline SVG with `<animateTransform>` for rotation to create a perfectly functional, CSS-free spinner. Respect `useReducedMotion` by conditionally rendering the `<animateTransform>` element.
 
 ## 2026-11-09 - Dynamic Aria Labels and SVG Spinners
 **Learning:** 1) Static `aria-label` attributes on elements whose visual contents change (like a zoom percentage trigger) will cause screen readers to announce stale information. 2) When custom CSS or traditional spinner implementations are restricted, an inline SVG with `<animateTransform>` can provide a clean loading state.
