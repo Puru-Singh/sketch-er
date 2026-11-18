@@ -363,7 +363,10 @@ export function identifyRelationships(model, tableIds) {
 
 export function reconcileDocument(data, model, previousModel, allowRenames) {
   const tables = modelTables(model);
-  const validNames = new Set(tables.map((table) => table.name));
+  const validNames = new Set();
+  for (let i = 0; i < tables.length; i += 1) {
+    validNames.add(tables[i].name);
+  }
   const renames = allowRenames
     ? detectTableRenames(modelTables(previousModel), tables)
     : new Map();
@@ -376,9 +379,13 @@ export function reconcileDocument(data, model, previousModel, allowRenames) {
     [...renames].map(([oldName, newName]) => [newName, oldName]),
   );
 
-  const reservedIds = new Set(
-    Object.values(data.tableIds).filter((id) => typeof id === "string" && id),
-  );
+  const reservedIds = new Set();
+  for (const key in data.tableIds) {
+    const id = data.tableIds[key];
+    if (typeof id === "string" && id) {
+      reservedIds.add(id);
+    }
+  }
   const usedIds = new Set();
   let nextId = 1;
 
@@ -427,7 +434,11 @@ export function reconcileDocument(data, model, previousModel, allowRenames) {
   ];
 
   const groupColors = dictionary();
-  const validGroups = new Set(modelGroups(model).map((group) => group.name));
+  const groupsList = modelGroups(model);
+  const validGroups = new Set();
+  for (let i = 0; i < groupsList.length; i += 1) {
+    validGroups.add(groupsList[i].name);
+  }
 
   for (const [name, color] of Object.entries(data.groupColors)) {
     if (validGroups.has(name)) groupColors[name] = color;

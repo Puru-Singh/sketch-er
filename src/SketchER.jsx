@@ -188,7 +188,10 @@ function measureTextWidth(value, font) {
 }
 
 function nextGroupName(groups) {
-  const names = new Set(groups.map((group) => group.name));
+  const names = new Set();
+  for (let i = 0; i < groups.length; i += 1) {
+    names.add(groups[i].name);
+  }
 
   if (!names.has("NewGroup")) return "NewGroup";
 
@@ -592,6 +595,36 @@ function useTableWidths(tables, relationshipColumns) {
 /* -------------------------------------------------------------------------- */
 /* Reusable UI                                                                */
 /* -------------------------------------------------------------------------- */
+
+function Spinner({ size = 14, strokeWidth = 2.5 }) {
+  const reducedMotion = useReducedMotion();
+  return (
+    <svg
+      width={size}
+      height={size}
+      viewBox="0 0 24 24"
+      fill="none"
+      stroke="currentColor"
+      strokeWidth={strokeWidth}
+      strokeLinecap="round"
+      strokeLinejoin="round"
+      aria-hidden="true"
+    >
+      <path d="M21 12a9 9 0 1 1-6.219-8.56">
+        {!reducedMotion && (
+          <animateTransform
+            attributeName="transform"
+            type="rotate"
+            from="0 12 12"
+            to="360 12 12"
+            dur="0.85s"
+            repeatCount="indefinite"
+          />
+        )}
+      </path>
+    </svg>
+  );
+}
 
 // Retain the last panel briefly so dismissal can animate before unmounting.
 function AnimatedPanel({ children }) {
@@ -1589,7 +1622,9 @@ function ColumnEditor({
                 }
                 handleApply(e);
               }}
+              style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}
             >
+              {parsingPending && <Spinner />}
               Apply changes
             </button>
           </div>
@@ -1663,7 +1698,7 @@ function ZoomControl({ zoom, onChange }) {
   };
 
   return (
-    <Popover label="Canvas zoom" trigger={`${Math.round(zoom * 100)}%`}>
+    <Popover label={`Canvas zoom, currently ${Math.round(zoom * 100)}%`} trigger={`${Math.round(zoom * 100)}%`}>
       {(close) => (
         <div className="sker-stack">
           <label className="sker-stack">
@@ -2337,7 +2372,7 @@ function TableNode({
           aria-expanded={!table.isCollapsed}
           aria-label={
             table.isCollapsed
-              ? `Expand ${table.name}`
+              ? `Expand ${table.name}; ${table.hiddenColumnCount} hidden columns`
               : `Collapse ${table.name} to keys`
           }
           title={
@@ -2702,7 +2737,13 @@ function LegendColorSwatch({ color, theme }) {
       type="button"
       className="sker-legend-swatch"
       style={{ background: color }}
-      aria-label={`Copy color ${color.toUpperCase()}`}
+      aria-label={
+        copyStatus === "copied"
+          ? "Color copied"
+          : copyStatus === "error"
+            ? "Copy failed"
+            : `Copy color ${color.toUpperCase()}`
+      }
       onClick={copy}
       onMouseEnter={showTooltip}
       onMouseLeave={() => setHovered(false)}
@@ -2771,7 +2812,11 @@ function ColorLegend({
     >
       <div data-color-legend-items="1" className="sker-legend-items">
         {!entries.length && (
-          <p className="sker-muted">Table colors will appear here.</p>
+          <div className="sker-stack" style={{ alignItems: "center", padding: "16px 8px", textAlign: "center" }}>
+            <span aria-hidden="true" style={{ fontSize: 24, opacity: 0.8 }}>🎨</span>
+            <strong style={{ fontSize: 13 }}>No colors yet</strong>
+            <p className="sker-muted" style={{ margin: 0 }}>Colors from your tables will appear here.</p>
+          </div>
         )}
 
         {entries.map(({ color }) => (
@@ -2871,7 +2916,10 @@ function ShareQrDialog({
               : "Unable to generate a QR code. You can still copy the shareable link."}
           </p>
         ) : (
-          <p>Generating QR code…</p>
+          <div className="sker-stack" style={{ alignItems: "center" }}>
+            <Spinner size={24} />
+            <p>Generating QR code…</p>
+          </div>
         )}
       </div>
 
@@ -2888,7 +2936,13 @@ function ShareQrDialog({
       )}
 
       <ToolButton
-        label="Copy shareable link"
+        label={
+          copyStatus === "copied"
+            ? "Link copied"
+            : copyStatus === "error"
+              ? "Copy failed — retry"
+              : "Copy shareable link"
+        }
         className="sker-primary"
         onClick={() => void onCopy(url)}
       >
@@ -4989,6 +5043,7 @@ export default function SketchER() {
       if (!mountedRef.current || request !== copyRequestRef.current) return;
 
       setCopyStatus("copied");
+      notify("Shareable link copied.");
     } catch (error) {
       if (!mountedRef.current || request !== copyRequestRef.current) return;
 
@@ -5601,7 +5656,7 @@ export default function SketchER() {
                 />
               ) : (
                 <ToolButton
-                  label="Rename diagram"
+                  label={`Rename diagram: ${data.fileName}`}
                   className="sker-filename sker-truncate"
                   style={fileNameStyle}
                   onClick={() => {
@@ -5652,7 +5707,7 @@ export default function SketchER() {
               </ToolButton>
 
               <Popover
-                label="Layout options"
+                label={layoutRunning ? "Arranging diagram…" : "Layout options"}
                 title={
                   layoutRunning
                     ? "Layout in progress…"
@@ -5662,7 +5717,12 @@ export default function SketchER() {
                         ? "Diagram must contain at least one table to arrange"
                         : undefined
                 }
-                trigger={layoutRunning ? "Arranging…" : "Layout"}
+                trigger={
+                  <span style={{ display: "inline-flex", alignItems: "center", gap: "6px" }}>
+                    {layoutRunning && <Spinner />}
+                    {layoutRunning ? "Arranging…" : "Layout"}
+                  </span>
+                }
                 disabled={layoutRunning || !tables.length || parsingPending}
               >
                 {(close) => (
@@ -5737,15 +5797,16 @@ export default function SketchER() {
               </ToolButton>
 
               <ToolButton
-                label="Open diagram file"
+                label={loadRunning ? "Opening diagram file…" : "Open diagram file"}
                 disabled={loadRunning}
                 onClick={() => loadInputRef.current?.click()}
               >
-                {loadRunning ? "Opening…" : "Open"}
+                {loadRunning && <Spinner />}
+                <span>{loadRunning ? "Opening…" : "Open"}</span>
               </ToolButton>
 
               <ToolButton
-                label="Export diagram as PNG"
+                label={exportRunning ? "Exporting diagram as PNG…" : "Export diagram as PNG"}
                 title={
                   exportRunning
                     ? "Export in progress…"
@@ -5756,7 +5817,8 @@ export default function SketchER() {
                 disabled={exportRunning || !tables.length}
                 onClick={() => void exportPng()}
               >
-                {exportRunning ? "Exporting…" : "Export"}
+                {exportRunning && <Spinner />}
+                <span>{exportRunning ? "Exporting…" : "Export"}</span>
               </ToolButton>
 
               <Popover

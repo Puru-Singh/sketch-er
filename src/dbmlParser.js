@@ -104,9 +104,19 @@ function normalizeRawDatabase(raw) {
       }
     }
     const indexByIdentity = new Map();
-    for (const index of [...injectedPartials.flatMap((partial) => partial.indexes || []), ...(table.indexes || [])]) {
-      const identity = index.name || JSON.stringify(index.columns || []);
-      indexByIdentity.set(identity, index);
+    for (const partial of injectedPartials) {
+      if (partial.indexes) {
+        for (const index of partial.indexes) {
+          const identity = index.name || JSON.stringify(index.columns || []);
+          indexByIdentity.set(identity, index);
+        }
+      }
+    }
+    if (table.indexes) {
+      for (const index of table.indexes) {
+        const identity = index.name || JSON.stringify(index.columns || []);
+        indexByIdentity.set(identity, index);
+      }
     }
     const indexes = [...indexByIdentity.values()];
     const inheritedMetadata = Object.assign({}, ...injectedPartials.map((partial) => partial.metadata || {}));
@@ -165,7 +175,10 @@ function normalizeRawDatabase(raw) {
     };
   });
 
-  const tableNames = new Set(tables.map((table) => table.name));
+  const tableNames = new Set();
+  for (let i = 0; i < tables.length; i += 1) {
+    tableNames.add(tables[i].name);
+  }
   const aliases = new Map((raw.aliases || [])
     .filter((alias) => alias.kind === "table" && alias.value)
     .map((alias) => [alias.name, alias.value]));
@@ -213,7 +226,10 @@ function normalizeRawDatabase(raw) {
     note: entry.note || null,
     values: entry.values || [],
   }));
-  const enumNames = new Set(enums.map((entry) => entry.name));
+  const enumNames = new Set();
+  for (let i = 0; i < enums.length; i += 1) {
+    enumNames.add(enums[i].name);
+  }
   for (const table of tables) {
     for (const column of table.columns) {
       if (enumNames.has(column.type)) column.enumId = column.type;
