@@ -37,3 +37,7 @@
 ## 2023-10-29 - Inline SVG Spinner without CSS
 **Learning:** Sometimes introducing custom CSS is restricted, making traditional CSS-animated spinners impossible.
 **Action:** Use an inline SVG with `<animateTransform>` for rotation to create a perfectly functional, CSS-free spinner. Respect `useReducedMotion` by conditionally rendering the `<animateTransform>` element.
+
+## 2026-11-09 - Dynamic Aria Labels and SVG Spinners
+**Learning:** 1) Static `aria-label` attributes on elements whose visual contents change (like a zoom percentage trigger) will cause screen readers to announce stale information. 2) When custom CSS or traditional spinner implementations are restricted, an inline SVG with `<animateTransform>` can provide a clean loading state.
+**Action:** 1) Ensure `aria-label` includes dynamic state variables if the visually represented state changes and is not otherwise readable by screen readers. 2) Use inline SVG animations with a `reducedMotion` check for accessible, dependency-free loading indicators.

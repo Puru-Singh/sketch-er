@@ -1686,7 +1686,7 @@ function ZoomControl({ zoom, onChange }) {
   };
 
   return (
-    <Popover label="Canvas zoom" trigger={`${Math.round(zoom * 100)}%`}>
+    <Popover label={`Canvas zoom, currently ${Math.round(zoom * 100)}%`} trigger={`${Math.round(zoom * 100)}%`}>
       {(close) => (
         <div className="sker-stack">
           <label className="sker-stack">
